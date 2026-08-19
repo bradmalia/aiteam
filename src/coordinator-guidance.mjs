@@ -78,7 +78,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
 
   const sourceWarning = source === 'status'
     ? 'This status snapshot does not advance the workflow and is not evidence of background processing.'
-    : 'Starting a session only creates state; no specialist is processing in parallel.';
+    : 'Starting a session runs the first required specialist synchronously; no specialists are processing in parallel.';
   const continuation = directive.requiredNextAction.tool === 'aiteam_complete'
     ? 'All enforced gates have passed. Do not run another specialist; call aiteam_complete.'
     : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';

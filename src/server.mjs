@@ -13,8 +13,8 @@ const VERSION = '0.2.0';
 export const toolDefs = [
   {
     name: 'aiteam_start',
-    description: 'Initialize a server-governed AITEAM request in the current Git repository. This creates state only and does not start background workers. After success, report the returned agent/phase line and call aiteam_advance.',
-    inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' } }, required: ['request'] }
+    description: 'Initialize a server-governed AITEAM request in the current Git repository and synchronously run the first required specialist stage. This does not start background workers. After success, report the returned agent/phase line and call aiteam_advance for each remaining assignment.',
+    inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, model: { type: 'string' }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
     name: 'aiteam_status',
@@ -139,7 +139,7 @@ export async function callTool(name, args) {
       '',
       'You are now the AITEAM Coordinator for this request. Keep the user interaction in the primary Codex conversation.'
     ].join('\n');
-    return textResult(text, {
+    const startedContent = {
       session,
       git,
       agents: registry.agents,
@@ -147,7 +147,29 @@ export async function callTool(name, args) {
       coordinatorReadOnly,
       nextAssignment: getCurrentAssignment(repo),
       coordinatorDirective: coordinatorDirective(session)
-    });
+    };
+    if (args.auto_advance !== false) {
+      let firstAdvance;
+      try {
+        firstAdvance = await advanceWorkflow({
+          repo,
+          timeoutSeconds: args.timeout_seconds,
+          model: args.model || null,
+          coordinatorContext: args.request || ''
+        });
+      } catch (error) {
+        const failure = `${text}\n\nAITEAM first-stage execution failed: ${error.message}\nThe session remains active; required next action: call aiteam_advance after resolving the specialist failure.`;
+        return textResult(failure, { ...startedContent, firstAdvance: null, firstAdvanceError: error.message });
+      }
+      return textResult(`${text}\n\n${advanceResultText(firstAdvance)}`, {
+        ...startedContent,
+        session: firstAdvance.session,
+        workflow: firstAdvance.workflow,
+        nextAssignment: firstAdvance.session.status === 'ACTIVE' ? getCurrentAssignment(repo) : null,
+        firstAdvance
+      });
+    }
+    return textResult(`${text}\n\nAutomatic first-stage execution disabled. Required next action: call aiteam_advance.`, startedContent);
   }
   if (name === 'aiteam_status') {
     const session = readSession(repo);

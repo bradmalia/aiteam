@@ -26,9 +26,9 @@ test('MCP tool descriptions explain coordinator-driven execution', () => {
   assert.match(descriptions.aiteam_register_specialist, /successful Recruiter stage/i);
 });
 
-test('start and status require an explicit specialist call', async () => {
+test('start auto-runs the first specialist and status exposes the next gate', async () => {
   const repo = createRepository();
-  const started = await callTool('aiteam_start', { repository: repo, request: 'Build Pong' });
+  const started = await callTool('aiteam_start', { repository: repo, request: 'Build Pong', auto_advance: false });
   const startText = started.content[0].text;
 
   assert.match(startText, /AITEAM is not autonomous/);
@@ -54,7 +54,7 @@ test('start and status require an explicit specialist call', async () => {
 
 test('coordinator cannot register an unverified specialist', async () => {
   const repo = createRepository();
-  await callTool('aiteam_start', { repository: repo, request: 'Build Pong' });
+  await callTool('aiteam_start', { repository: repo, request: 'Build Pong', auto_advance: false });
   await assert.rejects(callTool('aiteam_register_specialist', {
     repository: repo,
     proposal_id: 'invented',

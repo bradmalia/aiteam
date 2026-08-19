@@ -84,7 +84,7 @@ Before and after each synchronous specialist call, Coordinator reports:
 AITEAM | Agent: Architect (architect) | Phase: Architecture | Remaining: Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration
 ```
 
-AITEAM has no background scheduler. `aiteam_start` and `aiteam_status` do not perform work and must not be polled for progress.
+AITEAM has no background scheduler. `aiteam_start` synchronously runs the first required specialist (Analyst by default), while `aiteam_status` only reads state and must not be polled for progress.
 
 ## Protected state
 
@@ -102,7 +102,7 @@ Authoritative session, event, and specialist state is mirrored under Git metadat
 
 ## Main MCP tools
 
-- `aiteam_start`: create a governed session
+- `aiteam_start`: create a governed session and run the first required specialist
 - `aiteam_status`: inspect the current gate without advancing
 - `aiteam_advance`: execute and validate one required specialist stage
 - `aiteam_complete`: complete only after all gates pass

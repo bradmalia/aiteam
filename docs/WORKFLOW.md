@@ -31,6 +31,8 @@ Failed Code Review or QA sets the current task to `needs-rework` and returns it 
 
 Coordinator reports the exact agent, phase, and remaining phases before and after every call. Coordinator repeatedly calls `aiteam_advance`; it does not decide the next role. It calls `aiteam_complete` only when instructed by a `READY_TO_COMPLETE` response.
 
+`aiteam_start` performs the first required advance synchronously so the coordinator cannot stop after merely creating a session. Subsequent stages use `aiteam_advance` and remain server-gated. `aiteam_start({auto_advance:false})` is reserved for tests and compatibility tooling.
+
 Status reads never advance work. Direct session patches cannot alter workflow authority. Out-of-order `aiteam_spawn_agent` calls are rejected.
 
 ## Human validation
