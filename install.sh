@@ -4,8 +4,10 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="${HOME}/.local/bin"
 mkdir -p "$BIN_DIR"
 ln -sfn "$ROOT/bin/aiteam-mcp" "$BIN_DIR/aiteam-mcp"
+ln -sfn "$ROOT/bin/aiteam-watch" "$BIN_DIR/aiteam-watch"
 
 echo "Installed AITEAM MCP launcher: $BIN_DIR/aiteam-mcp"
+echo "Installed AITEAM dashboard launcher: $BIN_DIR/aiteam-watch"
 echo
 echo "Add this to ~/.codex/config.toml:"
 echo

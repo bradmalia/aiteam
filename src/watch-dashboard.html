@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AITEAM Watch</title>
+  <style>
+    :root { color-scheme: dark; --bg:#120d1e; --panel:#21162d; --border:#513d62; --text:#f5eef8; --muted:#b8a8c1; --cyan:#57e6ed; --green:#77e39b; --amber:#ffd166; --red:#ff7b91; }
+    * { box-sizing:border-box; } body { margin:0; padding:28px; font:15px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text); background:radial-gradient(circle at 10% 0%,#38204a 0,#120d1e 42%); }
+    main { max-width:1200px; margin:auto; } header { display:flex; justify-content:space-between; align-items:end; gap:20px; margin-bottom:20px; } h1 { margin:0; color:var(--cyan); font-size:28px; } h2 { margin:0 0 10px; font-size:16px; color:var(--cyan); } .subtitle,.muted { color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; } .panel { background:rgba(33,22,45,.92); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; box-shadow:0 8px 30px #0004; } .wide { grid-column:1/-1; }
+    .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; } .value { margin-top:5px; font-size:17px; overflow-wrap:anywhere; } .running { color:var(--amber); } .passed { color:var(--green); } .waiting { color:var(--cyan); } .failed { color:var(--red); }
+    ol { margin:8px 0 0; padding-left:25px; } li { margin:4px 0; } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:#e8dcef; } .event { padding:9px 0; border-bottom:1px solid #ffffff12; } .event:last-child { border-bottom:0; } .event-time { color:var(--muted); font-size:12px; } .event-type { color:var(--cyan); } .empty { color:var(--muted); font-style:italic; }
+    @media (max-width:800px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><div><h1>AITEAM Watch</h1><div class="subtitle">Read-only live workflow monitor</div></div><div id="refresh" class="muted">Connecting…</div></header>
+  <section class="grid">
+    <div class="panel"><div class="label">Status</div><div id="status" class="value">—</div></div>
+    <div class="panel"><div class="label">Agent</div><div id="agent" class="value">—</div></div>
+    <div class="panel"><div class="label">Phase</div><div id="phase" class="value">—</div></div>
+    <div class="panel"><div class="label">Elapsed</div><div id="elapsed" class="value">—</div></div>
+    <div class="panel wide"><div class="label">Repository</div><div id="repo" class="value">—</div></div>
+    <div class="panel wide"><h2>Gate Progress</h2><div id="gates" class="muted">—</div></div>
+    <div class="panel wide" id="questionsPanel" hidden><h2>User Input Required</h2><ol id="questions"></ol></div>
+    <div class="panel wide"><h2>Latest Agent Result</h2><div id="result" class="empty">No result yet.</div></div>
+    <div class="panel wide"><h2>Recent Events</h2><div id="events" class="empty">No events yet.</div></div>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const formatDuration = (seconds) => seconds == null ? '—' : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2,'0')}s`;
+  function render(data) {
+    const session = data.session;
+    const active = data.activeRun;
+    $('repo').textContent = data.repository;
+    $('status').textContent = session?.status || 'NO SESSION';
+    $('status').className = `value ${active ? 'running' : session?.status === 'COMPLETE' ? 'passed' : ''}`;
+    $('agent').textContent = active ? `${active.role} (${active.agentId})` : session?.currentStage ? session.currentStage : '—';
+    $('phase').textContent = active?.stage || session?.currentStage || '—';
+    $('elapsed').textContent = formatDuration(data.elapsedSeconds);
+    const plan = session?.phasePlan || [];
+    const completed = new Set(session?.completedStages || []);
+    $('gates').innerHTML = plan.map((gate) => `<span class="${completed.has(gate) ? 'passed' : gate === session?.currentStage ? (active ? 'running' : 'waiting') : ''}">${completed.has(gate) ? '✓' : gate === session?.currentStage ? '▶' : '○'} ${esc(gate)}</span>`).join(' &nbsp;→&nbsp; ');
+    const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
+    $('questionsPanel').hidden = questions.length === 0;
+    $('questions').innerHTML = questions.map((question) => `<li>${esc(question)}</li>`).join('');
+    const result = data.currentResult;
+    $('result').className = result ? '' : 'empty';
+    $('result').innerHTML = result ? `<pre>${esc(JSON.stringify(result, null, 2))}</pre>` : 'No result yet.';
+    const events = data.recentEvents || [];
+    $('events').className = events.length ? '' : 'empty';
+    $('events').innerHTML = events.slice().reverse().map((event) => `<div class="event"><div class="event-time">${esc(event.at || '')} <span class="event-type">${esc(event.type || '')}</span></div><div>${esc(event.summary || event.error || event.agentId || '')}</div></div>`).join('') || 'No events yet.';
+    $('refresh').textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 1.5s`;
+  }
+  async function refresh() { try { const response = await fetch('/api/state', { cache:'no-store' }); render(await response.json()); } catch (error) { $('refresh').textContent = `Connection error: ${error.message}`; } }
+  refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>

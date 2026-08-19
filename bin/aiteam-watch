@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+repo="${1:-$PWD}"
+port="${AITEAM_WATCH_PORT:-4317}"
+exec node "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/watch-server.mjs" --repo "$repo" --port "$port"

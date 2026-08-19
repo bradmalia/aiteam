@@ -6,7 +6,7 @@
   "description": "Agentic engineering team for Codex via MCP",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/server.mjs && node --check src/runtime.mjs && node --check src/state.mjs && node --check src/registry.mjs && node --check src/coordinator-guidance.mjs && node --check src/workflow.mjs && node --check src/git.mjs"
+    "check": "node --check src/server.mjs && node --check src/runtime.mjs && node --check src/state.mjs && node --check src/registry.mjs && node --check src/coordinator-guidance.mjs && node --check src/workflow.mjs && node --check src/git.mjs && node --check src/watch-server.mjs"
   },
   "engines": {
     "node": ">=20"
