@@ -1,44 +1,38 @@
 # AITEAM Workflow Contract
 
-This document describes the default engineering behavior. It is guidance for Coordinator, not a hard-coded runtime state machine.
+## Lifecycle
 
-## Planning
+The server enforces:
 
-Coordinator normally delegates to Analyst, Architect, Planner, and QA before implementation.
+```text
+Intake -> Architecture -> [Recruiting] -> Planning -> Critical Review
+       -> Implementation(task) -> Code Review(task) -> QA(task)
+       -> next task or Integration -> Ready to Complete -> Complete
+```
 
-Architect prefers small vertical slices that produce a runnable result. Architect checks the specialist registry first and calls Recruiter only when there is a genuine capability gap.
+Recruiting is an Architecture subphase and appears only for a genuine missing capability.
 
-## Critical Review
+## Gates
 
-The first Critical Reviewer invocation is comprehensive.
+- **Intake:** non-empty requirements and acceptance criteria.
+- **Architecture:** non-empty design and explicit specialist-gap list.
+- **Recruiting:** successful Recruiter JSON with a substantive inline contract and recorded provenance.
+- **Planning:** unique tasks, valid dependencies, acceptance criteria, and registered specialist IDs.
+- **Critical Review:** initial comprehensive review. BLOCKER/MAJOR findings route to Architecture or Planning and become locked repair findings.
+- **Implementation:** repository changes, exact changed paths, and observed validation results for one task.
+- **Code Review:** no BLOCKER or MAJOR finding.
+- **QA:** executed checks pass; any human-only checks are listed separately.
+- **Integration:** read-only Maintainer approval followed by a server-owned commit of QA-approved paths.
+- **Complete:** every task is `qa-passed` and integration has a resulting Git `HEAD`.
 
-That initial pass creates the authoritative material finding set. The finding set is then locked.
+Failed Code Review or QA sets the current task to `needs-rework` and returns it to its assigned implementation specialist. Invalid JSON, a nonzero process exit, or a timeout records failure without advancing the stage.
 
-Subsequent Critical Reviewer invocations are repair verification only:
+## Coordinator behavior
 
-- RESOLVED
-- PERSISTING
+Coordinator reports the exact agent, phase, and remaining phases before and after every call. Coordinator repeatedly calls `aiteam_advance`; it does not decide the next role. It calls `aiteam_complete` only when instructed by a `READY_TO_COMPLETE` response.
 
-The Reviewer must not reopen unchanged design areas or create unrelated new findings after the comprehensive pass. Repair verification may repeat as many times as needed.
-
-## Implementation
-
-Programmer implements one task/vertical slice at a time.
-
-Code Reviewer reviews the current task diff and current-task dependencies. BLOCKER and MAJOR findings cause rework. Minor findings are recorded but do not block. Future-task findings do not block the current task.
-
-Claims about frameworks, APIs, or version-specific behavior should be verified against authoritative/version-matched sources or deterministic runtime evidence before they block implementation.
-
-## QA
-
-QA validates machine-verifiable behavior and identifies checks that genuinely require human observation.
-
-Human-only checks do not become Programmer defects merely because they remain unverified. Coordinator routes them to the user after automated QA has otherwise passed.
+Status reads never advance work. Direct session patches cannot alter workflow authority. Out-of-order `aiteam_spawn_agent` calls are rejected.
 
 ## Human validation
 
-Codex presents concise manual checks in the same conversation. User feedback is returned to Coordinator, which decides which agent should handle it.
-
-## Maintainer
-
-Maintainer integrates only validated work. If Maintainer changes code while resolving a conflict, prior QA is invalidated and the changed result must pass Code Review and QA again.
+QA may return `PASS_WITH_MANUAL_VALIDATION` when machine-verifiable checks pass but honest visual, auditory, hardware, or usability judgment remains. Coordinator reports those checks to the user; their existence is not misclassified as a programmer defect.

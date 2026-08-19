@@ -12,8 +12,22 @@ echo
 cat <<CFG
 [mcp_servers.aiteam]
 command = "$BIN_DIR/aiteam-mcp"
+env_vars = [
+  "AITEAM_CODEX_BIN",
+  "AITEAM_CODEX_PREFIX_ARGS_JSON",
+  "AITEAM_CODEX_HOME",
+  "AITEAM_CODEX_MODEL",
+  "AITEAM_CODEX_PROVIDER",
+  "AITEAM_CODEX_PROVIDER_NAME",
+  "AITEAM_CODEX_BASE_URL",
+  "AITEAM_CODEX_WIRE_API",
+  "AITEAM_CODEX_REQUIRES_OPENAI_AUTH",
+  "AITEAM_CODEX_CONTEXT_WINDOW",
+  "AITEAM_CODEX_AUTO_COMPACT_LIMIT",
+  "AITEAM_COORDINATOR_READ_ONLY",
+]
 startup_timeout_sec = 10
-tool_timeout_sec = 3600
+tool_timeout_sec = 7200
 CFG
 echo
 echo "Then append templates/AGENTS.aiteam.md to the target project's AGENTS.md and restart Codex."

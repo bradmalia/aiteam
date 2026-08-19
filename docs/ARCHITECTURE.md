@@ -1,56 +1,54 @@
 # AITEAM Architecture
 
-## Goal
+## Control boundary
 
-AITEAM is a team of cooperating engineering agents invoked from Codex or another MCP-capable coding IDE.
+The AITEAM server owns mechanical workflow authority:
 
-The IDE is the user interface. AITEAM is the engineering organization behind the request.
+- repository-bound state and Git snapshots
+- fixed phase ordering and allowed stage transitions
+- required specialist selection
+- structured result validation
+- task ledger and dependency readiness
+- Code Review and QA gates
+- Recruiter provenance and specialist registration
+- subprocess timeout and process-group termination
+- exact validated paths eligible for integration
+- completion eligibility
 
-## Boundary
+Agents retain semantic authority inside their assigned scope: requirements, design, task decomposition, review findings, validation evidence, and implementation choices. A semantic result affects workflow state only after it satisfies the server's stage schema.
 
-The runtime may make mechanical decisions only:
-
-- validate repository paths
-- start subprocesses
-- enforce timeouts
-- persist state and transcripts
-- report process failure
-- expose MCP tools
-- inspect basic Git metadata
-
-The runtime must not make semantic workflow decisions such as:
-
-- whether a QA finding is really a defect
-- whether a design concern is material
-- whether a framework claim is credible
-- which implementation approach is architecturally best
-- whether a task should be split differently
-
-Those decisions belong to agents.
-
-## Primary interaction
+## Interaction
 
 ```text
-User -> Codex -> AITEAM MCP -> focused specialist Codex agents
+User -> read-only Coordinator -> AITEAM MCP -> focused specialist Codex subprocess
+                                      |
+                                      +-> protected state and server Git integration
 ```
 
-The primary Codex session becomes the Coordinator for the active AITEAM request. The Coordinator invokes specialist agents through `aiteam_spawn_agent` and records decisions with AITEAM state tools.
+`aiteam_advance` reads the current session, derives the only legal assignment, starts one synchronous specialist subprocess, validates its JSON result, and applies the legal transition. `aiteam_spawn_agent` funnels through the same function and rejects a mismatched agent ID.
 
-## Agent execution
+## State
 
-`aiteam_spawn_agent` launches a non-interactive Codex subprocess in the target repository. The runtime combines:
+The workspace `.aiteam/` directory contains readable session, event, specialist, and run artifacts and is automatically added to `.git/info/exclude`. Critical session/event/specialist records are mirrored under `.git/aiteam/`, allowing recovery if a model deletes the workspace copy.
 
-1. base agent contract
-2. role contract
-3. task/context supplied by Coordinator
-4. repository path
+Authoritative session fields cannot be patched through MCP. Coordinator may persist only notes and pending user input.
 
-The agent's stdout/stderr and metadata are preserved under `.aiteam/runs/`.
+## Execution
 
-## Git
+Specialists use the launcher-selected Codex version, model provider, context limits, and isolated child `CODEX_HOME`. Analysis, review, QA, Recruiter, and Maintainer roles are read-only. Registered implementation specialists use their declared workspace sandbox.
 
-AITEAM source is a Git repository.
+On POSIX, each specialist is a detached process-group leader. Timeout sends `SIGTERM` to the whole group and follows with `SIGKILL`, preventing descendant Codex processes from continuing to edit after a timeout. MCP timeouts are clamped to 300–7200 seconds.
 
-For target repositories, Maintainer owns commits to the validated baseline. Other agents may modify the working tree when their sandbox permits, but they must not represent unvalidated code as integrated.
+## Structured evidence
 
-Maintainer may resolve merge conflicts when safe. If a conflict is ambiguous, it returns the issue to the appropriate Programmer. Any code change after QA invalidates the earlier QA approval and requires Code Review + QA again.
+Each stage returns one JSON object containing an outcome, summary, evidence, and stage-specific fields. PASS results without required evidence are rejected. Review cannot pass with BLOCKER/MAJOR findings. Planner tasks must use registered specialists and valid dependencies. QA must report executed checks and distinguish manual validation.
+
+The server fingerprints each task's changed paths after implementation and again after QA. Any later change invalidates the approval and routes the task back to Implementation before review, QA, or integration can continue.
+
+## Specialist recruitment
+
+Architecture may identify capability gaps. The server routes each gap to Recruiter, hashes the successful run and proposal, and writes provenance with the generated specialist. Direct registration without a matching Recruiter proposal is rejected. Contracts must be substantive inline instructions, never paths to unrelated built-in contracts.
+
+## Git integration
+
+Maintainer inspects validated work read-only and proposes a commit message. The server gathers only paths recorded by implementation and approved by QA, builds a temporary index from `HEAD`, adds only those paths, commits that index, then synchronizes those paths in the real index. Unrelated staged or unstaged user work is preserved. `.aiteam/` and `.git/` paths are categorically rejected.

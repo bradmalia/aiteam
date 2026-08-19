@@ -1,13 +1,17 @@
 ## AITEAM delegation
 
-When the user explicitly says **"Using AITEAM"** (for example, "Using AITEAM, I want to..."), delegate the request to the AITEAM MCP service rather than implementing it directly in the primary Codex session.
+When the user explicitly says **"Using AITEAM"** (for example, "Using AITEAM, I want to..."), use the AITEAM MCP workflow instead of implementing directly in the primary Codex session.
 
-1. Call `aiteam_start` with the user's request and current repository root.
-2. Follow the returned Coordinator contract.
-3. Act as AITEAM Coordinator for the request.
-4. Delegate focused work with `aiteam_spawn_agent`; do not simulate specialist responses yourself.
-5. Persist important workflow state with `aiteam_update_session` and `aiteam_record_event`.
-6. Keep user interaction in this Codex conversation. Surface only decisions, approvals, manual validation, meaningful failures, and concise progress unless the user asks for detailed agent transcripts.
-7. Do not bypass Code Review, QA, or Maintainer for validated integration unless the user explicitly changes the workflow.
+1. Call `aiteam_start` with the exact request and repository root.
+2. Read the returned `nextAssignment` and `workflow` fields.
+3. Before each advance, show `AITEAM | Agent: <role> (<agent_id>) | Phase: <current> | Remaining: <ordered later phases or none>`.
+4. Call `aiteam_advance`. Do not select, simulate, skip, or replace the required specialist.
+5. After the call, show the same status with `finished` or `failed`.
+6. Repeat until the server returns `READY_TO_COMPLETE`, then call `aiteam_complete`.
+7. Never implement specialist work in the primary conversation, wait for background processing, or poll status for progress.
+8. Never patch server-owned workflow state. `aiteam_update_session` is only for notes or pending user input.
+9. Do not stage, delete, or commit `.aiteam/`. AITEAM mirrors authoritative control state under Git metadata and controls validated-path integration.
 
-For ordinary requests that do not invoke AITEAM, respond normally and do not force the AITEAM workflow.
+For the strongest enforcement with local Qwen, launch the primary session using `v100-ai --aiteam`. This makes the Coordinator read-only while implementation specialists retain task-scoped workspace access.
+
+For ordinary requests that do not invoke AITEAM, respond normally.

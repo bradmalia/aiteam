@@ -1,33 +1,69 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { newSession, readSession, patchSession, appendEvent } from './state.mjs';
-import { loadRegistry, coordinatorContract } from './registry.mjs';
-import { runAgent } from './runtime.mjs';
+import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './registry.mjs';
 import { gitSnapshot } from './git.mjs';
+import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
+import { advanceWorkflow, completeWorkflow, getCurrentAssignment, workflowStatus } from './workflow.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
-const toolDefs = [
+export const toolDefs = [
   {
     name: 'aiteam_start',
-    description: 'Start an AITEAM request in the current Git repository. Use when the user explicitly says "Using AITEAM".',
+    description: 'Initialize a server-governed AITEAM request in the current Git repository. This creates state only and does not start background workers. After success, report the returned agent/phase line and call aiteam_advance.',
     inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' } }, required: ['request'] }
   },
   {
     name: 'aiteam_status',
-    description: 'Read the current AITEAM session and Git snapshot.',
+    description: 'Read one AITEAM session, enforced workflow gate, active agent, current phase, and remaining phases. This never advances work and must not be polled.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' } } }
   },
   {
+    name: 'aiteam_advance',
+    description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. The Coordinator cannot select or skip phases.',
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, model: { type: 'string' } } }
+  },
+  {
     name: 'aiteam_spawn_agent',
-    description: 'Delegate focused work to an AITEAM specialist agent using a non-interactive Codex subprocess.',
+    description: 'Compatibility alias for aiteam_advance. The requested agent_id must equal the server-required agent for the current phase; arbitrary or out-of-order delegation is rejected.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' }, agent_id: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer' }, model: { type: 'string' } }, required: ['agent_id', 'task'] }
   },
   {
+    name: 'aiteam_register_specialist',
+    description: 'Register only a specialist proposal whose proposal_id was produced by a successful Recruiter stage. Direct coordinator-authored specialists and file-path contracts are rejected. Normal aiteam_advance operation registers verified proposals automatically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: { type: 'string' },
+        proposal_id: { type: 'string' },
+        specialist: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            role: { type: 'string' },
+            contract: { type: 'string' },
+            sandbox: { type: 'string', enum: ['read-only', 'workspace-write'] },
+            triggers: { type: 'array', items: { type: 'string' } },
+            capabilities: { type: 'array', items: { type: 'string' } }
+          },
+          required: ['id', 'role', 'contract']
+        }
+      },
+      required: ['proposal_id', 'specialist']
+    }
+  },
+  {
     name: 'aiteam_update_session',
-    description: 'Mechanically persist Coordinator-owned session state. The runtime does not interpret workflow semantics.',
+    description: 'Persist coordinator notes or pending user input only. Workflow status, stage, task ledger, evidence, and gates are server-owned and cannot be patched.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' }, patch: { type: 'object' } }, required: ['patch'] }
+  },
+  {
+    name: 'aiteam_complete',
+    description: 'Mark the session complete only after every planned task passed Code Review and QA and server-controlled Git integration succeeded.',
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' } } }
   },
   {
     name: 'aiteam_record_event',
@@ -51,12 +87,39 @@ function textResult(text, structuredContent = undefined) {
   return result;
 }
 
-async function callTool(name, args) {
+function phaseLine(workflow, suffix = '') {
+  if (!workflow?.active && workflow?.status !== 'READY_TO_COMPLETE') return `AITEAM | Status: ${workflow?.status || 'NO_SESSION'}`;
+  const remaining = workflow.remainingPhases?.length ? workflow.remainingPhases.join(' -> ') : 'none';
+  const identity = workflow.agentId ? `${workflow.agentRole || workflow.agentId} (${workflow.agentId})` : 'none';
+  return `AITEAM | Agent: ${identity}${suffix} | Phase: ${workflow.phase || 'Complete'} | Remaining: ${remaining}`;
+}
+
+function advanceResultText(result) {
+  const finished = phaseLine({
+    ...workflowStatus(result.assignment.session),
+    agentId: result.assignment.agentId,
+    agentRole: result.assignment.role,
+    phase: result.assignment.phase,
+    remainingPhases: workflowStatus(result.assignment.session).remainingPhases
+  }, ` ${['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed'}`);
+  const next = result.session.status === 'READY_TO_COMPLETE'
+    ? 'All enforced gates passed. Required next action: call aiteam_complete.'
+    : `Next enforced assignment: ${phaseLine(result.workflow)}`;
+  return [finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, next].join('\n');
+}
+
+export async function callTool(name, args) {
   const repo = repoOf(args);
   if (name === 'aiteam_start') {
+    const existing = readSession(repo);
+    if (existing && ['ACTIVE', 'BLOCKED', 'READY_TO_COMPLETE'].includes(existing.status)) {
+      throw new Error(`AITEAM session ${existing.id} is already ${existing.status}. Complete or cancel it before starting another request.`);
+    }
     const git = gitSnapshot(repo);
     const session = newSession(repo, args.request);
-    const registry = loadRegistry();
+    const registry = loadRegistry(repo);
+    const workflow = workflowStatus(session, repo);
+    const coordinatorReadOnly = process.env.AITEAM_COORDINATOR_READ_ONLY === 'true';
     const text = [
       `AITEAM ${VERSION} session started.`,
       `Repository: ${repo}`,
@@ -64,37 +127,106 @@ async function callTool(name, args) {
       '',
       coordinatorContract(),
       '',
+      coordinatorDirectiveText(session),
+      '',
+      phaseLine(workflow),
+      coordinatorReadOnly
+        ? 'Coordinator enforcement: read-only launcher mode is active.'
+        : 'Coordinator warning: direct-write prevention is not active. Restart with `v100-ai --aiteam` for a read-only primary Coordinator.',
+      '',
       '# Available agents',
       ...registry.agents.map((a) => `- ${a.id}: ${a.role}`),
       '',
-      'You are now the AITEAM Coordinator for this request. Delegate focused work with aiteam_spawn_agent and keep the user interaction in the primary Codex conversation.'
+      'You are now the AITEAM Coordinator for this request. Keep the user interaction in the primary Codex conversation.'
     ].join('\n');
-    return textResult(text, { session, git, agents: registry.agents });
+    return textResult(text, {
+      session,
+      git,
+      agents: registry.agents,
+      workflow,
+      coordinatorReadOnly,
+      nextAssignment: getCurrentAssignment(repo),
+      coordinatorDirective: coordinatorDirective(session)
+    });
   }
   if (name === 'aiteam_status') {
     const session = readSession(repo);
     const git = gitSnapshot(repo);
-    return textResult(JSON.stringify({ session, git }, null, 2), { session, git });
+    const workflow = workflowStatus(session, repo);
+    const text = [
+      coordinatorDirectiveText(session, { source: 'status' }),
+      '',
+      phaseLine(workflow),
+      '',
+      JSON.stringify({ session, git }, null, 2)
+    ].join('\n');
+    return textResult(text, {
+      session,
+      git,
+      workflow,
+      nextAssignment: session?.status === 'ACTIVE' && !session.activeRun ? getCurrentAssignment(repo) : null,
+      coordinatorDirective: coordinatorDirective(session)
+    });
+  }
+  if (name === 'aiteam_advance') {
+    const result = await advanceWorkflow({
+      repo,
+      timeoutSeconds: args.timeout_seconds,
+      model: args.model || null,
+      coordinatorContext: args.context || ''
+    });
+    return textResult(advanceResultText(result), result);
   }
   if (name === 'aiteam_spawn_agent') {
-    const timeoutMs = Math.max(1, Number(args.timeout_seconds || 3600)) * 1000;
-    const result = await runAgent({ repo, agentId: args.agent_id, task: args.task, context: args.context || '', timeoutMs, model: args.model || null });
-    const summary = [
-      `${result.role} completed with exit code ${result.exitCode}${result.timedOut ? ' (timed out)' : ''}.`,
-      '',
-      result.stdout || '(no stdout)',
-      result.stderr ? `\n[stderr]\n${result.stderr}` : ''
+    const result = await advanceWorkflow({
+      repo,
+      timeoutSeconds: args.timeout_seconds,
+      model: args.model || null,
+      coordinatorContext: [args.task || '', args.context || ''].filter(Boolean).join('\n\n'),
+      expectedAgentId: args.agent_id
+    });
+    return textResult(advanceResultText(result), result);
+  }
+  if (name === 'aiteam_register_specialist') {
+    const session = readSession(repo);
+    const proposal = session?.verifiedRecruiterProposals?.find((item) => item.id === args.proposal_id && !item.registered);
+    if (!proposal || JSON.stringify(proposal.specialist) !== JSON.stringify(args.specialist)) {
+      throw new Error('Specialist registration rejected: no matching unregistered Recruiter proposal.');
+    }
+    const provenance = { source: 'recruiter', runId: proposal.runId, proposalId: proposal.id };
+    const specialist = registerScopedSpecialist(repo, args.specialist, { provenance });
+    appendEvent(repo, {
+      type: 'specialist_registered',
+      specialistId: specialist.id,
+      role: specialist.role,
+      capabilities: specialist.capabilities,
+      provenance
+    });
+    patchSession(repo, {
+      verifiedRecruiterProposals: session.verifiedRecruiterProposals.map((item) => item.id === proposal.id ? { ...item, registered: true } : item)
+    });
+    const text = [
+      `Registered workflow-scoped specialist ${specialist.id}: ${specialist.role}.`,
+      'Required next action: call aiteam_advance; the server will route the registered specialist at the correct gate.'
     ].join('\n');
-    return textResult(summary, result);
+    return textResult(text, specialist);
   }
   if (name === 'aiteam_update_session') {
-    const session = patchSession(repo, args.patch || {});
-    appendEvent(repo, { type: 'session_updated', patch: args.patch || {} });
+    const allowed = new Set(['coordinatorNotes', 'pendingUserInput']);
+    const patch = args.patch || {};
+    const rejected = Object.keys(patch).filter((key) => !allowed.has(key));
+    if (rejected.length) throw new Error(`Server-owned session fields cannot be patched: ${rejected.join(', ')}`);
+    const session = patchSession(repo, patch);
+    appendEvent(repo, { type: 'session_updated', patch });
     return textResult(JSON.stringify(session, null, 2), session);
   }
   if (name === 'aiteam_record_event') {
     const event = appendEvent(repo, { type: 'coordinator_event', ...(args.event || {}) });
     return textResult(JSON.stringify(event, null, 2), event);
+  }
+  if (name === 'aiteam_complete') {
+    const session = completeWorkflow(repo);
+    return textResult(`AITEAM session complete at ${session.integration.head}.`, session);
   }
   if (name === 'aiteam_cancel') {
     const session = patchSession(repo, { status: 'CANCELLED', cancelReason: args.reason || 'Cancelled by user' });
@@ -104,7 +236,7 @@ async function callTool(name, args) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-async function handle(msg) {
+export async function handle(msg) {
   if (msg.method === 'initialize') {
     return {
       jsonrpc: '2.0',
@@ -133,12 +265,18 @@ async function handle(msg) {
   return null;
 }
 
-const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-for await (const line of rl) {
-  if (!line.trim()) continue;
-  let msg;
-  try { msg = JSON.parse(line); }
-  catch { continue; }
-  const response = await handle(msg);
-  if (response) process.stdout.write(JSON.stringify(response) + '\n');
+export async function runServer() {
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); }
+    catch { continue; }
+    const response = await handle(msg);
+    if (response) process.stdout.write(JSON.stringify(response) + '\n');
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runServer();
 }

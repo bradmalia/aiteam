@@ -1,101 +1,113 @@
 # AITEAM
 
-AITEAM is an agentic engineering team that is invoked from a coding IDE such as Codex.
+AITEAM is a server-governed engineering team for Codex and other MCP-capable coding IDEs.
 
-The intended interaction is:
+Invoke it from a Git repository with:
 
 ```text
 Using AITEAM, I want to add ...
 ```
 
-Codex remains the user interface. AITEAM provides the engineering-team contracts, state, specialist registry, and agent runner through MCP.
+The primary Codex conversation remains the user interface. The AITEAM MCP server owns workflow order, specialist routing, evidence gates, task state, and validated Git integration.
 
-## Design principle
+## Enforced workflow
 
-AITEAM deliberately keeps the runtime small:
+```text
+Intake -> Architecture -> Planning -> Critical Review
+       -> Implementation -> Code Review -> QA -> Integration -> Complete
+```
 
-> If a decision requires understanding what the task means, an agent makes the decision. If it only involves safely executing the decision, the runtime handles it.
+`aiteam_advance` runs exactly the specialist required by the current server gate. Specialist results must be structured JSON. Invalid output, timeouts, nonzero exits, out-of-order agents, material review findings, and QA failures cannot advance the workflow.
 
-The runtime therefore handles process execution, state persistence, repository boundaries, timeouts, and MCP transport. It does **not** contain a hard-coded Analyst -> Architect -> Planner -> QA state machine.
+Every implementation task must pass Code Review and QA. Failed review or QA returns that task to Implementation. `aiteam_complete` refuses completion until all tasks pass and server-controlled Git integration succeeds.
 
-## Initial agent roster
+## Agent roster
 
-- Coordinator
-- Analyst
-- Architect
-- Planner
-- Critical Reviewer
-- Recruiter
-- Code Reviewer
-- QA
-- Maintainer
-- Godot / GDScript Programmer
-- .NET / C# Programmer
-- Python Programmer
-- Java Programmer
-- Oracle PL/SQL Programmer
-- SQL Server T-SQL Programmer
+- Analyst, Architect, Planner, Critical Reviewer
+- Recruiter, Code Reviewer, QA, Maintainer
+- Godot/GDScript, .NET/C#, Python, Java, Oracle PL/SQL, and SQL Server T-SQL programmers
 
-Architect must reuse an existing specialist when one fits. Recruiter is used only for a real capability gap.
+Architect identifies genuine capability gaps. Recruiter proposes a complete inline specialist contract; the server verifies its provenance and registers it automatically. Coordinator-authored specialists and file-path contracts are rejected.
 
 ## Install
 
-AITEAM has no npm runtime dependencies. Node.js 20+ and Codex CLI are required.
+AITEAM has no npm runtime dependencies. Node.js 20+, Git, and Codex CLI are required.
 
 ```bash
 ./install.sh
 ```
 
-The installer creates a symlink at `~/.local/bin/aiteam-mcp` and prints the Codex MCP configuration to add to `~/.codex/config.toml`.
-
-Then add the AITEAM delegation contract to the project's `AGENTS.md`. A ready-to-copy template is in:
-
-```text
-templates/AGENTS.aiteam.md
-```
+The installer creates `~/.local/bin/aiteam-mcp`. Add the delegation contract from `templates/AGENTS.aiteam.md` to the target project's `AGENTS.md`.
 
 ## Codex MCP configuration
 
 ```toml
 [mcp_servers.aiteam]
 command = "/home/YOUR_USER/.local/bin/aiteam-mcp"
+env_vars = [
+  "AITEAM_CODEX_BIN",
+  "AITEAM_CODEX_PREFIX_ARGS_JSON",
+  "AITEAM_CODEX_HOME",
+  "AITEAM_CODEX_MODEL",
+  "AITEAM_CODEX_PROVIDER",
+  "AITEAM_CODEX_PROVIDER_NAME",
+  "AITEAM_CODEX_BASE_URL",
+  "AITEAM_CODEX_WIRE_API",
+  "AITEAM_CODEX_REQUIRES_OPENAI_AUTH",
+  "AITEAM_CODEX_CONTEXT_WINDOW",
+  "AITEAM_CODEX_AUTO_COMPACT_LIMIT",
+  "AITEAM_COORDINATOR_READ_ONLY",
+]
 startup_timeout_sec = 10
-tool_timeout_sec = 3600
+tool_timeout_sec = 7200
 ```
 
-Restart Codex after adding the MCP server.
+Restart Codex after changing MCP configuration.
 
-## Usage
+## Local Qwen on v100-ai
 
-From a repository:
+Use the dedicated mode:
 
 ```bash
-codex
+v100-ai --aiteam /path/to/repository
 ```
 
-Then:
+This pins the compatible Codex version and local model, gives specialist subprocesses an isolated `CODEX_HOME`, and launches the primary Coordinator with a read-only sandbox and `approval_policy="never"`. Implementation specialists receive only their registered task sandbox. The AITEAM server—not the primary Qwen session or Maintainer—performs validated-path Git commits.
+
+Without `--aiteam`, the server still enforces MCP workflow gates but cannot stop the primary model from using unrelated direct-write tools.
+
+## User-visible progress
+
+Before and after each synchronous specialist call, Coordinator reports:
 
 ```text
-Using AITEAM, I want to create a human-vs-computer Pong game with keyboard and gamepad support.
+AITEAM | Agent: Architect (architect) | Phase: Architecture | Remaining: Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration
 ```
 
-The primary Codex session acts as AITEAM Coordinator after calling the `aiteam_start` MCP tool. It may delegate focused work to specialist agents with `aiteam_spawn_agent`.
+AITEAM has no background scheduler. `aiteam_start` and `aiteam_status` do not perform work and must not be polled for progress.
 
-## Project state
+## Protected state
 
-AITEAM stores transient workflow state in the target repository under:
+Human-readable run data is written under `.aiteam/`, which the server automatically adds to `.git/info/exclude`:
 
 ```text
 .aiteam/
   session.json
   events.jsonl
+  specialists/
   runs/
 ```
 
-`.aiteam/` should normally be ignored by the target repository. Durable engineering artifacts should be written into the project itself when appropriate.
+Authoritative session, event, and specialist state is mirrored under Git metadata at `.git/aiteam/`. Deleting the workspace copy therefore does not erase the active workflow. `.aiteam/` is never an integration candidate.
 
-## Source repository
+## Main MCP tools
 
-This distribution is itself a Git repository. Continue development by cloning/copying it locally and committing changes normally.
+- `aiteam_start`: create a governed session
+- `aiteam_status`: inspect the current gate without advancing
+- `aiteam_advance`: execute and validate one required specialist stage
+- `aiteam_complete`: complete only after all gates pass
+- `aiteam_cancel`: cancel the active session
 
-See `docs/ARCHITECTURE.md` and `docs/WORKFLOW.md` for the design.
+`aiteam_spawn_agent` remains a compatibility alias but rejects any agent not required by the current stage. `aiteam_update_session` accepts notes and pending user input only.
+
+See `docs/ARCHITECTURE.md` and `docs/WORKFLOW.md` for details.

@@ -9,13 +9,11 @@ function safeName(s) {
 }
 
 export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null }) {
-  const agent = getAgent(agentId);
+  const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
   const prompt = buildAgentPrompt(agent, task, context);
-  const command = process.env.AITEAM_CODEX_BIN || 'codex';
-  const args = ['exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
-  if (model) args.push('--model', model);
-  args.push(prompt);
+  const invocation = buildCodexInvocation({ repo, agent, prompt, model });
+  const { command, args, childEnv } = invocation;
 
   const dir = ensureStateDir(repo);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -29,8 +27,9 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: repo,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe']
+      env: childEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32'
     });
 
     let stdout = '';
@@ -41,22 +40,27 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     child.stderr.on('data', (d) => { stderr += d; });
 
     let timedOut = false;
+    let forceKillTimer = null;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+      killChildTree(child, 'SIGTERM');
+      forceKillTimer = setTimeout(() => killChildTree(child, 'SIGKILL'), 5000);
+      forceKillTimer.unref();
     }, timeoutMs);
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       reject(err);
     });
 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      if (forceKillTimer && !timedOut) clearTimeout(forceKillTimer);
       fs.writeFileSync(stdoutPath, stdout);
       fs.writeFileSync(stderrPath, stderr);
       const meta = {
+        runId: base,
         agentId,
         role: agent.role,
         task,
@@ -74,4 +78,77 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
       resolve({ ...meta, stdout, stderr });
     });
   });
+}
+
+export function killChildTree(child, signal) {
+  if (!child?.pid) return false;
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+function parseStringArray(name, value) {
+  if (!value) return [];
+  let parsed;
+  try { parsed = JSON.parse(value); }
+  catch { throw new Error(`${name} must be a JSON array of strings.`); }
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
+    throw new Error(`${name} must be a JSON array of strings.`);
+  }
+  return parsed;
+}
+
+function configString(value) {
+  return JSON.stringify(String(value));
+}
+
+export function buildCodexInvocation({ repo, agent, prompt, model = null, env = process.env }) {
+  const command = env.AITEAM_CODEX_BIN || 'codex';
+  const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
+  const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
+  args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
+
+  const provider = env.AITEAM_CODEX_PROVIDER;
+  if (provider) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(provider)) {
+      throw new Error('AITEAM_CODEX_PROVIDER contains unsupported characters.');
+    }
+    args.push('-c', `model_provider=${configString(provider)}`);
+    if (env.AITEAM_CODEX_PROVIDER_NAME) {
+      args.push('-c', `model_providers.${provider}.name=${configString(env.AITEAM_CODEX_PROVIDER_NAME)}`);
+    }
+    if (env.AITEAM_CODEX_BASE_URL) {
+      args.push('-c', `model_providers.${provider}.base_url=${configString(env.AITEAM_CODEX_BASE_URL)}`);
+    }
+    if (env.AITEAM_CODEX_WIRE_API) {
+      args.push('-c', `model_providers.${provider}.wire_api=${configString(env.AITEAM_CODEX_WIRE_API)}`);
+    }
+    if (env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH) {
+      const requiresAuth = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH === 'true';
+      args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuth}`);
+    }
+  }
+
+  if (env.AITEAM_CODEX_CONTEXT_WINDOW) {
+    args.push('-c', `model_context_window=${Number(env.AITEAM_CODEX_CONTEXT_WINDOW)}`);
+  }
+  if (env.AITEAM_CODEX_AUTO_COMPACT_LIMIT) {
+    args.push('-c', `model_auto_compact_token_limit=${Number(env.AITEAM_CODEX_AUTO_COMPACT_LIMIT)}`);
+  }
+
+  const selectedModel = model || env.AITEAM_CODEX_MODEL;
+  if (selectedModel) args.push('--model', selectedModel);
+  args.push(prompt);
+
+  const childEnv = { ...env };
+  if (env.AITEAM_CODEX_HOME) {
+    fs.mkdirSync(env.AITEAM_CODEX_HOME, { recursive: true });
+    childEnv.CODEX_HOME = env.AITEAM_CODEX_HOME;
+  }
+  return { command, args, childEnv };
 }
