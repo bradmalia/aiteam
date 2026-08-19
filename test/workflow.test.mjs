@@ -162,11 +162,40 @@ test('invalid structured output and out-of-order agents cannot advance workflow'
 });
 
 test('structured stage schemas and timeout bounds are enforced', () => {
+  const awaiting = parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need clarification', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['What platform should we target?'], userConfirmed: false }));
+  assert.equal(awaiting.outcome, 'AWAITING_USER');
+  assert.equal(awaiting.userConfirmed, false);
+  assert.throws(() => parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: ['Still unclear'], userConfirmed: false })), /cannot PASS/i);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [] })), /non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
   assert.equal(normalizeTimeoutSeconds(1), 300);
   assert.equal(normalizeTimeoutSeconds(9000), 7200);
   assert.equal(normalizeTimeoutSeconds(undefined), 3600);
+});
+
+test('Analyst Intake pauses for user answers and blocks Architecture until confirmation', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build a game');
+  const runner = queuedRunner(repo, [
+    { stdout: JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need platform decision', evidence: ['User requirements are incomplete'], requirements: [], acceptanceCriteria: [], questions: ['Should this be browser-based?'], userConfirmed: false }) },
+    { stdout: result('PASS', { requirements: ['Browser game'], acceptanceCriteria: ['Runs in a browser'], questions: [], userConfirmed: true }) },
+    { stdout: result('PASS', { design: ['Use a browser game architecture'], specialistNeeds: [] }) }
+  ]);
+
+  const awaiting = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  assert.equal(awaiting.session.status, 'ACTIVE');
+  assert.equal(awaiting.session.currentStage, 'intake');
+  assert.deepEqual(awaiting.session.pendingUserInput.questions, ['Should this be browser-based?']);
+  await assert.rejects(callTool('aiteam_update_session', {
+    repository: repo,
+    patch: { currentStage: 'architecture' }
+  }), /Server-owned session fields/);
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Yes, make it browser-based.' } });
+  const intake = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  assert.equal(intake.session.currentStage, 'architecture');
+  assert.equal(intake.session.pendingUserInput, null);
+  const architecture = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  assert.equal(architecture.session.currentStage, 'planning');
 });
 
 test('a structured BLOCKED result stops the session without requiring pass-only fields', async () => {

@@ -95,14 +95,19 @@ function phaseLine(workflow, suffix = '') {
 }
 
 function advanceResultText(result) {
+  const stateLabel = result.result.outcome === 'AWAITING_USER'
+    ? 'awaiting user'
+    : ['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed';
   const finished = phaseLine({
     ...workflowStatus(result.assignment.session),
     agentId: result.assignment.agentId,
     agentRole: result.assignment.role,
     phase: result.assignment.phase,
     remainingPhases: workflowStatus(result.assignment.session).remainingPhases
-  }, ` ${['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed'}`);
-  const next = result.session.status === 'READY_TO_COMPLETE'
+  }, ` ${stateLabel}`);
+  const next = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
+    ? `User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: ask the user these questions, then call aiteam_update_session with pendingUserInput containing the response.`
+    : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
     : `Next enforced assignment: ${phaseLine(result.workflow)}`;
   return [finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, next].join('\n');
@@ -166,6 +171,7 @@ export async function callTool(name, args) {
         session: firstAdvance.session,
         workflow: firstAdvance.workflow,
         nextAssignment: firstAdvance.session.status === 'ACTIVE' ? getCurrentAssignment(repo) : null,
+        coordinatorDirective: coordinatorDirective(firstAdvance.session),
         firstAdvance
       });
     }
@@ -238,8 +244,18 @@ export async function callTool(name, args) {
     const patch = args.patch || {};
     const rejected = Object.keys(patch).filter((key) => !allowed.has(key));
     if (rejected.length) throw new Error(`Server-owned session fields cannot be patched: ${rejected.join(', ')}`);
-    const session = patchSession(repo, patch);
-    appendEvent(repo, { type: 'session_updated', patch });
+    const current = readSession(repo);
+    const normalizedPatch = { ...patch };
+    if (Object.hasOwn(patch, 'pendingUserInput')) {
+      if (!current.pendingUserInput?.questions?.length) throw new Error('No Analyst question is awaiting a user response.');
+      const response = typeof patch.pendingUserInput === 'string'
+        ? patch.pendingUserInput.trim()
+        : patch.pendingUserInput?.response;
+      if (typeof response !== 'string' || !response.trim()) throw new Error('pendingUserInput must contain a non-empty user response.');
+      normalizedPatch.pendingUserInput = { ...current.pendingUserInput, response: response.trim(), answeredAt: new Date().toISOString() };
+    }
+    const session = patchSession(repo, normalizedPatch);
+    appendEvent(repo, { type: 'session_updated', patch: normalizedPatch });
     return textResult(JSON.stringify(session, null, 2), session);
   }
   if (name === 'aiteam_record_event') {

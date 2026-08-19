@@ -86,6 +86,8 @@ AITEAM | Agent: Architect (architect) | Phase: Architecture | Remaining: Plannin
 
 AITEAM has no background scheduler. `aiteam_start` synchronously runs the first required specialist (Analyst by default), while `aiteam_status` only reads state and must not be polled for progress.
 
+Intake is owned by the Analyst. The Analyst may return `AWAITING_USER` with clarification questions; the server keeps the workflow in Intake until the user response is recorded with `aiteam_update_session` and the Analyst returns a user-confirmed requirements artifact. Architecture cannot run against an unconfirmed request.
+
 ## Protected state
 
 Human-readable run data is written under `.aiteam/`, which the server automatically adds to `.git/info/exclude`:

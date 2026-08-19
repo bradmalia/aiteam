@@ -37,7 +37,8 @@ Do not claim commands, files, or tests that you did not actually observe.`;
 
 const STAGE_SCHEMAS = {
   intake: `${COMMON_SCHEMA}
-Also return "requirements" (non-empty string array), "acceptanceCriteria" (non-empty string array), and "questions" (string array).`,
+For Intake, "outcome" may also be "AWAITING_USER". Also return "requirements" (string array), "acceptanceCriteria" (string array), "questions" (string array), and boolean "userConfirmed".
+Use AWAITING_USER when clarification is needed: include non-empty questions and set userConfirmed to false. Use PASS only when questions is empty, requirements and acceptanceCriteria are complete, and userConfirmed is true.`,
   architecture: `${COMMON_SCHEMA}
 Also return "design" (non-empty string array) and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work.`,
   recruiting: `${COMMON_SCHEMA}
@@ -84,7 +85,7 @@ function parseJson(stdout) {
 export function parseStageResult(stage, stdout) {
   const result = parseJson(stdout);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error('Specialist result must be one JSON object.');
-  const allowed = stage === 'qa' ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION'] : ['PASS', 'FAIL', 'BLOCKED'];
+  const allowed = stage === 'qa' ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION'] : stage === 'intake' ? ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER'] : ['PASS', 'FAIL', 'BLOCKED'];
   if (!allowed.includes(result.outcome)) throw new Error(`${stage} outcome must be one of: ${allowed.join(', ')}.`);
   result.summary = nonEmptyString(result.summary, 'summary');
   result.evidence = stringArray(result.evidence || [], 'evidence', { nonEmpty: result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION' });
@@ -93,6 +94,10 @@ export function parseStageResult(stage, stdout) {
     result.requirements = stringArray(result.requirements || [], 'requirements', { nonEmpty: result.outcome === 'PASS' });
     result.acceptanceCriteria = stringArray(result.acceptanceCriteria || [], 'acceptanceCriteria', { nonEmpty: result.outcome === 'PASS' });
     result.questions = stringArray(result.questions || [], 'questions');
+    result.userConfirmed = result.userConfirmed === undefined ? result.questions.length === 0 : result.userConfirmed;
+    if (typeof result.userConfirmed !== 'boolean') throw new Error('userConfirmed must be a boolean.');
+    if (result.outcome === 'AWAITING_USER' && result.questions.length === 0) throw new Error('AWAITING_USER Intake results must include at least one question.');
+    if (result.outcome === 'PASS' && (result.questions.length > 0 || !result.userConfirmed)) throw new Error('Intake cannot PASS while questions remain or userConfirmed is false.');
   } else if (stage === 'architecture') {
     result.design = stringArray(result.design || [], 'design', { nonEmpty: result.outcome === 'PASS' });
     if (!Array.isArray(result.specialistNeeds || [])) throw new Error('specialistNeeds must be an array.');
@@ -209,6 +214,8 @@ export function workflowStatus(session, repo = null) {
     stage,
     agentId,
     agentRole: agent?.role || null,
+    awaitingUser: Boolean(session.pendingUserInput && session.pendingUserInput.response == null),
+    pendingQuestions: session.pendingUserInput?.questions || [],
     remainingPhases: remaining,
     currentTaskId: session.currentTaskId
   };
@@ -224,6 +231,7 @@ function stageContext(session, repo) {
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
     taskLedger: session.taskLedger,
+    pendingUserInput: session.pendingUserInput,
     currentTask: currentTask(session),
     recruiterGap: session.recruiterQueue[0] || null,
     availableAgents: registry
@@ -232,7 +240,7 @@ function stageContext(session, repo) {
 
 function assignmentText(stage, session) {
   const details = {
-    intake: 'Analyze the active request and repository. Produce testable requirements and acceptance criteria.',
+    intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. If information is missing, return AWAITING_USER with precise questions and do not advance the workflow. Incorporate any pending user response. Return PASS only after the user has confirmed complete requirements and acceptance criteria.',
     architecture: 'Design the implementation architecture and identify only genuine specialist capability gaps.',
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
     planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs.',
@@ -251,6 +259,9 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
   if (!session) throw new Error('No active AITEAM session exists in this repository.');
   if (session.status === 'READY_TO_COMPLETE') throw new Error('All gates passed. Call aiteam_complete.');
   if (session.status !== 'ACTIVE') throw new Error(`AITEAM session is not active: ${session.status}`);
+  if (session.currentStage !== 'intake' && session.stageEvidence.intake?.result?.userConfirmed !== true) {
+    throw new Error('Workflow gate rejected: Analyst Intake must produce a user-confirmed requirements artifact before Architecture.');
+  }
   if (session.activeRun) {
     const age = Date.now() - Date.parse(session.activeRun.startedAt || 0);
     if (Number.isFinite(age) && age < 3 * 60 * 60 * 1000) {
@@ -349,6 +360,18 @@ function applyResult(repo, session, assignment, result, run) {
   const stage = assignment.stage;
   const passed = result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
 
+  if (stage === 'intake' && result.outcome === 'AWAITING_USER') {
+    const pendingUserInput = {
+      stage: 'intake',
+      questions: result.questions,
+      response: null,
+      requestedAt: new Date().toISOString(),
+      runId: run.runId
+    };
+    appendEvent(repo, { type: 'user_input_requested', stage, questions: result.questions, runId: run.runId });
+    return writeSession(repo, { ...next, pendingUserInput });
+  }
+
   if (result.outcome === 'BLOCKED') {
     return writeSession(repo, { ...next, status: 'BLOCKED', blockedReason: result.summary });
   }
@@ -366,6 +389,7 @@ function applyResult(repo, session, assignment, result, run) {
   if (stage === 'intake') {
     next.completedStages = [...new Set([...next.completedStages, 'intake'])];
     next.currentStage = 'architecture';
+    next.pendingUserInput = null;
   } else if (stage === 'architecture') {
     next.completedStages = [...new Set([...next.completedStages, 'architecture'])];
     next.recruiterQueue = result.specialistNeeds.filter((gap) => !hasSpecialist(repo, proposedSpecialistId(gap)));

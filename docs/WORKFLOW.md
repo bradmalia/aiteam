@@ -15,6 +15,7 @@ Recruiting is an Architecture subphase and appears only for a genuine missing ca
 ## Gates
 
 - **Intake:** non-empty requirements and acceptance criteria.
+- **Intake interaction:** the Analyst owns the user conversation. `AWAITING_USER` is a valid Intake result when clarification is required; the server records the questions and keeps the gate open. The user response is persisted through `aiteam_update_session`, then the Analyst must run again and return `PASS` with `userConfirmed: true` and no remaining questions.
 - **Architecture:** non-empty design and explicit specialist-gap list.
 - **Recruiting:** successful Recruiter JSON with a substantive inline contract and recorded provenance.
 - **Planning:** unique tasks, valid dependencies, acceptance criteria, and registered specialist IDs.

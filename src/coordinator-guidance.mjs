@@ -28,6 +28,19 @@ export function coordinatorDirective(session = null) {
     };
   }
 
+  if (session.pendingUserInput?.questions?.length && session.pendingUserInput.response == null) {
+    return {
+      autonomous: false,
+      userProgressReporting: { required: true },
+      requiredNextAction: {
+        tool: 'aiteam_update_session',
+        recommendedAgentId: 'analyst',
+        instruction: 'Ask the user the pending Analyst questions, then call aiteam_update_session with pendingUserInput containing the user response. Do not advance to Architecture.'
+      },
+      prohibitedActions: ['advance_without_user_response', 'implement_specialist_work_in_the_coordinator', 'skip_intake_confirmation']
+    };
+  }
+
   return {
     autonomous: false,
     userProgressReporting: {
@@ -81,6 +94,8 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     : 'Starting a session runs the first required specialist synchronously; no specialists are processing in parallel.';
   const continuation = directive.requiredNextAction.tool === 'aiteam_complete'
     ? 'All enforced gates have passed. Do not run another specialist; call aiteam_complete.'
+    : directive.requiredNextAction.tool === 'aiteam_update_session'
+      ? 'Ask the user the listed Analyst questions, persist the response with aiteam_update_session, and only then call aiteam_advance for Analyst. Architecture is forbidden until Intake is confirmed.'
     : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
 
   return [
