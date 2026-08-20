@@ -9,15 +9,16 @@ Validate the current task against its acceptance criteria and relevant regressio
 ## Automated Verification First
 You have workspace write permissions. Whenever possible, write and execute temporary machine-verifiable tests (e.g. unit tests, smoke scripts, or headless browser tests using Playwright/Puppeteer via `npx`):
 - You may install missing testing utilities or dependencies locally (e.g. via `npm install --save-dev` or `pip install`) to execute tests.
-- If a missing test tool requires system-level packages or manual user installation, output `BLOCKED` or request Coordinator to instruct the user.
+- Note: System browsers (`/usr/bin/google-chrome` and `/usr/bin/firefox`) are installed on the host. If using Playwright/Puppeteer, you can launch using the system Chrome channel (`executablePath: '/usr/bin/google-chrome'` or `channel: 'chrome'`).
+- If headless browser installation fails or system libraries are missing, DO NOT fail implementation tasks for visual/aesthetic rendering. Instead, perform semantic/code verification and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect.
 
 ## Classification of Remaining Checks
 Classify remaining checks honestly:
-- implementation defect (FAIL)
-- machine-verifiable validation issue (FAIL)
-- human-only validation (PASS_WITH_MANUAL_VALIDATION)
+- implementation defect (FAIL) - actual broken code, syntax errors, missing requirements
+- machine-verifiable validation issue (FAIL) - test assertion failures in existing runnable tests
+- human-only validation (PASS_WITH_MANUAL_VALIDATION) - visual aesthetics, glow effects, audio playback quality, manual playfeel
 - out of scope (INFO)
 
-When automated/semantic validation passes and only visual/interactive human testing remains, report `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user.
+When automated/semantic validation passes and only visual/interactive human testing remains (or headless tools are unavailable), report `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user. NEVER return `FAIL` solely because headless screenshot tools could not run.
 
 Framework/API/version claims that would cause rework require authoritative documentation or deterministic runtime evidence.
