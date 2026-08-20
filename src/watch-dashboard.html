@@ -83,9 +83,47 @@
     
     const plan = session?.phasePlan || [];
     const completed = new Set(session?.completedStages || []);
-    $('gates').innerHTML = plan.map((gate) => `<span class="${completed.has(gate) ? 'passed' : gate === session?.currentStage ? (active ? 'running' : 'waiting') : ''}">${completed.has(gate) ? '✓' : gate === session?.currentStage ? '▶' : '○'} ${esc(gate)}</span>`).join(' &nbsp;→&nbsp; ');
-    
     const tasks = session?.taskLedger || [];
+    const completedTasksCount = tasks.filter((t) => t.status === 'qa-passed' && t.integration?.committed).length;
+    const totalTasks = tasks.length;
+    
+    let gatesHtml = '';
+    const setupGates = ['intake', 'architecture', 'planning', 'critical-review'];
+    gatesHtml += setupGates.filter((g) => plan.includes(g)).map((gate) => {
+      const isPassed = completed.has(gate);
+      const isCurrent = gate === session?.currentStage;
+      return `<span class="${isPassed ? 'passed' : isCurrent ? (active ? 'running' : 'waiting') : ''}">${isPassed ? '✓' : isCurrent ? '▶' : '○'} ${esc(gate)}</span>`;
+    }).join(' &nbsp;→&nbsp; ');
+
+    if (totalTasks > 0) {
+      const taskCycleStages = ['implementation', 'code-review', 'qa', 'integration'];
+      const activeTaskIdx = tasks.findIndex((t) => t.id === currentTaskId);
+      const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : (completedTasksCount === totalTasks ? totalTasks : completedTasksCount + 1);
+      const taskProgressLabel = `Tasks (${completedTasksCount}/${totalTasks} complete)`;
+      
+      const cycleHtml = taskCycleStages.map((stage) => {
+        const isCurrent = stage === session?.currentStage;
+        return `<span class="${isCurrent ? (active ? 'running' : 'waiting') : ''}">${isCurrent ? '▶' : '○'} ${esc(stage)}</span>`;
+      }).join(' &nbsp;→&nbsp; ');
+
+      const allDone = completed.has('integration') || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
+      gatesHtml += ` &nbsp;→&nbsp; <span style="padding:2px 8px; border:1px solid rgba(0,255,255,0.3); border-radius:4px; background:rgba(0,255,255,0.05); font-weight:600;"><span style="color:var(--cyan); margin-right:6px;">[Task ${taskNum}/${totalTasks}]</span>${cycleHtml}</span>`;
+      if (allDone) {
+        gatesHtml += ` &nbsp;→&nbsp; <span class="passed">✓ complete</span>`;
+      }
+    } else {
+      const remainingGates = plan.filter((g) => !setupGates.includes(g));
+      if (remainingGates.length) {
+        gatesHtml += ' &nbsp;→&nbsp; ' + remainingGates.map((gate) => {
+          const isPassed = completed.has(gate);
+          const isCurrent = gate === session?.currentStage;
+          return `<span class="${isPassed ? 'passed' : isCurrent ? (active ? 'running' : 'waiting') : ''}">${isPassed ? '✓' : isCurrent ? '▶' : '○'} ${esc(gate)}</span>`;
+        }).join(' &nbsp;→&nbsp; ');
+      }
+    }
+
+    $('gates').innerHTML = gatesHtml;
+    
     const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
     const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
     
