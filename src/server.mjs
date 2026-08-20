@@ -129,6 +129,9 @@ function openBrowser(url) {
 }
 
 function ensureWatchServer(repo) {
+  if (process.env.NODE_ENV === 'test' || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
+    return Promise.resolve();
+  }
   const url = 'http://127.0.0.1:4317/';
   const encodedRepo = encodeURIComponent(path.resolve(repo));
   return new Promise((resolve) => {
