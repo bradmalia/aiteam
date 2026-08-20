@@ -406,6 +406,17 @@ function applyResult(repo, session, assignment, result, run) {
     } else if (stage === 'code-review' || stage === 'qa') {
       next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'needs-rework', [`${stage}Failure`]: result } : task);
       next.currentStage = 'implementation';
+    } else if (stage === 'implementation') {
+      // Implementation specialists are forbidden from returning FAIL — they must write files and return PASS.
+      // A FAIL outcome here almost always means the specialist hallucinated a sandbox restriction
+      // instead of calling exec_command/bash. Treat as a retry: set BLOCKED so the coordinator
+      // calls aiteam_advance again, which will re-spawn the specialist with the correct write access.
+      const retryReason =
+        `Implementation specialist returned FAIL instead of writing files to disk. ` +
+        `Specialist summary: "${result.summary}". ` +
+        `This is NOT a real sandbox restriction — the specialist has full workspace-write access. ` +
+        `Call aiteam_advance to retry; the specialist must use exec_command/bash to write files before emitting PASS.`;
+      return writeSession(repo, { ...next, status: 'BLOCKED', blockedReason: retryReason });
     }
     return writeSession(repo, next);
   }
@@ -455,7 +466,12 @@ function applyResult(repo, session, assignment, result, run) {
   } else if (stage === 'implementation') {
     const missing = result.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
     if (missing.length) {
-      throw new Error(`Implementation reported files that are not visible in the server workspace: ${missing.join(', ')}`);
+      throw new Error(
+        `Implementation specialist did not write files to disk (missing: ${missing.join(', ')}). ` +
+        `This is NOT a sandbox restriction — the specialist has full workspace-write access. ` +
+        `The specialist must call exec_command or bash to write files before emitting PASS. ` +
+        `Call aiteam_advance to retry so the specialist writes the files.`
+      );
     }
     const implementationFingerprint = fingerprintPaths(repo, result.filesChanged);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {

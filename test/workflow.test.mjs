@@ -198,9 +198,28 @@ test('implementation cannot pass when reported files are absent from the server 
     { stdout: result('PASS', { filesChanged: ['missing.py'], validations: [] }) }
   ]);
   for (let i = 0; i < 4; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  await assert.rejects(advanceWorkflow({ repo, runner, timeoutSeconds: 300 }), /not visible in the server workspace/);
+  await assert.rejects(advanceWorkflow({ repo, runner, timeoutSeconds: 300 }), /did not write files to disk/);
   assert.equal(readSession(repo).currentStage, 'implementation');
 });
+
+test('implementation FAIL routes to BLOCKED with retry instructions instead of staying stuck', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build feature');
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
+    { stdout: result('PASS', { design: ['Module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('FAIL', { summary: 'Cannot run the command due to insufficient sandbox permissions.' }) }
+  ]);
+  for (let i = 0; i < 4; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const session = readSession(repo);
+  assert.equal(session.status, 'BLOCKED');
+  assert.match(session.blockedReason, /Implementation specialist returned FAIL/);
+  assert.match(session.blockedReason, /NOT a real sandbox restriction/);
+});
+
 
 test('structured stage schemas and timeout bounds are enforced', () => {
   const awaiting = parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need clarification', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['What platform should we target?'], userConfirmed: false }));

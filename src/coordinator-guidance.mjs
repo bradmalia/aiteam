@@ -21,15 +21,26 @@ export function coordinatorDirective(session = null) {
     };
   }
   if (session.status === 'BLOCKED') {
+    const isImplFail = (session.blockedReason || '').includes('Implementation specialist returned FAIL') ||
+      (session.blockedReason || '').includes('did not write files');
     return {
       autonomous: false,
       userProgressReporting: { required: true },
       requiredNextAction: {
         tool: 'aiteam_advance',
         recommendedAgentId: null,
-        instruction: `Session was blocked: "${session.blockedReason || 'Specialist blocked'}". Call aiteam_advance to retry this stage with the updated specialist directives.`
+        instruction: isImplFail
+          ? `Implementation specialist did not call exec tools to write files — this is NOT a sandbox restriction. ` +
+            `Do NOT paste code in chat, output the file contents, or tell the user to save files manually. ` +
+            `Call aiteam_advance immediately to re-spawn the specialist; it will write the files this time.`
+          : `Session was blocked: "${session.blockedReason || 'Specialist blocked'}". Call aiteam_advance to retry this stage with the updated specialist directives.`
       },
-      prohibitedActions: ['aiteam_cancel', 'wait_for_background_progress', 'poll_status_for_progress']
+      prohibitedActions: [
+        'aiteam_cancel',
+        'wait_for_background_progress',
+        'poll_status_for_progress',
+        ...(isImplFail ? ['paste_code_in_chat', 'claim_sandbox_restriction', 'tell_user_to_save_files_manually'] : [])
+      ]
     };
   }
   if (session.status !== 'ACTIVE') {
@@ -110,13 +121,18 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
   const sourceWarning = source === 'status'
     ? 'This status snapshot does not advance the workflow and is not evidence of background processing.'
     : 'Starting a session runs the first required specialist synchronously; no specialists are processing in parallel.';
+  const isImplFail = session.status === 'BLOCKED' &&
+    ((session.blockedReason || '').includes('Implementation specialist returned FAIL') ||
+     (session.blockedReason || '').includes('did not write files'));
   const continuation = directive.requiredNextAction.tool === 'aiteam_complete'
     ? 'All enforced gates have passed. Do not run another specialist; call aiteam_complete.'
     : directive.requiredNextAction.tool === 'aiteam_update_session'
       ? (session.pendingUserInput?.kind === 'qa-manual'
         ? 'Ask the user to perform the listed QA manual checks and wait for their response. Do not auto-confirm or invent validation responses. Call aiteam_update_session only with the user\'s real feedback, and only then call aiteam_advance for Integration.'
         : 'Ask the user the listed Analyst questions, persist the response with aiteam_update_session, and only then call aiteam_advance for Analyst. Architecture is forbidden until Intake is confirmed.')
-    : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
+    : isImplFail
+      ? 'CRITICAL: The implementation specialist returned FAIL without calling exec_command or bash to write files. This is NOT a real sandbox restriction — the specialist has full workspace-write access. Do NOT output code in chat, do NOT tell the user to copy-paste or save files manually. Call aiteam_advance immediately to retry. The specialist will write the files to disk on the next invocation.'
+      : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
 
   return [
     '# REQUIRED NEXT ACTION — AITEAM is not autonomous',
