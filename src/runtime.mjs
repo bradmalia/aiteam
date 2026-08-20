@@ -24,17 +24,52 @@ function outputSchemaPath(repo, runBase, stage = null) {
       items: {
         type: 'object',
         required: ['command', 'result'],
-        properties: { command: { type: 'string' }, result: { type: 'string' } }
+        properties: { command: { type: 'string' }, result: { type: 'string' } },
+        additionalProperties: false
       }
     };
     required.push('filesChanged', 'validations');
+  } else if (stage === 'code-review' || stage === 'critical-review') {
+    baseProperties.findings = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'severity'],
+        properties: {
+          id: { type: 'string' },
+          severity: { type: 'string' },
+          location: { type: 'string' },
+          impact: { type: 'string' },
+          description: { type: 'string' },
+          recommendation: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.repairStage = { type: ['string', 'null'] };
+    required.push('findings');
+  } else if (stage === 'qa') {
+    baseProperties.checks = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'status', 'evidence'],
+        properties: { name: { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' } },
+        additionalProperties: false
+      }
+    };
+    baseProperties.manualChecks = { type: 'array', items: { type: 'string' } };
+    required.push('checks', 'manualChecks');
+  } else if (stage === 'integration') {
+    baseProperties.commitMessage = { type: 'string' };
+    required.push('commitMessage');
   }
 
   const schema = {
     type: 'object',
     required,
     properties: baseProperties,
-    additionalProperties: true
+    additionalProperties: false
   };
   fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2) + '\n');
   return schemaPath;
