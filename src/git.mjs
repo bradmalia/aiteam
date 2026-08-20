@@ -26,10 +26,22 @@ export function gitSnapshot(repo) {
   if (path.resolve(root) !== expected) {
     throw new Error(`Repository boundary mismatch. Requested ${expected}, Git root is ${root}. Initialize Git in the project itself before using AITEAM.`);
   }
+  let head = null;
+  try {
+    head = git(repo, ['rev-parse', 'HEAD']);
+  } catch {
+    head = 'EMPTY_INITIAL_REPO';
+  }
+  let branch = '';
+  try {
+    branch = git(repo, ['branch', '--show-current']);
+  } catch {
+    branch = 'main';
+  }
   return {
     root,
-    branch: git(repo, ['branch', '--show-current']),
-    head: git(repo, ['rev-parse', 'HEAD']),
+    branch,
+    head,
     status: git(repo, ['status', '--short'])
   };
 }
