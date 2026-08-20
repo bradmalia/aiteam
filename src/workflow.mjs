@@ -95,7 +95,14 @@ export function parseStageResult(stage, stdout) {
   if (stage === 'intake') {
     result.requirements = stringArray(result.requirements || [], 'requirements', { nonEmpty: result.outcome === 'PASS' });
     result.acceptanceCriteria = stringArray(result.acceptanceCriteria || [], 'acceptanceCriteria', { nonEmpty: result.outcome === 'PASS' });
-    result.questions = stringArray(result.questions || [], 'questions');
+    if (!Array.isArray(result.questions || [])) throw new Error('questions must be an array.');
+    result.questions = (result.questions || []).map((q, index) => {
+      if (typeof q === 'string' && q.trim()) return q.trim();
+      if (q && typeof q === 'object' && typeof q.question === 'string' && q.question.trim()) {
+        return q.question.trim();
+      }
+      throw new Error(`questions[${index}] must be a non-empty string or question object.`);
+    });
     result.userConfirmed = result.userConfirmed === undefined ? result.questions.length === 0 : result.userConfirmed;
     if (typeof result.userConfirmed !== 'boolean') throw new Error('userConfirmed must be a boolean.');
     if (result.outcome === 'AWAITING_USER' && result.questions.length === 0) throw new Error('AWAITING_USER Intake results must include at least one question.');
