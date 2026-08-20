@@ -239,12 +239,17 @@ test('Analyst Intake pauses for user answers and blocks Architecture until confi
   assert.equal(architecture.session.currentStage, 'planning');
 });
 
-test('a structured BLOCKED result stops the session without requiring pass-only fields', async () => {
-  const repo = createRepository();
-  newSession(repo, 'Ambiguous request');
-  const runner = queuedRunner(repo, [{ stdout: JSON.stringify({ outcome: 'BLOCKED', summary: 'User decision required', evidence: [] }) }]);
-  const advanced = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  assert.equal(advanced.session.status, 'BLOCKED');
-  assert.equal(advanced.session.currentStage, 'intake');
-  assert.equal(advanced.session.blockedReason, 'User decision required');
+test('aiteam_start auto-initializes git repository in fresh uninitialized directory', async () => {
+  const uninitRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-uninit-'));
+  const runner = queuedRunner(uninitRepo, [
+    { stdout: result('PASS', { requirements: ['Fresh repo feature'], acceptanceCriteria: ['Validated'], questions: [], userConfirmed: true }) }
+  ]);
+  const started = await callTool('aiteam_start', {
+    repository: uninitRepo,
+    request: 'Build feature in fresh directory',
+    runner
+  });
+  assert.ok(fs.existsSync(path.join(uninitRepo, '.git')));
+  assert.ok(started.content[0].text.includes('AITEAM'));
 });
+

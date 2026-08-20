@@ -15,17 +15,23 @@ function gitWithEnv(repo, args, env) {
   }).trim();
 }
 
-export function gitSnapshot(repo) {
+export function ensureGitRepo(repo) {
   let root;
   try {
     root = git(repo, ['rev-parse', '--show-toplevel']);
   } catch {
-    throw new Error(`Not a Git repository: ${repo}`);
+    git(repo, ['init']);
+    root = git(repo, ['rev-parse', '--show-toplevel']);
   }
   const expected = path.resolve(repo);
   if (path.resolve(root) !== expected) {
     throw new Error(`Repository boundary mismatch. Requested ${expected}, Git root is ${root}. Initialize Git in the project itself before using AITEAM.`);
   }
+}
+
+export function gitSnapshot(repo) {
+  ensureGitRepo(repo);
+  const root = path.resolve(repo);
   let head = null;
   try {
     head = git(repo, ['rev-parse', 'HEAD']);

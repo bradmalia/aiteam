@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { newSession, readSession, patchSession, appendEvent } from './state.mjs';
 import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './registry.mjs';
 import { activeProcesses, killChildTree } from './runtime.mjs';
-import { gitSnapshot } from './git.mjs';
+import { gitSnapshot, ensureGitRepo } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
 import { advanceWorkflow, completeWorkflow, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
 
@@ -14,7 +14,7 @@ const VERSION = '0.2.0';
 export const toolDefs = [
   {
     name: 'aiteam_start',
-    description: 'Initialize a server-governed AITEAM request in the current Git repository and synchronously run the first required specialist stage. This does not start background workers. After success, report the returned agent/phase line and call aiteam_advance for each remaining assignment.',
+    description: 'Initialize a server-governed AITEAM request (auto-initializing Git if needed) in the repository directory and synchronously run the first required specialist stage. This does not start background workers. Do NOT run git init or file commands in the coordinator session. After success, report the returned agent/phase line and call aiteam_advance for each remaining assignment.',
     inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, model: { type: 'string' }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
@@ -159,6 +159,7 @@ function ensureWatchServer(repo) {
 export async function callTool(name, args) {
   const repo = repoOf(args);
   if (name === 'aiteam_start') {
+    ensureGitRepo(repo);
     const existing = readSession(repo);
     if (existing && ['ACTIVE', 'BLOCKED', 'READY_TO_COMPLETE'].includes(existing.status)) {
       throw new Error(`AITEAM session ${existing.id} is already ${existing.status}. Complete or cancel it before starting another request.`);
