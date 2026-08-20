@@ -435,6 +435,7 @@ function applyResult(repo, session, assignment, result, run) {
     for (const task of result.tasks) {
       const specialist = getAgent(task.specialistId, repo);
       if (!specialist) throw new Error(`Planner selected an unregistered specialist: ${task.specialistId}`);
+      if (specialist.id === 'qa') throw new Error(`Tasks in the task ledger cannot be assigned to QA. QA is executed automatically by the workflow gates.`);
       if (specialist.sandbox !== 'workspace-write') throw new Error(`Planner selected non-implementation specialist ${task.specialistId} for task ${task.id}.`);
     }
     next.completedStages = [...new Set([...next.completedStages, 'planning'])];
