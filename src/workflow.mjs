@@ -264,8 +264,8 @@ function assignmentText(stage, session) {
       ? `This is a repair verification. The previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nReview ONLY the current task and its changed paths to verify these specific findings have been resolved. Do NOT perform a new comprehensive review or report new issues.`
       : `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.`,
     qa: currentTask(session)?.qaFailure
-      ? `This is a repair verification. The previous QA validation failed with the following checks:\n${JSON.stringify(currentTask(session).qaFailure.checks, null, 2)}\n\nValidate ONLY that these specific failed checks have been resolved. Do NOT perform a new comprehensive validation or report new issues.`
-      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.`,
+      ? `This is a repair verification. The previous QA validation failed with the following checks:\n${JSON.stringify(currentTask(session).qaFailure.checks, null, 2)}\n\nExecute verification commands using your bash/exec tools to validate ONLY that these specific failed checks have been resolved.`
+      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
     integration: 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
   }[stage];
   return `${details}\n\n${STAGE_SCHEMAS[stage]}`;
