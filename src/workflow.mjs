@@ -266,7 +266,9 @@ function assignmentText(stage, session) {
     qa: currentTask(session)?.qaFailure
       ? `This is a repair verification. The previous QA validation failed with the following checks:\n${JSON.stringify(currentTask(session).qaFailure.checks, null, 2)}\n\nExecute verification commands using your bash/exec tools to validate ONLY that these specific failed checks have been resolved.`
       : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
-    integration: 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
+    integration: currentTask(session)
+      ? `Inspect QA-approved work for task ${JSON.stringify(currentTask(session))} and propose a conventional commit message. Do not stage or commit.`
+      : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
   }[stage];
   return `${details}\n\n${STAGE_SCHEMAS[stage]}`;
 }
@@ -473,19 +475,26 @@ function applyResult(repo, session, assignment, result, run) {
       qaFailure: null,
       qaFingerprint: fingerprintPaths(repo, task.filesChanged)
     } : task);
-    const unfinished = next.taskLedger.some((task) => task.status !== 'qa-passed');
-    next.currentTaskId = null;
-    next.currentStage = unfinished ? 'implementation' : 'integration';
-    if (!unfinished) next.completedStages = [...new Set([...next.completedStages, 'implementation', 'code-review', 'qa'])];
+    next.currentStage = 'integration';
   } else if (stage === 'integration') {
-    const paths = [...new Set(next.taskLedger.flatMap((task) => task.filesChanged))];
-    for (const task of next.taskLedger) {
-      if (fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) throw new Error(`Task ${task.id} changed during integration inspection.`);
+    const task = currentTask(session) || next.taskLedger.find((t) => t.id === next.currentTaskId);
+    const paths = task ? task.filesChanged : [...new Set(next.taskLedger.flatMap((t) => t.filesChanged))];
+    if (task && task.qaFingerprint && fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
+      throw new Error(`Task ${task.id} changed during integration inspection.`);
     }
     const commit = commitValidatedPaths(repo, paths, result.commitMessage);
+    if (task) {
+      task.integration = { ...commit, runId: run.runId, evidence: result.evidence };
+    }
     next.integration = { ...commit, runId: run.runId, evidence: result.evidence };
-    next.completedStages = [...new Set([...next.completedStages, 'integration'])];
-    next.status = 'READY_TO_COMPLETE';
+    const unfinished = next.taskLedger.some((t) => t.status !== 'qa-passed' || !t.integration?.committed);
+    next.currentTaskId = null;
+    if (unfinished) {
+      next.currentStage = 'implementation';
+    } else {
+      next.completedStages = [...new Set([...next.completedStages, 'implementation', 'code-review', 'qa', 'integration'])];
+      next.status = 'READY_TO_COMPLETE';
+    }
   }
   return writeSession(repo, next);
 }
