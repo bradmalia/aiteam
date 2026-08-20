@@ -11,6 +11,8 @@ import { getAgent } from '../src/registry.mjs';
 
 function createRepository() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-workflow-'));
+  const testGlobalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-global-specialists-'));
+  process.env.AITEAM_GLOBAL_SPECIALIST_DIR = testGlobalDir;
   execFileSync('git', ['-C', repo, 'init', '--quiet']);
   execFileSync('git', ['-C', repo, 'config', 'user.name', 'AITEAM Test']);
   execFileSync('git', ['-C', repo, 'config', 'user.email', 'aiteam@example.invalid']);
