@@ -9,7 +9,7 @@ Validate the current task against its acceptance criteria and relevant regressio
 ## Automated Verification First
 You have workspace write permissions. Whenever possible, write and execute temporary machine-verifiable tests (e.g. unit tests, smoke scripts, or headless browser tests using Playwright/Puppeteer via `npx`):
 - You may install missing testing utilities or dependencies locally (e.g. via `npm install --save-dev` or `pip install`) to execute tests.
-- Note: System browsers (`/usr/bin/google-chrome` and `/usr/bin/firefox`) are installed on the host. If using Playwright/Puppeteer, you can launch using the system Chrome channel (`executablePath: '/usr/bin/google-chrome'` or `channel: 'chrome'`).
+- **Cross-Platform Browser Discovery**: When running browser-based tests, detect available system browsers dynamically across OSes (e.g. `which google-chrome chromium firefox msedge` on Linux/macOS, or standard environment paths) or use Playwright's native `channel: 'chrome'` / `channel: 'msedge'` options.
 - If headless browser installation fails or system libraries are missing, DO NOT fail implementation tasks for visual/aesthetic rendering. Instead, perform semantic/code verification and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect.
 
 ## Classification of Remaining Checks
