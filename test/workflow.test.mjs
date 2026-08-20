@@ -139,6 +139,30 @@ test('post-QA path changes invalidate approval and route back to implementation'
   assert.equal(session.taskLedger[0].status, 'needs-rework');
 });
 
+test('QA manual validation pauses the workflow until the user confirms it', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build browser feature');
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['Browser feature'], acceptanceCriteria: ['Looks correct'], questions: [] }) },
+    { stdout: result('PASS', { design: ['Browser module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'browser-task', title: 'Browser feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Looks correct'], dependencies: [] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Static checks passed'], checks: [{ name: 'browser', status: 'PASS', evidence: 'Static checks passed' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
+  ]);
+  for (let i = 0; i < 7; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  let session = readSession(repo);
+  assert.equal(session.currentStage, 'qa');
+  assert.equal(session.taskLedger[0].status, 'qa-awaiting-manual');
+  assert.equal(session.pendingUserInput.kind, 'qa-manual');
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Confirmed: the browser game renders correctly.' } });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'integration');
+  assert.equal(session.taskLedger[0].status, 'qa-passed');
+  assert.match(session.taskLedger[0].qa.manualValidationResponse, /renders correctly/);
+});
+
 test('invalid structured output and out-of-order agents cannot advance workflow', async () => {
   const repo = createRepository();
   newSession(repo, 'Build feature');

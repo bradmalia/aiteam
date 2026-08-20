@@ -127,8 +127,8 @@
 
     $('gates').innerHTML = gatesHtml;
     
-    const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
-    const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
+    const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-awaiting-manual':'qa (manual validation)', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
+    const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'qa-awaiting-manual' ? 'waiting' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
     
     const taskPhases = ['planned', 'implementation', 'code-review', 'qa', 'complete'];
     const taskPhaseIndex = (status) => taskPhases.indexOf(status === 'implemented' ? 'code-review' : status === 'review-passed' ? 'qa' : status === 'qa-passed' ? 'complete' : status === 'needs-rework' ? 'implementation' : 'planned');

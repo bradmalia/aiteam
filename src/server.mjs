@@ -7,7 +7,7 @@ import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './r
 import { activeProcesses, killChildTree } from './runtime.mjs';
 import { gitSnapshot } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
-import { advanceWorkflow, completeWorkflow, getCurrentAssignment, workflowStatus } from './workflow.mjs';
+import { advanceWorkflow, completeWorkflow, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
 
 const VERSION = '0.2.0';
 
@@ -110,7 +110,9 @@ function advanceResultText(result) {
     ? `\nManual validation requested by QA:\n${result.result.manualChecks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n`
     : '';
   const next = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
-    ? `User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: ask the user these questions, then call aiteam_update_session with pendingUserInput containing the response.`
+    ? result.session.pendingUserInput.kind === 'qa-manual'
+      ? `Manual QA validation required before Integration:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: perform these checks, then call aiteam_update_session with pendingUserInput containing your confirmation.`
+      : `User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: ask the user these questions, then call aiteam_update_session with pendingUserInput containing the response.`
     : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
     : `Next enforced assignment: ${phaseLine(result.workflow)}`;
@@ -306,14 +308,16 @@ export async function callTool(name, args) {
     const current = readSession(repo);
     const normalizedPatch = { ...patch };
     if (Object.hasOwn(patch, 'pendingUserInput')) {
-      if (!current.pendingUserInput?.questions?.length) throw new Error('No Analyst question is awaiting a user response.');
+      if (!current.pendingUserInput?.questions?.length) throw new Error('No user validation or Analyst question is awaiting a response.');
       const response = typeof patch.pendingUserInput === 'string'
         ? patch.pendingUserInput.trim()
         : patch.pendingUserInput?.response;
       if (typeof response !== 'string' || !response.trim()) throw new Error('pendingUserInput must contain a non-empty user response.');
       normalizedPatch.pendingUserInput = { ...current.pendingUserInput, response: response.trim(), answeredAt: new Date().toISOString() };
     }
-    const session = patchSession(repo, normalizedPatch);
+    const session = current.pendingUserInput?.kind === 'qa-manual' && Object.hasOwn(patch, 'pendingUserInput')
+      ? confirmManualQa(repo, normalizedPatch.pendingUserInput.response)
+      : patchSession(repo, normalizedPatch);
     appendEvent(repo, { type: 'session_updated', patch: normalizedPatch });
     return textResult(JSON.stringify(session, null, 2), session);
   }

@@ -471,14 +471,27 @@ function applyResult(repo, session, assignment, result, run) {
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'review-passed', review: result, 'code-reviewFailure': null } : task);
     next.currentStage = 'qa';
   } else if (stage === 'qa') {
+    const manual = result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
-      status: 'qa-passed',
+      status: manual ? 'qa-awaiting-manual' : 'qa-passed',
       qa: result,
       qaFailure: null,
       qaFingerprint: fingerprintPaths(repo, task.filesChanged)
     } : task);
-    next.currentStage = 'integration';
+    if (manual) {
+      next.pendingUserInput = {
+        kind: 'qa-manual',
+        stage: 'qa',
+        taskId: next.currentTaskId,
+        questions: result.manualChecks,
+        response: null,
+        requestedAt: new Date().toISOString()
+      };
+      next.currentStage = 'qa';
+    } else {
+      next.currentStage = 'integration';
+    }
   } else if (stage === 'integration') {
     const task = currentTask(session) || next.taskLedger.find((t) => t.id === next.currentTaskId);
     const paths = task ? task.filesChanged : [...new Set(next.taskLedger.flatMap((t) => t.filesChanged))];
@@ -499,6 +512,25 @@ function applyResult(repo, session, assignment, result, run) {
       next.status = 'READY_TO_COMPLETE';
     }
   }
+  return writeSession(repo, next);
+}
+
+export function confirmManualQa(repo, response) {
+  const session = readSession(repo);
+  const pending = session?.pendingUserInput;
+  if (!session || pending?.kind !== 'qa-manual' || pending.response != null) {
+    throw new Error('No QA manual validation is awaiting user confirmation.');
+  }
+  const task = session.taskLedger.find((item) => item.id === pending.taskId);
+  if (!task || task.status !== 'qa-awaiting-manual') throw new Error('The QA manual validation task is no longer active.');
+  const next = {
+    ...session,
+    pendingUserInput: { ...pending, response: response.trim(), answeredAt: new Date().toISOString() },
+    currentStage: 'integration',
+    taskLedger: session.taskLedger.map((item) => item.id === task.id
+      ? { ...item, status: 'qa-passed', qa: { ...item.qa, manualValidationResponse: response.trim() } }
+      : item)
+  };
   return writeSession(repo, next);
 }
 
