@@ -73,17 +73,12 @@ export function coordinatorDirective(session = null) {
 
 export function coordinatorDirectiveText(session = null, { source = 'start' } = {}) {
   const directive = coordinatorDirective(session);
-  if (!session) {
+  if (!session || session.status === 'CANCELLED' || session.status === 'COMPLETE') {
+    const statusNote = session ? `The previous session (${session.id.slice(0, 8)}) was ${session.status}.` : 'No session exists.';
     return [
       '# NO ACTIVE AITEAM SESSION',
-      'No AITEAM session exists in this repository. Do not claim an agent is running and do not recommend a workflow phase.',
-      'Call aiteam_start only when the user explicitly requests AITEAM.'
-    ].join('\n');
-  }
-  if (!directive.requiredNextAction) {
-    return [
-      '# AITEAM execution model',
-      'AITEAM has no background scheduler or autonomous worker loop. This status snapshot does not advance the workflow.'
+      `${statusNote} To start a new AITEAM workflow, call aiteam_start with the user's request.`,
+      'Do not call aiteam_status or claim an agent is running until aiteam_start creates an ACTIVE session.'
     ].join('\n');
   }
 
