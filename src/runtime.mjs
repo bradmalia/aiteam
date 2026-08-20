@@ -8,16 +8,32 @@ function safeName(s) {
   return s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'agent';
 }
 
-function outputSchemaPath(repo, runBase) {
+function outputSchemaPath(repo, runBase, stage = null) {
   const schemaPath = path.join(ensureStateDir(repo), 'runs', `${runBase}.schema.json`);
+  const baseProperties = {
+    outcome: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER', 'PASS_WITH_MANUAL_VALIDATION'] },
+    summary: { type: 'string', minLength: 1 },
+    evidence: { type: 'array', items: { type: 'string' } }
+  };
+  const required = ['outcome', 'summary', 'evidence'];
+
+  if (stage === 'implementation') {
+    baseProperties.filesChanged = { type: 'array', items: { type: 'string' } };
+    baseProperties.validations = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['command', 'result'],
+        properties: { command: { type: 'string' }, result: { type: 'string' } }
+      }
+    };
+    required.push('filesChanged', 'validations');
+  }
+
   const schema = {
     type: 'object',
-    required: ['outcome', 'summary', 'evidence'],
-    properties: {
-      outcome: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER', 'PASS_WITH_MANUAL_VALIDATION'] },
-      summary: { type: 'string', minLength: 1 },
-      evidence: { type: 'array', items: { type: 'string' } }
-    },
+    required,
+    properties: baseProperties,
     additionalProperties: true
   };
   fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2) + '\n');
@@ -33,7 +49,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   const dir = ensureStateDir(repo);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;
-  const schemaPath = outputSchemaPath(repo, base);
+  const schemaPath = outputSchemaPath(repo, base, stage);
   const invocation = buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath });
   const { command, args, childEnv } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
