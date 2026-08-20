@@ -33,11 +33,27 @@ function readJson(file) {
   }
 }
 
-function tailEvents(file, limit = 80) {
+function tailEvents(file, repo, limit = 80) {
   try {
     const lines = fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).filter(Boolean);
     return lines.slice(-limit).flatMap((line) => {
-      try { return [JSON.parse(line)]; } catch { return []; }
+      try {
+        const ev = JSON.parse(line);
+        if (ev.type === 'agent_finished' && (ev.stdoutPath || ev.runId)) {
+          const stdoutFile = ev.stdoutPath || path.join(repo, '.aiteam', 'runs', `${ev.runId}.stdout.txt`);
+          if (fs.existsSync(stdoutFile)) {
+            try {
+              const res = JSON.parse(fs.readFileSync(stdoutFile, 'utf8'));
+              if (res && typeof res === 'object') {
+                ev.responseSummary = res.summary || null;
+                ev.responseOutcome = res.outcome || null;
+                ev.responseEvidence = res.evidence || [];
+              }
+            } catch {}
+          }
+        }
+        return [ev];
+      } catch { return []; }
     });
   } catch {
     return [];
@@ -50,7 +66,7 @@ function snapshot(repo) {
   const eventPath = path.join(repo, '.aiteam', 'events.jsonl');
   const protectedEventPath = path.join(repo, '.git', 'aiteam', 'events.jsonl');
   const session = readJson(sessionPath) || readJson(protectedSessionPath);
-  const events = tailEvents(eventPath).length ? tailEvents(eventPath) : tailEvents(protectedEventPath);
+  const events = tailEvents(eventPath, repo).length ? tailEvents(eventPath, repo) : tailEvents(protectedEventPath, repo);
   const lastEvent = events.at(-1) || null;
   const activeRun = session?.activeRun || null;
   const startedAt = activeRun?.startedAt ? Date.parse(activeRun.startedAt) : NaN;
