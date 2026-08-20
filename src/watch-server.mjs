@@ -39,14 +39,17 @@ function tailEvents(file, repo, limit = 80) {
     return lines.slice(-limit).flatMap((line) => {
       try {
         const ev = JSON.parse(line);
-        if (ev.type === 'agent_finished' && (ev.stdoutPath || ev.runId)) {
-          const stdoutFile = ev.stdoutPath || path.join(repo, '.aiteam', 'runs', `${ev.runId}.stdout.txt`);
+        const runId = ev.runId || (ev.stdoutPath ? path.basename(ev.stdoutPath, '.stdout.txt') : null);
+        if (runId) {
+          const stdoutFile = ev.stdoutPath && fs.existsSync(ev.stdoutPath)
+            ? ev.stdoutPath
+            : path.join(repo, '.aiteam', 'runs', `${runId}.stdout.txt`);
           if (fs.existsSync(stdoutFile)) {
             try {
               const res = JSON.parse(fs.readFileSync(stdoutFile, 'utf8'));
               if (res && typeof res === 'object') {
                 ev.responseSummary = res.summary || null;
-                ev.responseOutcome = res.outcome || null;
+                ev.responseOutcome = res.outcome || ev.outcome || null;
                 ev.responseEvidence = res.evidence || [];
               }
             } catch {}

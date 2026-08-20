@@ -17,7 +17,54 @@ function outputSchemaPath(repo, runBase, stage = null) {
   };
   const required = ['outcome', 'summary', 'evidence'];
 
-  if (stage === 'implementation') {
+  if (stage === 'intake') {
+    baseProperties.requirements = { type: 'array', items: { type: 'string' } };
+    baseProperties.acceptanceCriteria = { type: 'array', items: { type: 'string' } };
+    baseProperties.questions = { type: 'array', items: { type: 'string' } };
+    baseProperties.userConfirmed = { type: 'boolean' };
+  } else if (stage === 'architecture') {
+    baseProperties.design = { type: 'array', items: { type: 'string' } };
+    baseProperties.specialistNeeds = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['capability', 'reason', 'suggestedId'],
+        properties: { capability: { type: 'string' }, reason: { type: 'string' }, suggestedId: { type: 'string' } },
+        additionalProperties: false
+      }
+    };
+  } else if (stage === 'recruiting') {
+    baseProperties.specialist = {
+      type: 'object',
+      required: ['id', 'role', 'sandbox', 'triggers', 'capabilities', 'contract'],
+      properties: {
+        id: { type: 'string' },
+        role: { type: 'string' },
+        sandbox: { type: 'string' },
+        triggers: { type: 'array', items: { type: 'string' } },
+        capabilities: { type: 'array', items: { type: 'string' } },
+        contract: { type: 'string' }
+      },
+      additionalProperties: false
+    };
+  } else if (stage === 'planning') {
+    baseProperties.tasks = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'title', 'description', 'specialistId', 'acceptanceCriteria', 'dependencies'],
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          specialistId: { type: 'string' },
+          acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+          dependencies: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+  } else if (stage === 'implementation') {
     baseProperties.filesChanged = { type: 'array', items: { type: 'string' } };
     baseProperties.validations = {
       type: 'array',
@@ -29,17 +76,15 @@ function outputSchemaPath(repo, runBase, stage = null) {
       }
     };
     required.push('filesChanged', 'validations');
-  } else if (stage === 'code-review' || stage === 'critical-review') {
+  } else if (stage === 'critical-review') {
     baseProperties.findings = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'severity'],
+        required: ['id', 'severity', 'description', 'recommendation'],
         properties: {
           id: { type: 'string' },
           severity: { type: 'string' },
-          location: { type: 'string' },
-          impact: { type: 'string' },
           description: { type: 'string' },
           recommendation: { type: 'string' }
         },
@@ -47,7 +92,23 @@ function outputSchemaPath(repo, runBase, stage = null) {
       }
     };
     baseProperties.repairStage = { type: ['string', 'null'] };
-    required.push('findings');
+  } else if (stage === 'code-review') {
+    baseProperties.findings = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'severity', 'location', 'impact', 'recommendation'],
+        properties: {
+          id: { type: 'string' },
+          severity: { type: 'string' },
+          location: { type: 'string' },
+          impact: { type: 'string' },
+          recommendation: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.repairStage = { type: ['string', 'null'] };
   } else if (stage === 'qa') {
     baseProperties.checks = {
       type: 'array',
@@ -67,7 +128,7 @@ function outputSchemaPath(repo, runBase, stage = null) {
 
   const schema = {
     type: 'object',
-    required,
+    required: Object.keys(baseProperties),
     properties: baseProperties,
     additionalProperties: false
   };

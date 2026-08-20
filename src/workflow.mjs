@@ -314,7 +314,7 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     }
   }
   if (session.currentStage === 'integration') {
-    const changed = session.taskLedger.find((item) => item.qaFingerprint && fingerprintPaths(repo, item.filesChanged) !== item.qaFingerprint);
+    const changed = session.taskLedger.find((item) => item.qaFingerprint && !item.integration?.committed && fingerprintPaths(repo, item.filesChanged) !== item.qaFingerprint);
     if (changed) {
       const reason = `Task ${changed.id} changed after QA approval.`;
       writeSession(repo, {
@@ -635,7 +635,7 @@ export function completeWorkflow(repo) {
   const git = gitSnapshot(repo);
   if (git.head !== session.integration.head) throw new Error('Cannot complete: repository HEAD changed after AITEAM integration.');
   for (const task of session.taskLedger) {
-    if (fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
+    if (!task.integration?.committed && fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
       throw new Error(`Cannot complete: task ${task.id} changed after QA approval.`);
     }
   }

@@ -91,13 +91,22 @@ export function commitValidatedPaths(repo, paths, message) {
   const commitMessage = String(message || '').trim();
   if (!commitMessage) throw new Error('Integration requires a non-empty commit message.');
 
-  const diff = spawnSync('git', ['-C', repo, 'diff', '--quiet', 'HEAD', '--', ...validated]);
-  const untracked = git(repo, ['ls-files', '--others', '--exclude-standard', '--', ...validated]);
-  if (diff.status === 0 && !untracked) {
-    return { committed: false, reason: 'no_changes', paths: validated, head: git(repo, ['rev-parse', 'HEAD']) };
+  let hasHead = true;
+  try {
+    git(repo, ['rev-parse', '--verify', 'HEAD']);
+  } catch {
+    hasHead = false;
   }
-  if (![0, 1].includes(diff.status)) {
-    throw new Error(`Unable to inspect validated Git paths: ${String(diff.stderr || '').trim()}`);
+
+  if (hasHead) {
+    const diff = spawnSync('git', ['-C', repo, 'diff', '--quiet', 'HEAD', '--', ...validated]);
+    const untracked = git(repo, ['ls-files', '--others', '--exclude-standard', '--', ...validated]);
+    if (diff.status === 0 && !untracked) {
+      return { committed: false, reason: 'no_changes', paths: validated, head: git(repo, ['rev-parse', 'HEAD']) };
+    }
+    if (![0, 1].includes(diff.status)) {
+      throw new Error(`Unable to inspect validated Git paths: ${String(diff.stderr || '').trim()}`);
+    }
   }
 
   for (const relative of validated) {
@@ -113,7 +122,9 @@ export function commitValidatedPaths(repo, paths, message) {
   const tempIndex = path.join(controlDir, `integration-index-${crypto.randomUUID()}`);
   const indexEnv = { GIT_INDEX_FILE: tempIndex };
   try {
-    gitWithEnv(repo, ['read-tree', 'HEAD'], indexEnv);
+    if (hasHead) {
+      gitWithEnv(repo, ['read-tree', 'HEAD'], indexEnv);
+    }
     gitWithEnv(repo, ['add', '-A', '--', ...validated], indexEnv);
     gitWithEnv(repo, ['commit', '-m', commitMessage], indexEnv);
     git(repo, ['add', '-A', '--', ...validated]);
