@@ -104,13 +104,14 @@
       const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : totalTasks;
       const taskProgressLabel = `Tasks (${completedTasksCount}/${totalTasks} complete)`;
       
+      const allDone = completed.has('integration') || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
       const cycleHtml = taskCycleStages.map((stage) => {
         const isCurrent = stage === session?.currentStage;
-        return `<span class="${isCurrent ? (active ? 'running' : 'waiting') : ''}">${isCurrent ? '▶' : '○'} ${esc(stage)}</span>`;
+        const isStagePassed = allDone || (completedTasksCount === totalTasks);
+        return `<span class="${isStagePassed ? 'passed' : isCurrent ? (active ? 'running' : 'waiting') : ''}">${isStagePassed ? '✓' : isCurrent ? '▶' : '○'} ${esc(stage)}</span>`;
       }).join(' &nbsp;→&nbsp; ');
 
-      const allDone = completed.has('integration') || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
-      gatesHtml += ` &nbsp;→&nbsp; <span style="padding:2px 8px; border:1px solid rgba(0,255,255,0.3); border-radius:4px; background:rgba(0,255,255,0.05); font-weight:600;"><span style="color:var(--cyan); margin-right:6px;">[Task ${taskNum}/${totalTasks}]</span>${cycleHtml}</span>`;
+      gatesHtml += ` &nbsp;→&nbsp; <span style="padding:2px 8px; border:1px solid rgba(0,255,255,0.3); border-radius:4px; background:rgba(0,255,255,0.05); font-weight:600;"><span style="color:var(--cyan); margin-right:6px;">[Tasks ${completedTasksCount}/${totalTasks}]</span>${cycleHtml}</span>`;
       if (allDone) {
         gatesHtml += ` &nbsp;→&nbsp; <span class="passed">✓ complete</span>`;
       }

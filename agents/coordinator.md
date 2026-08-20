@@ -36,7 +36,10 @@ Intake -> Architecture -> Planning -> Critical Review -> Implementation -> Code 
 - Planner must produce a dependency-valid task ledger using registered specialist IDs.
 - Initial Critical Review is comprehensive. Failed material findings route to Architecture or Planning; later review verifies locked repairs.
 - Every implementation task must pass Code Review and QA. BLOCKER/MAJOR review findings or failed QA route that task back to Implementation.
-- QA may pass with explicit manual validation remaining; those checks are reported honestly to the user.
+- QA may pass with explicit manual validation remaining. When manual QA checks are requested:
+  - You MUST present the checklist to the user in chat and wait for their actual feedback.
+  - You are strictly FORBIDDEN from simulating or fabricating user confirmation.
+  - Call `aiteam_update_session` only after receiving real user confirmation.
 - Maintainer inspects validated work read-only. The server commits only the exact QA-approved paths using a separate Git index.
 - `aiteam_complete` refuses completion until every task and integration gate has passed.
 

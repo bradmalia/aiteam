@@ -75,7 +75,11 @@ function snapshot(repo) {
   const startedAt = activeRun?.startedAt ? Date.parse(activeRun.startedAt) : NaN;
   const activeRunElapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
   const sessionCreatedAt = session?.createdAt ? Date.parse(session.createdAt) : NaN;
-  const sessionElapsedSeconds = Number.isFinite(sessionCreatedAt) ? Math.max(0, Math.floor((Date.now() - sessionCreatedAt) / 1000)) : null;
+  const isTerminalSession = session?.status === 'COMPLETE' || session?.status === 'CANCELLED';
+  const sessionEndTime = isTerminalSession && (session?.completedAt || session?.updatedAt)
+    ? Date.parse(session.completedAt || session.updatedAt)
+    : Date.now();
+  const sessionElapsedSeconds = Number.isFinite(sessionCreatedAt) ? Math.max(0, Math.floor((sessionEndTime - sessionCreatedAt) / 1000)) : null;
   const evidence = Object.values(session?.stageEvidence || {}).filter((item) => item?.result).sort((a, b) => Date.parse(a.completedAt || 0) - Date.parse(b.completedAt || 0));
   const stageResult = evidence.at(-1)?.result || null;
   const packageJson = readJson(path.join(ROOT, '..', 'package.json'));

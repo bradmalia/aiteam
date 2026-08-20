@@ -49,10 +49,16 @@ export function coordinatorDirective(session = null) {
         tool: 'aiteam_update_session',
         recommendedAgentId: qaManual ? null : 'analyst',
         instruction: qaManual
-          ? 'Ask the user to perform the listed QA manual checks, then call aiteam_update_session with pendingUserInput containing the confirmation before continuing to Integration.'
+          ? 'You MUST present these QA manual verification checks to the real user in chat and wait for their actual feedback. Do NOT auto-confirm, fabricate, or invent a confirmation. Only after the user responds, call aiteam_update_session with pendingUserInput containing the user response before advancing to Integration.'
           : 'Ask the user the pending Analyst questions, then call aiteam_update_session with pendingUserInput containing the user response. Do not advance to Architecture.'
       },
-      prohibitedActions: ['advance_without_user_response', 'implement_specialist_work_in_the_coordinator', ...(qaManual ? [] : ['skip_intake_confirmation'])]
+      prohibitedActions: [
+        'advance_without_user_response',
+        'auto_confirm_manual_qa',
+        'fabricate_user_qa_confirmation',
+        'implement_specialist_work_in_the_coordinator',
+        ...(qaManual ? [] : ['skip_intake_confirmation'])
+      ]
     };
   }
 
@@ -108,7 +114,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     ? 'All enforced gates have passed. Do not run another specialist; call aiteam_complete.'
     : directive.requiredNextAction.tool === 'aiteam_update_session'
       ? (session.pendingUserInput?.kind === 'qa-manual'
-        ? 'Ask the user to perform the listed QA manual checks, persist the confirmation with aiteam_update_session, and only then call aiteam_advance for Integration.'
+        ? 'Ask the user to perform the listed QA manual checks and wait for their response. Do not auto-confirm or invent validation responses. Call aiteam_update_session only with the user\'s real feedback, and only then call aiteam_advance for Integration.'
         : 'Ask the user the listed Analyst questions, persist the response with aiteam_update_session, and only then call aiteam_advance for Analyst. Architecture is forbidden until Intake is confirmed.')
     : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
 
