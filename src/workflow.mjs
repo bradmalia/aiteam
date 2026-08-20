@@ -276,6 +276,9 @@ function assignmentText(stage, session) {
 export function getCurrentAssignment(repo, session = readSession(repo)) {
   if (!session) throw new Error('No active AITEAM session exists in this repository.');
   if (session.status === 'READY_TO_COMPLETE') throw new Error('All gates passed. Call aiteam_complete.');
+  if (session.status === 'BLOCKED') {
+    session = writeSession(repo, { ...session, status: 'ACTIVE', blockedReason: null });
+  }
   if (session.status !== 'ACTIVE') throw new Error(`AITEAM session is not active: ${session.status}`);
   if (session.currentStage !== 'intake' && session.stageEvidence.intake?.result?.userConfirmed !== true) {
     throw new Error('Workflow gate rejected: Analyst Intake must produce a user-confirmed requirements artifact before Architecture.');

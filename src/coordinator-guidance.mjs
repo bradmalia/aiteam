@@ -20,6 +20,18 @@ export function coordinatorDirective(session = null) {
       prohibitedActions: ['run_more_specialists', 'implement_specialist_work_in_the_coordinator']
     };
   }
+  if (session.status === 'BLOCKED') {
+    return {
+      autonomous: false,
+      userProgressReporting: { required: true },
+      requiredNextAction: {
+        tool: 'aiteam_advance',
+        recommendedAgentId: null,
+        instruction: `Session was blocked: "${session.blockedReason || 'Specialist blocked'}". Call aiteam_advance to retry this stage with the updated specialist directives.`
+      },
+      prohibitedActions: ['aiteam_cancel', 'wait_for_background_progress', 'poll_status_for_progress']
+    };
+  }
   if (session.status !== 'ACTIVE') {
     return {
       autonomous: false,
