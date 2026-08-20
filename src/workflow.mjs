@@ -553,7 +553,16 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
     try {
       const result = parseStageResult(assignment.stage, run.stdout);
       const session = applyResult(repo, readSession(repo), assignment, result, run);
-      appendEvent(repo, { type: 'workflow_stage_result', stage: assignment.stage, agentId: assignment.agentId, outcome: result.outcome, runId: run.runId, attempt });
+      appendEvent(repo, {
+        type: 'workflow_stage_result',
+        stage: assignment.stage,
+        agentId: assignment.agentId,
+        outcome: result.outcome,
+        summary: result.summary,
+        evidence: result.evidence || [],
+        runId: run.runId,
+        attempt
+      });
       return { assignment, result, run, session, workflow: workflowStatus(session, repo) };
     } catch (error) {
       lastError = error;
