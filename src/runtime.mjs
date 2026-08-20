@@ -141,7 +141,7 @@ export const activeProcesses = new Map();
 export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null }) {
   const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
-  const prompt = buildAgentPrompt(agent, task, context);
+  const prompt = buildAgentPrompt(agent, task, context, stage);
   const dir = ensureStateDir(repo);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;

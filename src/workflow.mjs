@@ -231,10 +231,45 @@ export function workflowStatus(session, repo = null) {
 }
 
 function stageContext(session, repo) {
+  const stage = session.currentStage;
+  const task = currentTask(session);
+
+  // Implementation, code-review, and QA only need the current task + essential summaries.
+  // Sending the full task ledger and all agent lists wastes tokens and can push critical
+  // instructions out of the truncation window.
+  if (['implementation', 'code-review', 'qa'].includes(stage)) {
+    const req = session.stageEvidence.intake?.result;
+    const arch = session.stageEvidence.architecture?.result;
+    return JSON.stringify({
+      request: session.request,
+      currentStage: stage,
+      requirements: req ? { summary: req.summary, requirements: req.requirements, acceptanceCriteria: req.acceptanceCriteria } : null,
+      architectureDesign: arch ? arch.design : null,
+      currentTask: task,
+      pendingUserInput: session.pendingUserInput
+    }, null, 2);
+  }
+
+  // Planning and critical-review need the task ledger but not agent details.
+  if (['planning', 'critical-review'].includes(stage)) {
+    const registry = loadRegistry(repo).agents.map(({ id, role, sandbox, capabilities = [] }) => ({ id, role, sandbox, capabilities }));
+    return JSON.stringify({
+      request: session.request,
+      currentStage: stage,
+      requirements: session.stageEvidence.intake?.result || null,
+      architecture: session.stageEvidence.architecture?.result || null,
+      plan: session.stageEvidence.planning?.result || null,
+      lockedCriticalFindings: session.lockedCriticalFindings,
+      taskLedger: session.taskLedger,
+      availableAgents: registry
+    }, null, 2);
+  }
+
+  // All other stages (intake, architecture, recruiting, integration) get the full context.
   const registry = loadRegistry(repo).agents.map(({ id, role, sandbox, capabilities = [] }) => ({ id, role, sandbox, capabilities }));
   return JSON.stringify({
     request: session.request,
-    currentStage: session.currentStage,
+    currentStage: stage,
     requirements: session.stageEvidence.intake?.result || null,
     architecture: session.stageEvidence.architecture?.result || null,
     plan: session.stageEvidence.planning?.result || null,
@@ -242,11 +277,12 @@ function stageContext(session, repo) {
     taskLedger: session.taskLedger,
     interviewHistory: session.interviewHistory || [],
     pendingUserInput: session.pendingUserInput,
-    currentTask: currentTask(session),
+    currentTask: task,
     recruiterGap: session.recruiterQueue[0] || null,
     availableAgents: registry
   }, null, 2);
 }
+
 
 function assignmentText(stage, session) {
   const details = {

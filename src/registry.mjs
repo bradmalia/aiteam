@@ -119,19 +119,33 @@ export function readContract(relativePath) {
   return fs.readFileSync(path.join(SOURCE_ROOT, relativePath), 'utf8');
 }
 
-export function buildAgentPrompt(agent, task, context = '') {
+export function buildAgentPrompt(agent, task, context = '', stage = null) {
   const base = readContract('agents/base.md');
   const role = agent.contractText || readContract(agent.contract);
+
+  // Stage-specific final reminder placed AFTER coordinator context so it's the
+  // last thing the model reads before generating output.
+  const finalReminder = stage === 'implementation'
+    ? [
+      '# ⚠️ FINAL INSTRUCTION — READ THIS LAST',
+      'You MUST use bash/exec tools to write files to disk BEFORE emitting your JSON response.',
+      'Steps: (1) run `cat << EOF > filename` or equivalent, (2) verify with `ls -la filename`, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
+      'Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
+    ].join('\n')
+    : null;
+
   return [
     base,
     role,
     '# Assignment',
     task,
     context ? '# Coordinator Context\n' + context : '',
+    finalReminder,
     '# Response',
     'Return your conclusions and evidence to the AITEAM Coordinator. Be concise but complete.'
   ].filter(Boolean).join('\n\n');
 }
+
 
 export function coordinatorContract() {
   return readContract('agents/coordinator.md');
