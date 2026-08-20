@@ -150,7 +150,7 @@
     const events = data.recentEvents || [];
     $('events').className = events.length ? '' : 'empty';
     $('events').innerHTML = events.slice().reverse().map((event, i) => {
-      const summary = event.summary || event.error || (event.agentId ? `${event.agentId}${event.stage ? ' (' + event.stage + ')' : ''}` : '') || event.reason || '';
+      const summaryText = event.responseSummary || event.summary || event.error || (event.agentId ? `${event.agentId}${event.stage ? ' (' + event.stage + ')' : ''}` : '') || event.reason || '';
       const type = event.type || '';
       const outcome = event.responseOutcome || event.outcome;
       let badge = '';
@@ -161,14 +161,9 @@
       const eventId = String(event.at || i) + '_' + type;
       const isOpen = openSet.has(eventId) ? ' open' : '';
       let details = '';
-      if (event.responseSummary || event.responseEvidence?.length) {
+      if (event.responseEvidence?.length) {
         details += `<div style="padding:8px 12px; background:rgba(0,255,255,0.03); border:1px solid rgba(0,255,255,0.1); border-radius:6px; margin:8px 0;">`;
-        if (event.responseSummary) {
-          details += `<div style="font-weight:600; margin-bottom:4px; color:var(--text);">Response Summary:</div><p style="margin:0 0 6px 0;">${md(event.responseSummary)}</p>`;
-        }
-        if (event.responseEvidence?.length) {
-          details += `<div style="font-weight:600; margin-bottom:4px; color:var(--muted); font-size:12px;">Evidence:</div><ul style="margin:0; padding-left:18px; font-size:12px; color:var(--muted);">${event.responseEvidence.map((e) => `<li>${md(e)}</li>`).join('')}</ul>`;
-        }
+        details += `<div style="font-weight:600; margin-bottom:4px; color:var(--muted); font-size:12px;">Evidence:</div><ul style="margin:0; padding-left:18px; font-size:12px; color:var(--muted);">${event.responseEvidence.map((e) => `<li>${md(e)}</li>`).join('')}</ul>`;
         details += `</div>`;
       }
       details += `<table style="width:100%; border-collapse:collapse; margin-top:8px;">`;
@@ -177,7 +172,7 @@
         details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre>${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
       }
       details += `</table>`;
-      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summary)}</summary>${details}</details>`;
+      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
     }).join('') || 'No events yet.';
     
     if (container && prevScrollTop > 0) {
