@@ -150,16 +150,13 @@
     const events = data.recentEvents || [];
     $('events').className = events.length ? '' : 'empty';
     $('events').innerHTML = events.slice().reverse().map((event, i) => {
-      let summary = event.summary || event.error || event.agentId || event.reason || '';
+      const summary = event.summary || event.error || (event.agentId ? `${event.agentId}${event.stage ? ' (' + event.stage + ')' : ''}` : '') || event.reason || '';
       const type = event.type || '';
       const outcome = event.responseOutcome || event.outcome;
       let badge = '';
       if (outcome) {
         const oColor = outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION' ? 'var(--green)' : outcome === 'FAIL' ? 'var(--red)' : 'var(--amber)';
         badge = `<span class="status-pill" style="background:${oColor}22; color:${oColor}; border:1px solid ${oColor}55; padding:1px 6px; font-size:10px; margin-right:6px;">${esc(outcome)}</span>`;
-      }
-      if (event.responseSummary) {
-        summary = event.responseSummary;
       }
       const eventId = String(event.at || i) + '_' + type;
       const isOpen = openSet.has(eventId) ? ' open' : '';
