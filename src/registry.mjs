@@ -11,6 +11,9 @@ function builtInRegistry() {
 }
 
 function globalSpecialistDir() {
+  if (process.env.AITEAM_GLOBAL_SPECIALIST_DIR) {
+    return process.env.AITEAM_GLOBAL_SPECIALIST_DIR;
+  }
   const home = process.env.HOME || process.env.USERPROFILE || '/home/brad';
   return path.join(home, '.aiteam', 'specialists');
 }
