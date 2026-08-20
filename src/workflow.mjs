@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { appendEvent, patchSession, readSession, writeSession } from './state.mjs';
 import { commitValidatedPaths, fingerprintPaths, gitSnapshot } from './git.mjs';
 import { getAgent, loadRegistry, registerScopedSpecialist } from './registry.mjs';
@@ -424,6 +426,10 @@ function applyResult(repo, session, assignment, result, run) {
     next.currentStage = 'implementation';
     next.currentTaskId = null;
   } else if (stage === 'implementation') {
+    const missing = result.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
+    if (missing.length) {
+      throw new Error(`Implementation reported files that are not visible in the server workspace: ${missing.join(', ')}`);
+    }
     const implementationFingerprint = fingerprintPaths(repo, result.filesChanged);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
@@ -473,39 +479,73 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }
   const timeout = normalizeTimeoutSeconds(timeoutSeconds);
-  const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, startedAt: new Date().toISOString() };
-  writeSession(repo, { ...assignment.session, activeRun });
-  appendEvent(repo, { type: 'workflow_stage_started', ...activeRun });
-  let run;
-  try {
-    run = await runner({
-      repo,
-      agentId: assignment.agentId,
-      task: assignment.task,
-      context: [assignment.context, coordinatorContext].filter(Boolean).join('\n\n'),
-      timeoutMs: timeout * 1000,
-      model
-    });
-  } catch (error) {
-    patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
-    appendEvent(repo, { type: 'workflow_stage_failed', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error) });
-    throw error;
+  const maxAttempts = runner === runAgent ? 2 : 1;
+  let retryContext = coordinatorContext;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, attempt, startedAt: new Date().toISOString() };
+    const currentSession = readSession(repo);
+    if (!currentSession || currentSession.status !== 'ACTIVE') {
+      throw new Error(`Cannot advance ${assignment.stage}: the AITEAM session is no longer active.`);
+    }
+    if (currentSession.currentStage !== assignment.stage) {
+      throw new Error(`Cannot advance ${assignment.stage}: the workflow moved to ${currentSession.currentStage}.`);
+    }
+    writeSession(repo, { ...currentSession, activeRun });
+    appendEvent(repo, { type: 'workflow_stage_started', ...activeRun });
+    let run;
+    try {
+      run = await runner({
+        repo,
+        agentId: assignment.agentId,
+        stage: assignment.stage,
+        task: assignment.task,
+        context: [assignment.context, retryContext].filter(Boolean).join('\n\n'),
+        timeoutMs: timeout * 1000,
+        model
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+        appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: String(error?.message || error) });
+        retryContext = `${coordinatorContext}\n\nThe previous specialist attempt failed before producing a valid result. Retry the assignment now and return only the required JSON object.`;
+        continue;
+      }
+      patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+      appendEvent(repo, { type: 'workflow_stage_failed', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error) });
+      throw error;
+    }
+    if (run.exitCode !== 0 || run.timedOut) {
+      lastError = new Error(`Specialist ${assignment.agentId} failed with exit code ${run.exitCode}${run.timedOut ? ' after timeout' : ''}.`);
+      if (attempt < maxAttempts) {
+        patchSession(repo, { activeRun: null, lastFailure: lastError.message });
+        appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: lastError.message });
+        retryContext = `${coordinatorContext}\n\nThe previous specialist attempt exited without a valid result. Retry now and return only the required JSON object.`;
+        continue;
+      }
+      patchSession(repo, { activeRun: null, lastFailure: lastError.message });
+      throw new Error(`${lastError.message} The workflow did not advance.`);
+    }
+    try {
+      const result = parseStageResult(assignment.stage, run.stdout);
+      const session = applyResult(repo, readSession(repo), assignment, result, run);
+      appendEvent(repo, { type: 'workflow_stage_result', stage: assignment.stage, agentId: assignment.agentId, outcome: result.outcome, runId: run.runId, attempt });
+      return { assignment, result, run, session, workflow: workflowStatus(session, repo) };
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+        appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: String(error?.message || error), runId: run.runId });
+        retryContext = `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\nReturn ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
+        continue;
+      }
+      patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+      appendEvent(repo, { type: 'workflow_stage_rejected', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error), runId: run.runId, attempt });
+      throw new Error(`Structured ${assignment.stage} result rejected: ${error.message}. The workflow did not advance.`);
+    }
   }
-  if (run.exitCode !== 0 || run.timedOut) {
-    patchSession(repo, { activeRun: null, lastFailure: `Specialist ${assignment.agentId} failed with exit code ${run.exitCode}${run.timedOut ? ' after timeout' : ''}.` });
-    throw new Error(`Specialist ${assignment.agentId} failed with exit code ${run.exitCode}${run.timedOut ? ' after timeout' : ''}. The workflow did not advance.`);
-  }
-  let result;
-  try {
-    result = parseStageResult(assignment.stage, run.stdout);
-    const session = applyResult(repo, readSession(repo), assignment, result, run);
-    appendEvent(repo, { type: 'workflow_stage_result', stage: assignment.stage, agentId: assignment.agentId, outcome: result.outcome, runId: run.runId });
-    return { assignment, result, run, session, workflow: workflowStatus(session, repo) };
-  } catch (error) {
-    patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
-    appendEvent(repo, { type: 'workflow_stage_rejected', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error), runId: run.runId });
-    throw new Error(`Structured ${assignment.stage} result rejected: ${error.message}. The workflow did not advance.`);
-  }
+  throw lastError || new Error(`Specialist ${assignment.agentId} did not advance the workflow.`);
 }
 
 export function completeWorkflow(repo) {

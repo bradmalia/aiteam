@@ -48,6 +48,23 @@ test('invalid child prefix arguments fail with a clear configuration error', () 
   }), /must be a JSON array of strings/);
 });
 
+test('workspace-write specialists receive an explicit repository write scope and JSON schema', () => {
+  const invocation = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the assigned task',
+    outputSchemaPath: '/tmp/example-repo/.aiteam/runs/agent.schema.json',
+    env: { AITEAM_CODEX_PREFIX_ARGS_JSON: '[]' }
+  });
+
+  assert.deepEqual(invocation.args.slice(0, 7), [
+    'exec', '-C', '/tmp/example-repo', '--sandbox', 'workspace-write', '--add-dir', '/tmp/example-repo'
+  ]);
+  assert.ok(invocation.args.includes('--output-schema'));
+  assert.ok(invocation.args.includes('/tmp/example-repo/.aiteam/runs/agent.schema.json'));
+  assert.equal(invocation.args.at(-1), 'Implement the assigned task');
+});
+
 test('timeout terminates the full specialist process group', async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-process-group-'));
   execFileSync('git', ['-C', repo, 'init', '--quiet']);

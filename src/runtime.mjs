@@ -8,21 +8,37 @@ function safeName(s) {
   return s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'agent';
 }
 
-export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null }) {
+function outputSchemaPath(repo, runBase) {
+  const schemaPath = path.join(ensureStateDir(repo), 'runs', `${runBase}.schema.json`);
+  const schema = {
+    type: 'object',
+    required: ['outcome', 'summary', 'evidence'],
+    properties: {
+      outcome: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER', 'PASS_WITH_MANUAL_VALIDATION'] },
+      summary: { type: 'string', minLength: 1 },
+      evidence: { type: 'array', items: { type: 'string' } }
+    },
+    additionalProperties: true
+  };
+  fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2) + '\n');
+  return schemaPath;
+}
+
+export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null }) {
   const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
   const prompt = buildAgentPrompt(agent, task, context);
-  const invocation = buildCodexInvocation({ repo, agent, prompt, model });
-  const { command, args, childEnv } = invocation;
-
   const dir = ensureStateDir(repo);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;
+  const schemaPath = outputSchemaPath(repo, base);
+  const invocation = buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath });
+  const { command, args, childEnv } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
   const stderrPath = path.join(dir, 'runs', `${base}.stderr.txt`);
   const metaPath = path.join(dir, 'runs', `${base}.json`);
 
-  appendEvent(repo, { type: 'agent_started', agentId, task, stdoutPath, stderrPath });
+  appendEvent(repo, { type: 'agent_started', agentId, stage, task, stdoutPath, stderrPath, schemaPath });
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -71,6 +87,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
         timedOut,
         stdoutPath,
         stderrPath,
+        schemaPath,
         completedAt: new Date().toISOString()
       };
       fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2) + '\n');
@@ -107,10 +124,11 @@ function configString(value) {
   return JSON.stringify(String(value));
 }
 
-export function buildCodexInvocation({ repo, agent, prompt, model = null, env = process.env }) {
+export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, env = process.env }) {
   const command = env.AITEAM_CODEX_BIN || 'codex';
   const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
   const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
+  if (agent.sandbox === 'workspace-write') args.push('--add-dir', repo);
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
 
   const provider = env.AITEAM_CODEX_PROVIDER;
@@ -143,6 +161,7 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, env = 
 
   const selectedModel = model || env.AITEAM_CODEX_MODEL;
   if (selectedModel) args.push('--model', selectedModel);
+  if (schemaPath) args.push('--output-schema', schemaPath);
   args.push(prompt);
 
   const childEnv = { ...env };
