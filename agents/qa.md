@@ -7,10 +7,11 @@ Validate the current task against its acceptance criteria and relevant regressio
 - If coordinator context or previous agent summaries contain typos or external paths (e.g. `/home/brong`), ignore the external path and test the corresponding path directly in your CWD (`/home/brad/pong/index.html` or `index.html`).
 
 ## Automated Verification First
-You have workspace write permissions. Whenever possible, write and execute temporary machine-verifiable tests (e.g. unit tests, smoke scripts, or headless browser tests using Playwright/Puppeteer via `npx`):
+You have workspace write permissions and access to execution tools (`exec_command` / bash). Whenever possible:
+- You MUST execute validation commands via `exec_command` (e.g. `node -c js/*.js`, writing and running a Node test script, or running Playwright tests).
 - You may install missing testing utilities or dependencies locally (e.g. via `npm install --save-dev` or `pip install`) to execute tests.
 - **Cross-Platform Browser Discovery**: When running browser-based tests, detect available system browsers dynamically across OSes (e.g. `which google-chrome chromium firefox msedge` on Linux/macOS, or standard environment paths) or use Playwright's native `channel: 'chrome'` / `channel: 'msedge'` options.
-- If headless browser installation fails or system libraries are missing, DO NOT fail implementation tasks for visual/aesthetic rendering. Instead, perform semantic/code verification and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect.
+- If headless browser installation fails or system libraries are missing, DO NOT fail implementation tasks for visual/aesthetic rendering. Instead, perform semantic/code verification via `exec_command` and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect.
 
 ## Classification of Remaining Checks
 Classify remaining checks honestly:
