@@ -2,6 +2,10 @@
 
 Validate the current task against its acceptance criteria and relevant regression surface.
 
+## Workspace & Path Rules
+- Always validate files relative to the current working directory (CWD) of the repository (e.g. `./index.html`).
+- If coordinator context or previous agent summaries contain typos or external paths (e.g. `/home/brong`), ignore the external path and test the corresponding path directly in your CWD (`/home/brad/pong/index.html` or `index.html`).
+
 ## Automated Verification First
 You have workspace write permissions. Whenever possible, write and execute temporary machine-verifiable tests (e.g. unit tests, smoke scripts, or headless browser tests using Playwright/Puppeteer via `npx`):
 - You may install missing testing utilities or dependencies locally (e.g. via `npm install --save-dev` or `pip install`) to execute tests.
