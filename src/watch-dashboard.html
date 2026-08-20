@@ -161,15 +161,24 @@
       const eventId = String(event.at || i) + '_' + type;
       const isOpen = openSet.has(eventId) ? ' open' : '';
       let details = '';
-      if (event.responseEvidence?.length) {
-        details += `<div style="padding:8px 12px; background:rgba(0,255,255,0.03); border:1px solid rgba(0,255,255,0.1); border-radius:6px; margin:8px 0;">`;
-        details += `<div style="font-weight:600; margin-bottom:4px; color:var(--muted); font-size:12px;">Evidence:</div><ul style="margin:0; padding-left:18px; font-size:12px; color:var(--muted);">${event.responseEvidence.map((e) => `<li>${md(e)}</li>`).join('')}</ul>`;
+      if (event.responseSummary || event.responseOutcome || event.responseEvidence?.length) {
+        details += `<div style="padding:10px 14px; background:rgba(0,255,255,0.04); border:1px solid rgba(0,255,255,0.15); border-radius:6px; margin:8px 0;">`;
+        if (event.responseOutcome) {
+          const oColor = event.responseOutcome === 'PASS' || event.responseOutcome === 'PASS_WITH_MANUAL_VALIDATION' ? 'var(--green)' : event.responseOutcome === 'FAIL' ? 'var(--red)' : 'var(--amber)';
+          details += `<div style="margin-bottom:6px;"><span class="status-pill" style="background:${oColor}22; color:${oColor}; border:1px solid ${oColor}55; padding:2px 8px; font-size:11px; font-weight:600;">Outcome: ${esc(event.responseOutcome)}</span></div>`;
+        }
+        if (event.responseSummary) {
+          details += `<div style="font-weight:600; margin-bottom:4px; color:var(--text); font-size:13px;">Response Summary:</div><p style="margin:0 0 8px 0; line-height:1.5;">${md(event.responseSummary)}</p>`;
+        }
+        if (event.responseEvidence?.length) {
+          details += `<div style="font-weight:600; margin-bottom:4px; color:var(--muted); font-size:12px;">Evidence:</div><ul style="margin:0; padding-left:18px; font-size:12px; color:var(--muted);">${event.responseEvidence.map((e) => `<li>${md(e)}</li>`).join('')}</ul>`;
+        }
         details += `</div>`;
       }
       details += `<table style="width:100%; border-collapse:collapse; margin-top:8px;">`;
       for (const [k, v] of Object.entries(event)) {
         if (k === 'at' || k === 'type' || k === 'responseSummary' || k === 'responseOutcome' || k === 'responseEvidence') continue;
-        details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre>${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
+        details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre style="white-space:pre-wrap; word-break:break-word; max-height:250px; overflow-y:auto; margin:0;">${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
       }
       details += `</table>`;
       return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
