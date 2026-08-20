@@ -130,8 +130,9 @@ function openBrowser(url) {
 
 function ensureWatchServer(repo) {
   const url = 'http://127.0.0.1:4317/';
+  const encodedRepo = encodeURIComponent(path.resolve(repo));
   return new Promise((resolve) => {
-    http.get('http://127.0.0.1:4317/health', (res) => {
+    http.get(`http://127.0.0.1:4317/api/set-repo?repo=${encodedRepo}`, (res) => {
       res.resume();
       openBrowser(url);
       resolve();

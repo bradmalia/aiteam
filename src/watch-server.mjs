@@ -87,12 +87,19 @@ function sendJson(response, value, status = 200) {
 }
 
 export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}) {
-  const absoluteRepo = path.resolve(repo);
+  let activeRepo = path.resolve(repo);
   const server = http.createServer((request, response) => {
     const url = new URL(request.url || '/', `http://${host}:${port}`);
+    if (url.pathname === '/api/set-repo' && (request.method === 'GET' || request.method === 'POST')) {
+      const newRepo = url.searchParams.get('repo');
+      if (newRepo) {
+        activeRepo = path.resolve(newRepo);
+      }
+      return sendJson(response, { ok: true, repository: activeRepo });
+    }
     if (request.method !== 'GET') return sendJson(response, { error: 'Only GET is supported.' }, 405);
-    if (url.pathname === '/api/state') return sendJson(response, snapshot(absoluteRepo));
-    if (url.pathname === '/health') return sendJson(response, { ok: true, repository: absoluteRepo });
+    if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
+    if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
     if (url.pathname === '/' || url.pathname === '/index.html') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return response.end(fs.readFileSync(dashboardPath));
