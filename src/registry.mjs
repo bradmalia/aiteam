@@ -10,6 +10,11 @@ function builtInRegistry() {
   return JSON.parse(fs.readFileSync(path.join(SOURCE_ROOT, 'agents', 'registry.json'), 'utf8'));
 }
 
+function globalSpecialistDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '/home/brad';
+  return path.join(home, '.aiteam', 'specialists');
+}
+
 function scopedSpecialistDir(repo) {
   return path.join(stateDir(repo), 'specialists');
 }
@@ -61,8 +66,10 @@ function normalizeSpecialist(input) {
 }
 
 export function loadScopedSpecialists(repo) {
-  if (!repo) return [];
-  const dirs = [protectedSpecialistDir(repo), scopedSpecialistDir(repo)];
+  const dirs = [globalSpecialistDir()];
+  if (repo) {
+    dirs.push(protectedSpecialistDir(repo), scopedSpecialistDir(repo));
+  }
   const records = new Map();
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
@@ -94,7 +101,10 @@ export function registerScopedSpecialist(repo, input, { provenance } = {}) {
   if (builtInRegistry().agents.some((agent) => agent.id === specialist.id)) {
     throw new Error(`Cannot replace built-in AITEAM agent: ${specialist.id}`);
   }
-  const dirs = [scopedSpecialistDir(repo), protectedSpecialistDir(repo)];
+  const dirs = [globalSpecialistDir()];
+  if (repo) {
+    dirs.push(scopedSpecialistDir(repo), protectedSpecialistDir(repo));
+  }
   for (const dir of dirs) fs.mkdirSync(dir, { recursive: true });
   const record = { ...specialist, provenance, createdAt: new Date().toISOString() };
   const serialized = JSON.stringify(record, null, 2) + '\n';
