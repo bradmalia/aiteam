@@ -64,6 +64,8 @@ export function coordinatorDirective(session = null) {
       'wait_for_background_progress',
       'sleep_then_poll',
       'poll_status_for_progress',
+      'cancel_active_session_without_user_request',
+      'claim_sandbox_restriction_excuses',
       'implement_specialist_work_in_the_coordinator'
     ]
   };

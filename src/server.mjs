@@ -326,15 +326,21 @@ export async function callTool(name, args) {
     return textResult(`AITEAM session complete at ${session.integration.head}.`, session);
   }
   if (name === 'aiteam_cancel') {
+    const session = readSession(repo);
+    if (!args.user_confirmed && !args.force) {
+      if (session?.status === 'ACTIVE' && session?.currentStage === 'implementation') {
+        throw new Error('Coordinator cannot cancel an ACTIVE implementation workflow without explicit user request. Call aiteam_advance to allow the specialist to execute file operations.');
+      }
+    }
     const child = activeProcesses.get(repo);
     let killed = false;
     if (child) {
       killed = killChildTree(child, 'SIGTERM');
       setTimeout(() => killChildTree(child, 'SIGKILL'), 5000).unref();
     }
-    const session = patchSession(repo, { status: 'CANCELLED', cancelReason: args.reason || 'Cancelled by user', activeRun: null });
+    const cancelled = patchSession(repo, { status: 'CANCELLED', cancelReason: args.reason || 'Cancelled by user', activeRun: null });
     appendEvent(repo, { type: 'session_cancelled', reason: args.reason || 'Cancelled by user', processKilled: killed });
-    return textResult(JSON.stringify(session, null, 2), session);
+    return textResult(JSON.stringify(cancelled, null, 2), cancelled);
   }
   throw new Error(`Unknown tool: ${name}`);
 }
