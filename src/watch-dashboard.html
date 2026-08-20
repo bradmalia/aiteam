@@ -97,8 +97,11 @@
 
     if (totalTasks > 0) {
       const taskCycleStages = ['implementation', 'code-review', 'qa', 'integration'];
-      const activeTaskIdx = tasks.findIndex((t) => t.id === currentTaskId);
-      const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : (completedTasksCount === totalTasks ? totalTasks : completedTasksCount + 1);
+      let activeTaskIdx = tasks.findIndex((t) => t.id === currentTaskId);
+      if (activeTaskIdx < 0) {
+        activeTaskIdx = tasks.findIndex((t) => t.status !== 'qa-passed' || !t.integration?.committed);
+      }
+      const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : totalTasks;
       const taskProgressLabel = `Tasks (${completedTasksCount}/${totalTasks} complete)`;
       
       const cycleHtml = taskCycleStages.map((stage) => {
