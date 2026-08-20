@@ -6,7 +6,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const DASHBOARD = fs.readFileSync(path.join(ROOT, 'watch-dashboard.html'));
+const dashboardPath = path.join(ROOT, 'watch-dashboard.html');
 
 function argument(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -54,15 +54,21 @@ function snapshot(repo) {
   const lastEvent = events.at(-1) || null;
   const activeRun = session?.activeRun || null;
   const startedAt = activeRun?.startedAt ? Date.parse(activeRun.startedAt) : NaN;
-  const elapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
+  const activeRunElapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
+  const sessionCreatedAt = session?.createdAt ? Date.parse(session.createdAt) : NaN;
+  const sessionElapsedSeconds = Number.isFinite(sessionCreatedAt) ? Math.max(0, Math.floor((Date.now() - sessionCreatedAt) / 1000)) : null;
   const evidence = Object.values(session?.stageEvidence || {}).filter((item) => item?.result).sort((a, b) => Date.parse(a.completedAt || 0) - Date.parse(b.completedAt || 0));
   const stageResult = evidence.at(-1)?.result || null;
+  const packageJson = readJson(path.join(ROOT, '..', 'package.json'));
   return {
     repository: repo,
+    version: packageJson?.version || 'unknown',
     updatedAt: session?.updatedAt || lastEvent?.at || null,
     session,
     activeRun,
-    elapsedSeconds,
+    elapsedSeconds: activeRunElapsedSeconds ?? sessionElapsedSeconds,
+    activeRunElapsedSeconds,
+    sessionElapsedSeconds,
     currentResult: stageResult,
     latestEvidence: evidence.at(-1) || null,
     recentEvents: events,
@@ -89,7 +95,7 @@ export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: absoluteRepo });
     if (url.pathname === '/' || url.pathname === '/index.html') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      return response.end(DASHBOARD);
+      return response.end(fs.readFileSync(dashboardPath));
     }
     return sendJson(response, { error: 'Not found.' }, 404);
   });

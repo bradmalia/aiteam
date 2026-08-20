@@ -4,6 +4,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { newSession, readSession, patchSession, appendEvent } from './state.mjs';
 import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './registry.mjs';
+import { activeProcesses, killChildTree } from './runtime.mjs';
 import { gitSnapshot } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
 import { advanceWorkflow, completeWorkflow, getCurrentAssignment, workflowStatus } from './workflow.mjs';
@@ -105,12 +106,48 @@ function advanceResultText(result) {
     phase: result.assignment.phase,
     remainingPhases: workflowStatus(result.assignment.session).remainingPhases
   }, ` ${stateLabel}`);
+  const manualChecksText = result.result.outcome === 'PASS_WITH_MANUAL_VALIDATION' && result.result.manualChecks?.length
+    ? `\nManual validation requested by QA:\n${result.result.manualChecks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n`
+    : '';
   const next = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
     ? `User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: ask the user these questions, then call aiteam_update_session with pendingUserInput containing the response.`
     : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
     : `Next enforced assignment: ${phaseLine(result.workflow)}`;
-  return [finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, next].join('\n');
+  return [finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, manualChecksText, next].filter(Boolean).join('\n');
+}
+
+import http from 'node:http';
+import { spawn } from 'node:child_process';
+
+function openBrowser(url) {
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+  try {
+    const child = spawn(cmd, [url], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch {}
+}
+
+function ensureWatchServer(repo) {
+  const url = 'http://127.0.0.1:4317/';
+  return new Promise((resolve) => {
+    http.get('http://127.0.0.1:4317/health', (res) => {
+      res.resume();
+      openBrowser(url);
+      resolve();
+    }).on('error', () => {
+      const watchScript = path.resolve(fileURLToPath(import.meta.url), '../watch-server.mjs');
+      const child = spawn(process.execPath, [watchScript, '--repo', repo, '--port', '4317'], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+      setTimeout(() => {
+        openBrowser(url);
+        resolve();
+      }, 500);
+    });
+  });
 }
 
 export async function callTool(name, args) {
@@ -125,10 +162,14 @@ export async function callTool(name, args) {
     const registry = loadRegistry(repo);
     const workflow = workflowStatus(session, repo);
     const coordinatorReadOnly = process.env.AITEAM_COORDINATOR_READ_ONLY === 'true';
+    
+    await ensureWatchServer(repo);
+    
     const text = [
       `AITEAM ${VERSION} session started.`,
       `Repository: ${repo}`,
       `Git: ${git.branch}@${git.head.slice(0, 12)}`,
+      `Watch Dashboard: http://127.0.0.1:4317/`,
       '',
       coordinatorContract(),
       '',
@@ -197,13 +238,27 @@ export async function callTool(name, args) {
     });
   }
   if (name === 'aiteam_advance') {
-    const result = await advanceWorkflow({
-      repo,
-      timeoutSeconds: args.timeout_seconds,
-      model: args.model || null,
-      coordinatorContext: args.context || ''
-    });
-    return textResult(advanceResultText(result), result);
+    try {
+      const result = await advanceWorkflow({
+        repo,
+        timeoutSeconds: args.timeout_seconds,
+        model: args.model || null,
+        coordinatorContext: args.context || ''
+      });
+      return textResult(advanceResultText(result), result);
+    } catch (error) {
+      const session = readSession(repo);
+      const workflow = workflowStatus(session, repo);
+      const text = [
+        `AITEAM stage execution encountered an issue: ${error.message}`,
+        `Current phase: ${workflow.phase}`,
+        '',
+        coordinatorDirectiveText(session),
+        '',
+        'Required action: Review the error, provide guidance if needed, and call aiteam_advance to retry.'
+      ].join('\n');
+      return textResult(text, { session, workflow, error: error.message, coordinatorDirective: coordinatorDirective(session) });
+    }
   }
   if (name === 'aiteam_spawn_agent') {
     const result = await advanceWorkflow({
@@ -267,8 +322,14 @@ export async function callTool(name, args) {
     return textResult(`AITEAM session complete at ${session.integration.head}.`, session);
   }
   if (name === 'aiteam_cancel') {
-    const session = patchSession(repo, { status: 'CANCELLED', cancelReason: args.reason || 'Cancelled by user' });
-    appendEvent(repo, { type: 'session_cancelled', reason: args.reason || 'Cancelled by user' });
+    const child = activeProcesses.get(repo);
+    let killed = false;
+    if (child) {
+      killed = killChildTree(child, 'SIGTERM');
+      setTimeout(() => killChildTree(child, 'SIGKILL'), 5000).unref();
+    }
+    const session = patchSession(repo, { status: 'CANCELLED', cancelReason: args.reason || 'Cancelled by user', activeRun: null });
+    appendEvent(repo, { type: 'session_cancelled', reason: args.reason || 'Cancelled by user', processKilled: killed });
     return textResult(JSON.stringify(session, null, 2), session);
   }
   throw new Error(`Unknown tool: ${name}`);
@@ -310,8 +371,20 @@ export async function runServer() {
     let msg;
     try { msg = JSON.parse(line); }
     catch { continue; }
-    const response = await handle(msg);
-    if (response) process.stdout.write(JSON.stringify(response) + '\n');
+    
+    handle(msg).then((response) => {
+      if (response) process.stdout.write(JSON.stringify(response) + '\n');
+    }).catch((err) => {
+      if (msg.id !== undefined) {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32603, message: `Internal error: ${err.message}` }
+        }) + '\n');
+      } else {
+        process.stderr.write(`AITEAM server error: ${err.stack || err}\n`);
+      }
+    });
   }
 }
 

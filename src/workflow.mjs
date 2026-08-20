@@ -50,7 +50,7 @@ Also return "tasks", a non-empty array of {"id","title","description","specialis
   'critical-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR remains, outcome must be FAIL and "repairStage" must be "architecture" or "planning".`,
   implementation: `${COMMON_SCHEMA}
-Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}). Make the requested changes in the repository before returning PASS.`,
+For Implementation, you MUST perform the code edits in the workspace using your tools and return outcome "PASS". Never return outcome "FAIL" for your own implementation task. Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}).`,
   'code-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","location","impact","recommendation"}. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
@@ -233,6 +233,7 @@ function stageContext(session, repo) {
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
     taskLedger: session.taskLedger,
+    interviewHistory: session.interviewHistory || [],
     pendingUserInput: session.pendingUserInput,
     currentTask: currentTask(session),
     recruiterGap: session.recruiterQueue[0] || null,
@@ -249,9 +250,15 @@ function assignmentText(stage, session) {
     'critical-review': session.lockedCriticalFindings.length
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, plan, and QA feasibility.',
-    implementation: `Implement only task ${JSON.stringify(currentTask(session))}. Do not commit.`,
-    'code-review': `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.`,
-    qa: `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.`,
+    implementation: currentTask(session)?.['code-reviewFailure']
+      ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use your file editing/writing tools to fix these specific issues in the workspace filesystem now, and return outcome "PASS". Do NOT return FAIL.`
+      : `You MUST use your file editing/writing tools (e.g. bash, write_file) to write the code into the repository filesystem now. Do NOT just output the schema without writing files.\nImplement only task ${JSON.stringify(currentTask(session))}. Return outcome "PASS". Do not commit.`,
+    'code-review': currentTask(session)?.['code-reviewFailure']
+      ? `This is a repair verification. The previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nReview ONLY the current task and its changed paths to verify these specific findings have been resolved. Do NOT perform a new comprehensive review or report new issues.`
+      : `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.`,
+    qa: currentTask(session)?.qaFailure
+      ? `This is a repair verification. The previous QA validation failed with the following checks:\n${JSON.stringify(currentTask(session).qaFailure.checks, null, 2)}\n\nValidate ONLY that these specific failed checks have been resolved. Do NOT perform a new comprehensive validation or report new issues.`
+      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.`,
     integration: 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
   }[stage];
   return `${details}\n\n${STAGE_SCHEMAS[stage]}`;
@@ -363,6 +370,9 @@ function applyResult(repo, session, assignment, result, run) {
   const passed = result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
 
   if (stage === 'intake' && result.outcome === 'AWAITING_USER') {
+    const nextHistory = session.pendingUserInput?.response != null
+      ? [...(session.interviewHistory || []), session.pendingUserInput]
+      : (session.interviewHistory || []);
     const pendingUserInput = {
       stage: 'intake',
       questions: result.questions,
@@ -371,7 +381,7 @@ function applyResult(repo, session, assignment, result, run) {
       runId: run.runId
     };
     appendEvent(repo, { type: 'user_input_requested', stage, questions: result.questions, runId: run.runId });
-    return writeSession(repo, { ...next, pendingUserInput });
+    return writeSession(repo, { ...next, interviewHistory: nextHistory, pendingUserInput });
   }
 
   if (result.outcome === 'BLOCKED') {
@@ -389,6 +399,10 @@ function applyResult(repo, session, assignment, result, run) {
   }
 
   if (stage === 'intake') {
+    const nextHistory = next.pendingUserInput?.response != null
+      ? [...(next.interviewHistory || []), next.pendingUserInput]
+      : (next.interviewHistory || []);
+    next.interviewHistory = nextHistory;
     next.completedStages = [...new Set([...next.completedStages, 'intake'])];
     next.currentStage = 'architecture';
     next.pendingUserInput = null;
@@ -441,13 +455,14 @@ function applyResult(repo, session, assignment, result, run) {
     } : task);
     next.currentStage = 'code-review';
   } else if (stage === 'code-review') {
-    next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'review-passed', review: result } : task);
+    next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'review-passed', review: result, 'code-reviewFailure': null } : task);
     next.currentStage = 'qa';
   } else if (stage === 'qa') {
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
       status: 'qa-passed',
       qa: result,
+      qaFailure: null,
       qaFingerprint: fingerprintPaths(repo, task.filesChanged)
     } : task);
     const unfinished = next.taskLedger.some((task) => task.status !== 'qa-passed');

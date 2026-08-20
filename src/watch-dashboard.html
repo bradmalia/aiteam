@@ -8,58 +8,165 @@
     :root { color-scheme: dark; --bg:#120d1e; --panel:#21162d; --border:#513d62; --text:#f5eef8; --muted:#b8a8c1; --cyan:#57e6ed; --green:#77e39b; --amber:#ffd166; --red:#ff7b91; }
     * { box-sizing:border-box; } body { margin:0; padding:28px; font:15px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--text); background:radial-gradient(circle at 10% 0%,#38204a 0,#120d1e 42%); }
     main { max-width:1200px; margin:auto; } header { display:flex; justify-content:space-between; align-items:end; gap:20px; margin-bottom:20px; } h1 { margin:0; color:var(--cyan); font-size:28px; } h2 { margin:0 0 10px; font-size:16px; color:var(--cyan); } .subtitle,.muted { color:var(--muted); }
-    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; } .panel { background:rgba(33,22,45,.92); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; box-shadow:0 8px 30px #0004; } .wide { grid-column:1/-1; }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; } .panel { background:rgba(33,22,45,.92); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; box-shadow:0 8px 30px #0004; } .wide { grid-column:1/-1; }
     .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; } .value { margin-top:5px; font-size:17px; overflow-wrap:anywhere; } .running { color:var(--amber); } .passed { color:var(--green); } .waiting { color:var(--cyan); } .failed { color:var(--red); }
-    ol { margin:8px 0 0; padding-left:25px; } li { margin:4px 0; } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:#e8dcef; } .task { border:1px solid #ffffff18; border-radius:6px; margin:8px 0; padding:10px 12px; } .task summary,.event summary { cursor:pointer; list-style:none; } .task summary::-webkit-details-marker,.event summary::-webkit-details-marker { display:none; } .task summary::before,.event summary::before { content:'▶ '; color:var(--cyan); } details[open] summary::before { content:'▼ '; } .task-title { font-weight:600; } .task-meta { color:var(--muted); font-size:12px; margin-top:4px; } .task-body { margin-top:10px; border-top:1px solid #ffffff12; padding-top:10px; } .status-pill { display:inline-block; padding:2px 7px; border-radius:10px; font-size:11px; margin-left:6px; background:#ffffff12; } .event { padding:9px 0; border-bottom:1px solid #ffffff12; } .event:last-child { border-bottom:0; } .event-time { color:var(--muted); font-size:12px; } .event-type { color:var(--cyan); } .empty { color:var(--muted); font-style:italic; }
-    @media (max-width:800px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
+    ol, ul { margin:8px 0 0; padding-left:25px; } li { margin:4px 0; } pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; color:#e8dcef; } .task { border:1px solid #ffffff18; border-radius:6px; margin:8px 0; padding:10px 12px; } .task summary,.event summary { cursor:pointer; list-style:none; } .task summary::-webkit-details-marker,.event summary::-webkit-details-marker { display:none; } .task summary::before,.event summary::before { content:'▶ '; color:var(--cyan); } details[open] summary::before { content:'▼ '; } .task-title { font-weight:600; } .task-meta { color:var(--muted); font-size:12px; margin-top:4px; } .task-body { margin-top:10px; border-top:1px solid #ffffff12; padding-top:10px; } .status-pill { display:inline-block; padding:2px 7px; border-radius:10px; font-size:11px; margin-left:6px; background:#ffffff12; } .event { padding:9px 0; border-bottom:1px solid #ffffff12; } .event:last-child { border-bottom:0; } .event-time { color:var(--muted); font-size:12px; } .event-type { color:var(--cyan); } .empty { color:var(--muted); font-style:italic; }
+    .events-container { max-height: 400px; overflow-y: auto; }
+    .badge { padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #ffffff18; }
+    .badge.PASS, .badge.PASS_WITH_MANUAL_VALIDATION { background: rgba(119, 227, 155, 0.2); color: var(--green); }
+    .badge.FAIL { background: rgba(255, 123, 145, 0.2); color: var(--red); }
+    .badge.AWAITING_USER, .badge.BLOCKED { background: rgba(255, 209, 102, 0.2); color: var(--amber); }
+    @media (max-width:950px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
   </style>
 </head>
 <body>
 <main>
-  <header><div><h1>AITEAM Watch</h1><div class="subtitle">Read-only live workflow monitor</div></div><div id="refresh" class="muted">Connecting…</div></header>
+  <header><div><h1>AITEAM Watch <span id="version" style="font-size: 14px; color: var(--muted); font-weight: normal;"></span></h1><div class="subtitle">Read-only live workflow monitor</div></div><div id="refresh" class="muted">Connecting…</div></header>
   <section class="grid">
     <div class="panel"><div class="label">Status</div><div id="status" class="value">—</div></div>
     <div class="panel"><div class="label">Agent</div><div id="agent" class="value">—</div></div>
     <div class="panel"><div class="label">Phase</div><div id="phase" class="value">—</div></div>
+    <div class="panel"><div class="label">Task</div><div id="activeTask" class="value">—</div></div>
     <div class="panel"><div class="label">Elapsed</div><div id="elapsed" class="value">—</div></div>
     <div class="panel wide"><div class="label">Repository</div><div id="repo" class="value">—</div></div>
     <div class="panel wide"><h2>Gate Progress</h2><div id="gates" class="muted">—</div></div>
-    <div class="panel wide"><h2>Task Ledger</h2><div id="tasks" class="empty">No implementation tasks have been planned yet.</div></div>
     <div class="panel wide" id="questionsPanel" hidden><h2>User Input Required</h2><ol id="questions"></ol></div>
     <div class="panel wide"><h2>Latest Agent Result</h2><div id="result" class="empty">No result yet.</div></div>
-    <div class="panel wide"><h2>Recent Events</h2><div id="events" class="empty">No events yet.</div></div>
+    <div class="panel wide"><h2>Task Ledger</h2><div id="tasks" class="empty">No implementation tasks have been planned yet.</div></div>
+    <div class="panel wide"><h2>Recent Events</h2><div class="events-container" id="eventsContainer"><div id="events" class="empty">No events yet.</div></div></div>
   </section>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const formatDuration = (seconds) => seconds == null ? '—' : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2,'0')}s`;
+  
+  const md = (text) => esc(text)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.*?)`/g, '<code style="background:#0004;padding:2px 4px;border-radius:4px;">$1</code>')
+    .replace(/\n/g, '<br>');
+
+  function renderResult(result, evidence) {
+    if (!result) return 'No result yet.';
+    const agentHeader = evidence ? `<div style="margin-bottom:8px; font-size:13px; color:var(--cyan); font-weight:600;">Agent: ${esc(evidence.agentId || 'Specialist')} <span style="color:var(--muted); font-weight:normal;">(${esc(evidence.stage || '')})</span></div>` : '';
+    let html = `${agentHeader}<div style="margin-bottom:10px;"><span class="badge ${esc(result.outcome)}">${esc(result.outcome)}</span></div>`;
+    html += `<div><strong>Summary</strong><p>${md(result.summary || '')}</p></div>`;
+    if (result.evidence && result.evidence.length) {
+      html += `<div><strong>Evidence</strong><ul>${result.evidence.map(e => `<li>${md(e)}</li>`).join('')}</ul></div>`;
+    }
+    if (result.findings && result.findings.length) {
+      html += `<div><strong>Findings</strong><ul>${result.findings.map(f => `<li><span style="color:var(--amber)">[${esc(f.severity)}]</span> ${md(f.recommendation || f.description || f.id)}</li>`).join('')}</ul></div>`;
+    }
+    if (result.checks && result.checks.length) {
+      html += `<div><strong>Checks</strong><ul>${result.checks.map(c => `<li><span style="color:${c.status==='PASS'?'var(--green)':'var(--red)'}">[${esc(c.status)}]</span> ${md(c.name)}: ${md(c.evidence)}</li>`).join('')}</ul></div>`;
+    }
+    return html;
+  }
+
   function render(data) {
     const session = data.session;
     const active = data.activeRun;
+    if (data.version) $('version').textContent = `v${data.version}`;
     $('repo').textContent = data.repository;
     $('status').textContent = session?.status || 'NO SESSION';
     $('status').className = `value ${active ? 'running' : session?.status === 'COMPLETE' ? 'passed' : ''}`;
     $('agent').textContent = active ? `${active.role} (${active.agentId})` : session?.currentStage ? session.currentStage : '—';
     $('phase').textContent = active?.stage || session?.currentStage || '—';
-    $('elapsed').textContent = formatDuration(data.elapsedSeconds);
+    const currentTaskId = session?.currentTaskId;
+    const currentTaskObj = (session?.taskLedger || []).find((t) => t.id === currentTaskId);
+    $('activeTask').textContent = currentTaskObj ? (currentTaskObj.title || currentTaskId) : currentTaskId || '—';
+    $('activeTask').className = `value ${currentTaskId ? 'running' : ''}`;
+    const elapsedText = data.activeRun
+      ? `${formatDuration(data.activeRunElapsedSeconds)} (session: ${formatDuration(data.sessionElapsedSeconds)})`
+      : formatDuration(data.sessionElapsedSeconds);
+    $('elapsed').textContent = elapsedText;
+    
     const plan = session?.phasePlan || [];
     const completed = new Set(session?.completedStages || []);
     $('gates').innerHTML = plan.map((gate) => `<span class="${completed.has(gate) ? 'passed' : gate === session?.currentStage ? (active ? 'running' : 'waiting') : ''}">${completed.has(gate) ? '✓' : gate === session?.currentStage ? '▶' : '○'} ${esc(gate)}</span>`).join(' &nbsp;→&nbsp; ');
+    
     const tasks = session?.taskLedger || [];
     const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
     const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
+    
+    const taskPhases = ['planned', 'implementation', 'code-review', 'qa', 'complete'];
+    const taskPhaseIndex = (status) => taskPhases.indexOf(status === 'implemented' ? 'code-review' : status === 'review-passed' ? 'qa' : status === 'qa-passed' ? 'complete' : status === 'needs-rework' ? 'implementation' : 'planned');
+    
+    // Preserve open details state across 1.5s poll re-renders
+    const openSet = new Set();
+    document.querySelectorAll('details[data-id][open]').forEach((el) => openSet.add(el.getAttribute('data-id')));
+    const container = $('eventsContainer');
+    const prevScrollTop = container ? container.scrollTop : 0;
+    
     $('tasks').className = tasks.length ? '' : 'empty';
-    $('tasks').innerHTML = tasks.map((task) => `<details class="task"><summary><span class="task-title">${esc(task.title || task.id)}</span><span class="status-pill ${taskClass(task.status)}">${esc(task.status || 'planned')}</span></summary><div class="task-meta">${esc(task.id)} · specialist: ${esc(task.specialistId)} · gate: ${esc(taskGate(task.status))} · dependencies: ${esc((task.dependencies || []).join(', ') || 'none')}</div><div class="task-body"><div><strong>Description</strong><p>${esc(task.description || '—')}</p></div><div><strong>Acceptance criteria</strong><ul>${(task.acceptanceCriteria || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul></div><div><strong>Files changed</strong><pre>${esc((task.filesChanged || []).join('\n') || '—')}</pre></div><div><strong>Validations</strong><pre>${esc(JSON.stringify(task.validations || [], null, 2))}</pre></div></div></details>`).join('') || 'No implementation tasks have been planned yet.';
+    $('tasks').innerHTML = tasks.map((task) => {
+      const idx = taskPhaseIndex(task.status);
+      const miniGate = taskPhases.slice(1).map((p, i) => {
+        const stepIdx = i + 1;
+        const isPassed = stepIdx < idx || (stepIdx === 4 && task.status === 'qa-passed');
+        const isActive = stepIdx === idx && task.status !== 'qa-passed';
+        const isFailed = stepIdx === idx && task.status === 'needs-rework';
+        return `<span class="${isPassed ? 'passed' : isActive ? 'running' : isFailed ? 'failed' : ''}">${isPassed ? '✓' : isActive ? '▶' : isFailed ? '✗' : '○'} ${p}</span>`;
+      }).join(' &nbsp;→&nbsp; ');
+
+      const taskId = String(task.id || '');
+      const isOpen = openSet.has(taskId) ? ' open' : '';
+      let findingsHtml = '';
+      const review = task.review || task['code-reviewFailure'];
+      if (review?.findings?.length) {
+        findingsHtml += `<div style="margin-top:10px;"><strong>Reviewer Findings (${esc(task.review ? 'Resolved / Passed' : 'Active / Needs Rework')})</strong><ul>`;
+        for (const f of review.findings) {
+          const sevColor = f.severity === 'BLOCKER' || f.severity === 'MAJOR' ? 'var(--red)' : 'var(--amber)';
+          const resBadge = task.status === 'qa-passed' || task.status === 'review-passed'
+            ? `<span style="color:var(--green); font-size:11px; margin-left:6px;">[RESOLVED]</span>`
+            : `<span style="color:${sevColor}; font-size:11px; margin-left:6px;">[OPEN]</span>`;
+          findingsHtml += `<li><span style="color:${sevColor}">[${esc(f.severity)}]</span> <strong>${esc(f.id || '')}</strong>: ${md(f.recommendation || f.description || '')}${resBadge}</li>`;
+        }
+        findingsHtml += `</ul></div>`;
+      }
+
+      let qaHtml = '';
+      const qa = task.qa || task.qaFailure;
+      if (qa?.checks?.length) {
+        qaHtml += `<div style="margin-top:10px;"><strong>QA Validation Checks</strong><ul>`;
+        for (const c of qa.checks) {
+          const stColor = c.status === 'PASS' ? 'var(--green)' : 'var(--red)';
+          qaHtml += `<li><span style="color:${stColor}">[${esc(c.status)}]</span> <strong>${esc(c.name)}</strong>: ${md(c.evidence || '')}</li>`;
+        }
+        qaHtml += `</ul></div>`;
+      }
+
+      return `<details class="task" data-id="${esc(taskId)}"${isOpen}><summary><span class="task-title">${esc(task.title || task.id)}</span><span class="status-pill ${taskClass(task.status)}">${esc(task.status || 'planned')}</span></summary><div class="task-meta">${esc(task.id)} · specialist: ${esc(task.specialistId)}</div><div class="task-meta" style="margin-top:8px">${miniGate}</div><div class="task-body"><div><strong>Description</strong><p>${md(task.description || '—')}</p></div><div><strong>Acceptance criteria</strong><ul>${(task.acceptanceCriteria || []).map((item) => `<li>${md(item)}</li>`).join('')}</ul></div><div><strong>Files changed</strong><pre>${esc((task.filesChanged || []).join('\n') || '—')}</pre></div>${findingsHtml}${qaHtml}</div></details>`;
+    }).join('') || 'No implementation tasks have been planned yet.';
+    
     const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
     $('questionsPanel').hidden = questions.length === 0;
-    $('questions').innerHTML = questions.map((question) => `<li>${esc(question)}</li>`).join('');
+    $('questions').innerHTML = questions.map((question) => `<li>${md(question)}</li>`).join('');
+    
     const result = data.currentResult;
     $('result').className = result ? '' : 'empty';
-    $('result').innerHTML = result ? `<pre>${esc(JSON.stringify(result, null, 2))}</pre>` : 'No result yet.';
+    $('result').innerHTML = renderResult(result, data.latestEvidence);
+    
     const events = data.recentEvents || [];
     $('events').className = events.length ? '' : 'empty';
-    $('events').innerHTML = events.slice().reverse().map((event) => `<details class="event"><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(event.type || '')}</span></span> ${esc(event.summary || event.error || event.agentId || '')}</summary><pre>${esc(JSON.stringify(event, null, 2))}</pre></details>`).join('') || 'No events yet.';
+    $('events').innerHTML = events.slice().reverse().map((event, i) => {
+      const summary = event.summary || event.error || event.agentId || event.reason || '';
+      const type = event.type || '';
+      const eventId = String(event.at || i) + '_' + type;
+      const isOpen = openSet.has(eventId) ? ' open' : '';
+      let details = `<table style="width:100%; border-collapse:collapse; margin-top:8px;">`;
+      for (const [k, v] of Object.entries(event)) {
+        if (k === 'at' || k === 'type') continue;
+        details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre>${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
+      }
+      details += `</table>`;
+      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(type)}</span></span> ${esc(summary)}</summary>${details}</details>`;
+    }).join('') || 'No events yet.';
+    
+    if (container && prevScrollTop > 0) {
+      container.scrollTop = prevScrollTop;
+    }
+    
     $('refresh').textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 1.5s`;
   }
   async function refresh() { try { const response = await fetch('/api/state', { cache:'no-store' }); render(await response.json()); } catch (error) { $('refresh').textContent = `Connection error: ${error.message}`; } }

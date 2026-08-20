@@ -74,7 +74,8 @@ export function newSession(repo, request) {
     integration: null,
     lockedCriticalFindings: [],
     completedTasks: [],
-    pendingUserInput: null
+    pendingUserInput: null,
+    interviewHistory: []
   };
   writeSession(repo, session);
   appendEvent(repo, { type: 'session_started', request, sessionId: session.id });

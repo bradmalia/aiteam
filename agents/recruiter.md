@@ -11,6 +11,7 @@ Define:
 - version policy
 - research policy
 - specialist prompt/contract
+- research policy (use web search to inspect modern documentation and accurate API patterns for the requested framework)
 
 The specialist inherits the AITEAM Base Agent Contract.
 

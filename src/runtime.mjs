@@ -24,6 +24,8 @@ function outputSchemaPath(repo, runBase) {
   return schemaPath;
 }
 
+export const activeProcesses = new Map();
+
 export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null }) {
   const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
@@ -48,6 +50,8 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
       detached: process.platform !== 'win32'
     });
 
+    activeProcesses.set(repo, child);
+
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -71,6 +75,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     });
 
     child.on('close', (code, signal) => {
+      activeProcesses.delete(repo);
       clearTimeout(timer);
       if (forceKillTimer && !timedOut) clearTimeout(forceKillTimer);
       fs.writeFileSync(stdoutPath, stdout);
