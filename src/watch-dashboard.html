@@ -136,7 +136,11 @@
         qaHtml += `</ul></div>`;
       }
 
-      return `<details class="task" data-id="${esc(taskId)}"${isOpen}><summary><span class="task-title">${esc(task.title || task.id)}</span><span class="status-pill ${taskClass(task.status)}">${esc(task.status || 'planned')}</span></summary><div class="task-meta">${esc(task.id)} · specialist: ${esc(task.specialistId)}</div><div class="task-meta" style="margin-top:8px">${miniGate}</div><div class="task-body"><div><strong>Description</strong><p>${md(task.description || '—')}</p></div><div><strong>Acceptance criteria</strong><ul>${(task.acceptanceCriteria || []).map((item) => `<li>${md(item)}</li>`).join('')}</ul></div><div><strong>Files changed</strong><pre>${esc((task.filesChanged || []).join('\n') || '—')}</pre></div>${findingsHtml}${qaHtml}</div></details>`;
+      const isCurrentActive = task.id === currentTaskId;
+      const displayStatus = (isCurrentActive && task.status === 'planned') ? (session.currentStage || 'in-progress') : (task.status || 'planned');
+      const pillClass = (isCurrentActive && task.status === 'planned') ? 'running' : taskClass(task.status);
+
+      return `<details class="task" data-id="${esc(taskId)}"${isOpen}><summary><span class="task-title">${esc(task.title || task.id)}</span><span class="status-pill ${pillClass}">${esc(displayStatus)}</span></summary><div class="task-meta">${esc(task.id)} · specialist: ${esc(task.specialistId)}</div><div class="task-meta" style="margin-top:8px">${miniGate}</div><div class="task-body"><div><strong>Description</strong><p>${md(task.description || '—')}</p></div><div><strong>Acceptance criteria</strong><ul>${(task.acceptanceCriteria || []).map((item) => `<li>${md(item)}</li>`).join('')}</ul></div><div><strong>Files changed</strong><pre>${esc((task.filesChanged || []).join('\n') || '—')}</pre></div>${findingsHtml}${qaHtml}</div></details>`;
     }).join('') || 'No implementation tasks have been planned yet.';
     
     const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
