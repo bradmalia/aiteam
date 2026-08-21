@@ -61,7 +61,7 @@ export function coordinatorDirective(session = null) {
         tool: 'aiteam_update_session',
         recommendedAgentId: qaManual ? null : 'analyst',
         instruction: qaManual
-          ? 'You MUST present these QA manual verification checks to the real user in chat and wait for their actual feedback. Do NOT auto-confirm, fabricate, or invent a confirmation. Only after the user responds, call aiteam_update_session with pendingUserInput containing the user response before advancing to Integration.'
+          ? `STOP. You MUST paste these exact QA manual checks into chat for the real user to perform physically. Do NOT mark them as passed yourself, do NOT fabricate results, do NOT infer they pass from the code. Wait for the user to actually run the checks and reply with their findings. Only after the user confirms in chat may you call aiteam_update_session with their exact response. The checks are: ${JSON.stringify(session.pendingUserInput?.questions)}.`
           : `STOP. You must show these questions to the USER in chat and wait for their reply. DO NOT answer the questions yourself, guess, or invent answers. The questions are: ${JSON.stringify(intakeQuestions)}. Only after the real user has responded may you call aiteam_update_session with their actual answers.`
       },
       prohibitedActions: [
@@ -69,7 +69,12 @@ export function coordinatorDirective(session = null) {
         'auto_confirm_manual_qa',
         'fabricate_user_qa_confirmation',
         'implement_specialist_work_in_the_coordinator',
-        ...(qaManual ? [] : [
+        ...(qaManual ? [
+          'self_approve_qa_checks',
+          'infer_qa_pass_from_code',
+          'fabricate_qa_confirmation',
+          'mark_checks_passed_without_user'
+        ] : [
           'skip_intake_confirmation',
           'answer_intake_questions_yourself',
           'guess_user_preferences',
@@ -135,7 +140,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     ? 'All enforced gates have passed. Do not run another specialist; call aiteam_complete.'
     : directive.requiredNextAction.tool === 'aiteam_update_session'
       ? (session.pendingUserInput?.kind === 'qa-manual'
-        ? 'Ask the user to perform the listed QA manual checks and wait for their response. Do not auto-confirm or invent validation responses. Call aiteam_update_session only with the user\'s real feedback, and only then call aiteam_advance for Integration.'
+        ? 'STOP. You MUST paste the QA manual checks into chat for the real user to physically perform. Do NOT approve them yourself, infer pass from the code, or fabricate a confirmation. Wait for the user\'s actual reply, then call aiteam_update_session with their exact response before advancing to Integration.'
         : 'STOP. You MUST show these exact questions to the user in your chat response and then wait — do NOT answer them yourself or call aiteam_update_session until the real user has replied. Never guess, infer, or invent the user\'s answers. Only after the user responds in chat may you call aiteam_update_session with their actual words, then aiteam_advance.')
     : isImplFail
       ? 'CRITICAL: The implementation specialist returned FAIL without calling exec_command or bash to write files. This is NOT a real sandbox restriction — the specialist has full workspace-write access. Do NOT output code in chat, do NOT tell the user to copy-paste or save files manually. Call aiteam_advance immediately to retry. The specialist will write the files to disk on the next invocation.'
