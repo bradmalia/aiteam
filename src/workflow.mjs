@@ -355,7 +355,11 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
   if (session.currentStage === 'implementation' && (!task || !['planned', 'needs-rework'].includes(task.status))) {
     task = nextRunnableTask(session);
     if (!task) throw new Error('No dependency-ready implementation task exists.');
-    session = writeSession(repo, { ...session, currentTaskId: task.id });
+    session = writeSession(repo, {
+      ...session,
+      currentTaskId: task.id,
+      taskLedger: session.taskLedger.map((t) => t.id === task.id ? { ...t, startedAt: t.startedAt || new Date().toISOString() } : t)
+    });
   }
   if (['code-review', 'qa'].includes(session.currentStage) && task?.implementationFingerprint) {
     const currentFingerprint = fingerprintPaths(repo, task.filesChanged);
@@ -552,7 +556,8 @@ function applyResult(repo, session, assignment, result, run) {
       status: manual ? 'qa-awaiting-manual' : 'qa-passed',
       qa: result,
       qaFailure: null,
-      qaFingerprint: fingerprintPaths(repo, task.filesChanged)
+      qaFingerprint: fingerprintPaths(repo, task.filesChanged),
+      completedAt: manual ? task.completedAt : new Date().toISOString()
     } : task);
     if (manual) {
       next.pendingUserInput = {
@@ -603,7 +608,7 @@ export function confirmManualQa(repo, response) {
     pendingUserInput: { ...pending, response: response.trim(), answeredAt: new Date().toISOString() },
     currentStage: 'integration',
     taskLedger: session.taskLedger.map((item) => item.id === task.id
-      ? { ...item, status: 'qa-passed', qa: { ...item.qa, manualValidationResponse: response.trim() } }
+      ? { ...item, status: 'qa-passed', qa: { ...item.qa, manualValidationResponse: response.trim() }, completedAt: new Date().toISOString() }
       : item)
   };
   return writeSession(repo, next);
