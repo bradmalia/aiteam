@@ -74,8 +74,8 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_cancel',
-    description: 'Mark the active AITEAM session cancelled. Running subprocess cancellation is a future enhancement.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, reason: { type: 'string' } } }
+    description: 'Cancel the active session and discard unintegrated work. DO NOT USE THIS TOOL autonomously. You may ONLY call this tool if the human user explicitly tells you to cancel the session.',
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, reason: { type: 'string' } }, required: ['reason'] }
   }
 ];
 
