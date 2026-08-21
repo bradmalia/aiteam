@@ -128,9 +128,10 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
   const finalReminder = stage === 'implementation'
     ? [
       '# ⚠️ FINAL INSTRUCTION — READ THIS LAST',
-      'You MUST use bash/exec tools to write files to disk BEFORE emitting your JSON response.',
-      'Steps: (1) run `cat << EOF > filename` or equivalent, (2) verify with `ls -la filename`, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
-      'Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
+      '1. SCOPE DISCIPLINE: You MUST ONLY implement the acceptanceCriteria of your `currentTask`. The project requirements and architecture in your context are for background knowledge only. DO NOT build features belonging to future tasks (like AI, sound, or game loops) unless they are explicitly listed in your task\'s acceptance criteria. Over-achieving breaks the project plan.',
+      '2. You MUST use bash/exec tools to write files to disk BEFORE emitting your JSON response.',
+      '3. Steps: (1) run `cat << EOF > filename` or equivalent, (2) verify with `ls -la filename`, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
+      '4. Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
       'LARGE FILE WARNING: exec_command truncates heredocs at ~200 lines. For files >150 lines, write in chunks:',
       '  chunk 1: `cat << AITEAM_EOF > filename` … ~100 lines … `AITEAM_EOF`',
       '  chunk 2+: `cat << AITEAM_EOF >> filename` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
