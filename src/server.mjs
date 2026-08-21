@@ -16,7 +16,7 @@ export const toolDefs = [
   {
     name: 'aiteam_start',
     description: 'Initialize a server-governed AITEAM request (auto-initializing Git if needed) in the repository directory and synchronously run the first required specialist stage. This does not start background workers. Do NOT run git init or file commands in the coordinator session. After success, report the returned agent/phase line and call aiteam_advance for each remaining assignment.',
-    inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, model: { type: 'string' }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
+    inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
     name: 'aiteam_status',
@@ -26,12 +26,12 @@ export const toolDefs = [
   {
     name: 'aiteam_advance',
     description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. The Coordinator cannot select or skip phases.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, model: { type: 'string' } } }
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 } } }
   },
   {
     name: 'aiteam_spawn_agent',
     description: 'Compatibility alias for aiteam_advance. The requested agent_id must equal the server-required agent for the current phase; arbitrary or out-of-order delegation is rejected.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, agent_id: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer' }, model: { type: 'string' } }, required: ['agent_id', 'task'] }
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, agent_id: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer' } }, required: ['agent_id', 'task'] }
   },
   {
     name: 'aiteam_register_specialist',
