@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { callTool, toolDefs } from '../src/server.mjs';
+import { advanceResultText, callTool, toolDefs } from '../src/server.mjs';
 
 function createRepository() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-guidance-'));
@@ -24,6 +24,40 @@ test('MCP tool descriptions explain coordinator-driven execution', () => {
   assert.match(descriptions.aiteam_advance, /server-owned workflow gate/i);
   assert.match(descriptions.aiteam_spawn_agent, /Compatibility alias/i);
   assert.match(descriptions.aiteam_register_specialist, /successful Recruiter stage/i);
+});
+
+test('awaiting-user results put the exact questions before any next-step guidance', () => {
+  const session = {
+    status: 'ACTIVE',
+    currentStage: 'intake',
+    phasePlan: ['intake', 'architecture'],
+    pendingUserInput: {
+      questions: ['How many points?', 'Show a menu?', 'Show both scores?'],
+      response: null
+    }
+  };
+  const text = advanceResultText({
+    result: {
+      outcome: 'AWAITING_USER',
+      summary: 'Need clarification',
+      manualChecks: []
+    },
+    session,
+    workflow: {
+      active: true,
+      phase: 'Intake',
+      remainingPhases: ['Architecture']
+    },
+    assignment: {
+      session,
+      agentId: 'analyst',
+      role: 'Analyst',
+      phase: 'Intake'
+    }
+  });
+  assert.match(text, /^STOP CALLING TOOLS!/);
+  assert.ok(text.indexOf('How many points?') < text.indexOf('AITEAM | Agent: Analyst (analyst) awaiting user'));
+  assert.doesNotMatch(text, /Next enforced assignment:.*Architecture/);
 });
 
 test('start auto-runs the first specialist and status exposes the next gate', async () => {

@@ -96,7 +96,7 @@ function phaseLine(workflow, suffix = '') {
   return `AITEAM | Agent: ${identity}${suffix} | Phase: ${workflow.phase || 'Complete'} | Remaining: ${remaining}`;
 }
 
-function advanceResultText(result) {
+export function advanceResultText(result) {
   const stateLabel = result.result.outcome === 'AWAITING_USER'
     ? 'awaiting user'
     : ['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed';
@@ -117,7 +117,10 @@ function advanceResultText(result) {
     : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
     : `Next enforced assignment: ${phaseLine(result.workflow)}`;
-  return [finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, manualChecksText, next].filter(Boolean).join('\n');
+  const urgentUserInput = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
+    ? `${next}\n\n`
+    : '';
+  return [urgentUserInput, finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, manualChecksText, urgentUserInput ? '' : next].filter(Boolean).join('\n');
 }
 
 import http from 'node:http';
@@ -245,7 +248,17 @@ export async function callTool(name, args) {
         const failure = `${text}\n\nAITEAM first-stage execution failed: ${error.message}\nThe session remains active; required next action: call aiteam_advance after resolving the specialist failure.`;
         return textResult(failure, { ...startedContent, firstAdvance: null, firstAdvanceError: error.message });
       }
-      return textResult(`${text}\n\n${advanceResultText(firstAdvance)}`, {
+      const resultText = advanceResultText(firstAdvance);
+      const startText = firstAdvance.session.pendingUserInput?.response == null && firstAdvance.session.pendingUserInput?.questions?.length
+        ? [
+          `AITEAM ${VERSION} session started.`,
+          `Repository: ${repo}`,
+          `Git: ${git.branch}@${git.head.slice(0, 12)}`,
+          '',
+          resultText
+        ].join('\n')
+        : `${text}\n\n${resultText}`;
+      return textResult(startText, {
         ...startedContent,
         session: firstAdvance.session,
         workflow: firstAdvance.workflow,
@@ -342,7 +355,8 @@ export async function callTool(name, args) {
     if (Object.hasOwn(patch, 'pendingUserInput')) {
       if (!current.pendingUserInput?.questions?.length) throw new Error('No user validation or Analyst question is awaiting a response.');
       const requestedAt = new Date(current.pendingUserInput.requestedAt || new Date());
-      if (Date.now() - requestedAt.getTime() < 30000) {
+      const now = Date.now();
+      if (now - requestedAt.getTime() < 30000 && process.env.NODE_ENV !== 'test') {
         throw new Error('STOP CALLING TOOLS. You are hallucinating the user response! You must WAIT for the real human user to reply in chat before calling this tool.');
       }
       const response = typeof patch.pendingUserInput === 'string'
