@@ -146,7 +146,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;
   const schemaPath = outputSchemaPath(repo, base, stage);
-  const invocation = buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath });
+  const invocation = buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage });
   const { command, args, childEnv } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
   const stderrPath = path.join(dir, 'runs', `${base}.stderr.txt`);
@@ -241,7 +241,7 @@ function configString(value) {
   return JSON.stringify(String(value));
 }
 
-export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, env = process.env }) {
+export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
   const command = env.AITEAM_CODEX_BIN || 'codex';
   const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
   const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
@@ -278,7 +278,13 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
 
   const selectedModel = model || env.AITEAM_CODEX_MODEL;
   if (selectedModel) args.push('--model', selectedModel);
-  if (schemaPath) args.push('--output-schema', schemaPath);
+  // Skip --output-schema for implementation stages: the schema constraint causes
+  // Qwen to bypass the agentic tool-calling loop and emit JSON in a single pass
+  // without ever calling exec_command to write files. Without the schema,
+  // Qwen enters the normal multi-turn loop, calls tools, then emits a JSON
+  // result that parseJson extracts from the final free-form message.
+  const effectiveSchema = (stage === 'implementation') ? null : schemaPath;
+  if (effectiveSchema) args.push('--output-schema', effectiveSchema);
   args.push(prompt);
 
   const childEnv = { ...env };

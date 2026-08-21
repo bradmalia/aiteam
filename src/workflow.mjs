@@ -75,14 +75,37 @@ function stringArray(value, name, { nonEmpty = false } = {}) {
 function parseJson(stdout) {
   const text = String(stdout || '').trim();
   if (!text) throw new Error('Specialist returned no structured result.');
+
+  // 1. Fenced code block (```json ... ```)
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1].trim() : text;
-  try {
-    return JSON.parse(candidate);
-  } catch (error) {
-    throw new Error(`Specialist result is not valid JSON: ${error.message}`);
+  if (fenced) {
+    try { return JSON.parse(fenced[1].trim()); } catch { /* fall through */ }
   }
+
+  // 2. Entire output is a JSON object (--output-schema mode)
+  try { return JSON.parse(text); } catch { /* fall through */ }
+
+  // 3. Free-form prose: find the last {...} block in the output.
+  // This handles the agentic loop case where the model writes files via tools
+  // then emits a JSON result as its final message without --output-schema.
+  const lastBrace = text.lastIndexOf('{');
+  if (lastBrace !== -1) {
+    const candidate = text.slice(lastBrace);
+    // Find the matching closing brace
+    let depth = 0;
+    let end = -1;
+    for (let i = 0; i < candidate.length; i++) {
+      if (candidate[i] === '{') depth++;
+      else if (candidate[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end !== -1) {
+      try { return JSON.parse(candidate.slice(0, end + 1)); } catch { /* fall through */ }
+    }
+  }
+
+  throw new Error(`Specialist result is not valid JSON. Output was: ${text.slice(0, 300)}`);
 }
+
 
 export function parseStageResult(stage, stdout) {
   const result = parseJson(stdout);
