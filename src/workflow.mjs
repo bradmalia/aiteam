@@ -52,7 +52,7 @@ Also return "findings" as an array of {"id","severity","description","recommenda
   implementation: `${COMMON_SCHEMA}
 For Implementation, you MUST perform the code edits in the workspace using your tools and return outcome "PASS". Never return outcome "FAIL" for your own implementation task. Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}).`,
   'code-review': `${COMMON_SCHEMA}
-Also return "findings" as an array of {"id","severity","location","impact","recommendation"}. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
+Also return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
 Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","evidence"} and "manualChecks" as a string array. FAIL means an implementation defect or failed machine-verifiable check. Do not modify files.`,
   integration: `${COMMON_SCHEMA}
