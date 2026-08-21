@@ -342,7 +342,7 @@ export async function callTool(name, args) {
     if (Object.hasOwn(patch, 'pendingUserInput')) {
       if (!current.pendingUserInput?.questions?.length) throw new Error('No user validation or Analyst question is awaiting a response.');
       const requestedAt = new Date(current.pendingUserInput.requestedAt || new Date());
-      if (Date.now() - requestedAt.getTime() < 5000) {
+      if (Date.now() - requestedAt.getTime() < 30000) {
         throw new Error('STOP CALLING TOOLS. You are hallucinating the user response! You must WAIT for the real human user to reply in chat before calling this tool.');
       }
       const response = typeof patch.pendingUserInput === 'string'
