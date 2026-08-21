@@ -16,7 +16,7 @@ export const toolDefs = [
   {
     name: 'aiteam_start',
     description: 'Initialize a server-governed AITEAM request (auto-initializing Git if needed) in the repository directory and synchronously run the first required specialist stage. This does not start background workers. Do NOT run git init or file commands in the coordinator session. After success, report the returned agent/phase line and call aiteam_advance for each remaining assignment.',
-    inputSchema: { type: 'object', properties: { request: { type: 'string' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
+    inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'The exact raw text of the user prompt. DO NOT REPHRASE, SUMMARIZE, OR EXPAND. Pass the raw string verbatim.' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
     name: 'aiteam_status',
