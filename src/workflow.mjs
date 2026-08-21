@@ -34,7 +34,7 @@ Every response must be one JSON object with no Markdown fence or surrounding pro
 Common fields:
 - "outcome": "PASS", "FAIL", or "BLOCKED"
 - "summary": non-empty string
-- "evidence": non-empty array of concrete strings when outcome is PASS
+- "evidence": REQUIRED non-empty array of concrete strings when outcome is PASS. You MUST list how you verified the changes. Do not leave this empty or omit it, or the server will reject your response!
 Do not claim commands, files, or tests that you did not actually observe.`;
 
 const STAGE_SCHEMAS = {
