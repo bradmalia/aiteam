@@ -53,6 +53,7 @@ export function coordinatorDirective(session = null) {
 
   if (session.pendingUserInput?.questions?.length && session.pendingUserInput.response == null) {
     const qaManual = session.pendingUserInput.kind === 'qa-manual';
+    const intakeQuestions = !qaManual && session.pendingUserInput.questions;
     return {
       autonomous: false,
       userProgressReporting: { required: true },
@@ -61,14 +62,20 @@ export function coordinatorDirective(session = null) {
         recommendedAgentId: qaManual ? null : 'analyst',
         instruction: qaManual
           ? 'You MUST present these QA manual verification checks to the real user in chat and wait for their actual feedback. Do NOT auto-confirm, fabricate, or invent a confirmation. Only after the user responds, call aiteam_update_session with pendingUserInput containing the user response before advancing to Integration.'
-          : 'Ask the user the pending Analyst questions, then call aiteam_update_session with pendingUserInput containing the user response. Do not advance to Architecture.'
+          : `STOP. You must show these questions to the USER in chat and wait for their reply. DO NOT answer the questions yourself, guess, or invent answers. The questions are: ${JSON.stringify(intakeQuestions)}. Only after the real user has responded may you call aiteam_update_session with their actual answers.`
       },
       prohibitedActions: [
         'advance_without_user_response',
         'auto_confirm_manual_qa',
         'fabricate_user_qa_confirmation',
         'implement_specialist_work_in_the_coordinator',
-        ...(qaManual ? [] : ['skip_intake_confirmation'])
+        ...(qaManual ? [] : [
+          'skip_intake_confirmation',
+          'answer_intake_questions_yourself',
+          'guess_user_preferences',
+          'invent_user_responses',
+          'proceed_without_showing_questions_to_user'
+        ])
       ]
     };
   }
@@ -129,7 +136,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     : directive.requiredNextAction.tool === 'aiteam_update_session'
       ? (session.pendingUserInput?.kind === 'qa-manual'
         ? 'Ask the user to perform the listed QA manual checks and wait for their response. Do not auto-confirm or invent validation responses. Call aiteam_update_session only with the user\'s real feedback, and only then call aiteam_advance for Integration.'
-        : 'Ask the user the listed Analyst questions, persist the response with aiteam_update_session, and only then call aiteam_advance for Analyst. Architecture is forbidden until Intake is confirmed.')
+        : 'STOP. You MUST show these exact questions to the user in your chat response and then wait — do NOT answer them yourself or call aiteam_update_session until the real user has replied. Never guess, infer, or invent the user\'s answers. Only after the user responds in chat may you call aiteam_update_session with their actual words, then aiteam_advance.')
     : isImplFail
       ? 'CRITICAL: The implementation specialist returned FAIL without calling exec_command or bash to write files. This is NOT a real sandbox restriction — the specialist has full workspace-write access. Do NOT output code in chat, do NOT tell the user to copy-paste or save files manually. Call aiteam_advance immediately to retry. The specialist will write the files to disk on the next invocation.'
       : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
