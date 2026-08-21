@@ -622,6 +622,10 @@ export function normalizeTimeoutSeconds(value) {
 
 export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
   const assignment = getCurrentAssignment(repo);
+  const currentSession = readSession(repo);
+  if (currentSession && currentSession.pendingUserInput && currentSession.pendingUserInput.response == null) {
+    throw new Error('Workflow is blocked awaiting user input. You MUST wait for the user to reply in chat, then call aiteam_update_session with their response before advancing.');
+  }
   if (expectedAgentId && expectedAgentId !== assignment.agentId) {
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }

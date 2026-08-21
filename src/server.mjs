@@ -112,8 +112,8 @@ function advanceResultText(result) {
     : '';
   const next = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
     ? result.session.pendingUserInput.kind === 'qa-manual'
-      ? `Manual QA validation required before Integration:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: perform these checks, then call aiteam_update_session with pendingUserInput containing your confirmation.`
-      : `User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nRequired next action: ask the user these questions, then call aiteam_update_session with pendingUserInput containing the response.`
+      ? `STOP CALLING TOOLS! Manual QA validation required before Integration:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST print these checks to the user and wait for their reply. DO NOT call aiteam_update_session yet.`
+      : `STOP CALLING TOOLS! User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST print these questions to the user and wait for their reply. DO NOT call aiteam_update_session until the real user responds.`
     : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
     : `Next enforced assignment: ${phaseLine(result.workflow)}`;
@@ -341,6 +341,10 @@ export async function callTool(name, args) {
     const normalizedPatch = { ...patch };
     if (Object.hasOwn(patch, 'pendingUserInput')) {
       if (!current.pendingUserInput?.questions?.length) throw new Error('No user validation or Analyst question is awaiting a response.');
+      const requestedAt = new Date(current.pendingUserInput.requestedAt || new Date());
+      if (Date.now() - requestedAt.getTime() < 5000) {
+        throw new Error('STOP CALLING TOOLS. You are hallucinating the user response! You must WAIT for the real human user to reply in chat before calling this tool.');
+      }
       const response = typeof patch.pendingUserInput === 'string'
         ? patch.pendingUserInput.trim()
         : patch.pendingUserInput?.response;
