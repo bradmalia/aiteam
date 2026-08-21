@@ -272,3 +272,44 @@ test('aiteam_start auto-initializes git repository in fresh uninitialized direct
   assert.ok(started.content[0].text.includes('AITEAM'));
 });
 
+
+import { buildAgentPrompt } from '../src/registry.mjs';
+
+test('implementation specialist prompt contains chunked-write instructions (heredoc truncation regression)', () => {
+  // Regression: specialist tried to write a large file in one heredoc, hitting
+  // the exec_command output token limit and silently truncating the file.
+  // These assertions ensure the chunking instructions are present in all three
+  // layers: base contract, AGENTS.md template, and end-of-prompt reminder.
+
+  const repo = createRepository();
+  const agent = getAgent('python', repo); // any workspace-write specialist
+  const task = 'Implement feature X';
+  const context = JSON.stringify({ request: 'test', currentTask: { id: 't1' } });
+  const prompt = buildAgentPrompt(agent, task, context, 'implementation');
+
+  // Must instruct chunked writing with append (>>) mode
+  assert.ok(prompt.includes('AITEAM_EOF'), 'prompt must reference AITEAM_EOF heredoc marker');
+  assert.ok(prompt.includes('>>'), 'prompt must include append (>>) mode for subsequent chunks');
+  assert.ok(prompt.includes('wc -l'), 'prompt must instruct verification with wc -l after chunked write');
+
+  // Must not allow single-heredoc writes for large files
+  assert.ok(
+    prompt.includes('chunk') || prompt.includes('truncat'),
+    'prompt must warn about truncation or instruct chunking'
+  );
+});
+
+test('AGENTS.md written to workspace contains chunked-write instructions', async () => {
+  // Regression: the AGENTS.md template written by aiteam_start must include
+  // the chunking rule so Codex reads it as privileged developer instructions.
+  const repo = createRepository();
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['R1'], acceptanceCriteria: ['AC1'], questions: [], userConfirmed: true }) }
+  ]);
+  await callTool('aiteam_start', { repository: repo, request: 'test', runner });
+
+  const agentsMd = fs.readFileSync(path.join(repo, 'AGENTS.md'), 'utf8');
+  assert.ok(agentsMd.includes('AITEAM_EOF'), 'AGENTS.md must reference AITEAM_EOF heredoc marker');
+  assert.ok(agentsMd.includes('>>'), 'AGENTS.md must include append mode instruction');
+  assert.ok(agentsMd.includes('chunk') || agentsMd.includes('truncat'), 'AGENTS.md must warn about chunking');
+});
