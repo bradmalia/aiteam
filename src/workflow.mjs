@@ -309,7 +309,7 @@ function stageContext(session, repo) {
 
 function assignmentText(stage, session) {
   const details = {
-    intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. If information is missing, return AWAITING_USER with precise questions and do not advance the workflow. Incorporate any pending user response. Return PASS only after the user has confirmed complete requirements and acceptance criteria.',
+    intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
     architecture: 'Design the implementation architecture and identify only genuine specialist capability gaps.',
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
     planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs.',
