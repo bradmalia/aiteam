@@ -60,7 +60,7 @@ export const toolDefs = [
   {
     name: 'aiteam_update_session',
     description: 'Persist coordinator notes or pending user input only. Workflow status, stage, task ledger, evidence, and gates are server-owned and cannot be patched.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, patch: { type: 'object' } }, required: ['patch'] }
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, patch: { type: 'object', description: 'To pass the user response back, provide exactly: { "pendingUserInput": "the user string here" }' } }, required: ['patch'] }
   },
   {
     name: 'aiteam_complete',
