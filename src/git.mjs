@@ -79,10 +79,18 @@ export function fingerprintPaths(repo, paths) {
         records.push([relative, 'missing']);
         continue;
       }
-      const stat = fs.lstatSync(absolute);
-      if (stat.isSymbolicLink()) records.push([relative, 'symlink', fs.readlinkSync(absolute)]);
-      else if (stat.isFile()) records.push([relative, stat.mode, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')]);
-      else records.push([relative, 'non-file']);
+      try {
+        const stat = fs.lstatSync(absolute);
+        if (stat.isSymbolicLink()) records.push([relative, 'symlink', fs.readlinkSync(absolute)]);
+        else if (stat.isFile()) records.push([relative, stat.mode, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')]);
+        else records.push([relative, 'non-file']);
+      } catch (err) {
+        if (err.code === 'EACCES' || err.code === 'EPERM') {
+          records.push([relative, 'unreadable', err.code]);
+        } else {
+          throw err;
+        }
+      }
     }
   }
   return crypto.createHash('sha256').update(JSON.stringify(records)).digest('hex');

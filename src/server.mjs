@@ -138,16 +138,19 @@ function ensureWatchServer(repo) {
   if (process.env.NODE_ENV === 'test' || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
     return Promise.resolve();
   }
-  const url = 'http://127.0.0.1:4317/';
+  const port = Number(process.env.AITEAM_WATCH_PORT) || 4317;
+  const url = `http://127.0.0.1:${port}/`;
   const encodedRepo = encodeURIComponent(path.resolve(repo));
   return new Promise((resolve) => {
-    http.get(`http://127.0.0.1:4317/api/set-repo?repo=${encodedRepo}`, (res) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/set-repo?repo=${encodedRepo}`, (res) => {
       res.resume();
       openBrowser(url);
       resolve();
-    }).on('error', () => {
+    });
+    req.setTimeout(3000, () => { req.destroy(); }); // M3: don't hang if server is unresponsive
+    req.on('error', () => {
       const watchScript = path.resolve(fileURLToPath(import.meta.url), '../watch-server.mjs');
-      const child = spawn(process.execPath, [watchScript, '--repo', repo, '--port', '4317'], {
+      const child = spawn(process.execPath, [watchScript, '--repo', repo, '--port', String(port)], {
         detached: true,
         stdio: 'ignore'
       });
@@ -217,7 +220,7 @@ export async function callTool(name, args) {
       `AITEAM ${VERSION} session started.`,
       `Repository: ${repo}`,
       `Git: ${git.branch}@${git.head.slice(0, 12)}`,
-      `Watch Dashboard: http://127.0.0.1:4317/`,
+      `Watch Dashboard: http://127.0.0.1:${Number(process.env.AITEAM_WATCH_PORT) || 4317}/`,
       '',
       coordinatorContract(),
       '',

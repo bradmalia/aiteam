@@ -378,7 +378,8 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
   }
   if (session.activeRun) {
     const age = Date.now() - Date.parse(session.activeRun.startedAt || 0);
-    if (Number.isFinite(age) && age < 3 * 60 * 60 * 1000) {
+    const staleRunMs = Number(process.env.AITEAM_STALE_RUN_MS) || 3 * 60 * 60 * 1000;
+    if (Number.isFinite(age) && age < staleRunMs) {
       throw new Error(`AITEAM specialist ${session.activeRun.agentId} is already running for stage ${session.activeRun.stage}.`);
     }
     const staleRun = session.activeRun;

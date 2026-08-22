@@ -164,12 +164,11 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
 
     activeProcesses.set(repo, child);
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
+    // H1: Stream to disk instead of buffering in memory to prevent OOM
+    const stdoutStream = fs.createWriteStream(stdoutPath);
+    const stderrStream = fs.createWriteStream(stderrPath);
+    child.stdout.pipe(stdoutStream);
+    child.stderr.pipe(stderrStream);
 
     let timedOut = false;
     let forceKillTimer = null;
@@ -183,6 +182,8 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     child.on('error', (err) => {
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      stdoutStream.end();
+      stderrStream.end();
       reject(err);
     });
 
@@ -190,8 +191,11 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
       activeProcesses.delete(repo);
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
-      fs.writeFileSync(stdoutPath, stdout);
-      fs.writeFileSync(stderrPath, stderr);
+      stdoutStream.end();
+      stderrStream.end();
+      // Read back from disk only what we need (bounded by file size)
+      const stdout = fs.existsSync(stdoutPath) ? fs.readFileSync(stdoutPath, 'utf8') : '';
+      const stderr = fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, 'utf8') : '';
       const meta = {
         runId: base,
         agentId,
