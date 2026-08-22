@@ -94,10 +94,19 @@ function snapshot(repo) {
         .at(-1);
       if (targetFile) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
-        const splitIndex = rawContent.lastIndexOf('mcp startup: no servers');
-        if (splitIndex !== -1) {
-          const afterMcp = rawContent.slice(splitIndex).replace(/^mcp startup: no servers\r?\n?/i, '').trim();
-          activeLogTail = afterMcp.replace(/^warning: Model metadata[^\n]*\n?/i, '').trim();
+        // Look for the model's actual response start after prompt injection
+        const markers = ['\nthinking\n', '\nexec\n', '\ncodex\n', '\nuser\n#'];
+        let startIndex = -1;
+        const lastThinking = rawContent.lastIndexOf('\nthinking\n');
+        const lastExec = rawContent.lastIndexOf('\nexec\n');
+        if (lastThinking !== -1 || lastExec !== -1) {
+          startIndex = Math.min(
+            lastThinking !== -1 ? lastThinking : Infinity,
+            lastExec !== -1 ? lastExec : Infinity
+          );
+        }
+        if (startIndex !== -1 && startIndex < rawContent.length) {
+          activeLogTail = rawContent.slice(startIndex).trim();
         } else {
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
           activeLogTail = lines.slice(-25).join('\n').trim();
