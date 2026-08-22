@@ -414,6 +414,55 @@ export async function callTool(name, args) {
   throw new Error(`Unknown tool: ${name}`);
 }
 
+function buildInitInstructions(repo = process.cwd()) {
+  let session = null;
+  try {
+    session = readSession(repo);
+  } catch {}
+
+  if (session && ['ACTIVE', 'BLOCKED', 'READY_TO_COMPLETE'].includes(session.status)) {
+    return [
+      `# AITEAM Facilitator Directive (Active Session In Progress)`,
+      `An active AITEAM session (${session.id.slice(0, 8)}) is currently in progress for this workspace.`,
+      `Status: ${session.status} | Stage: ${session.currentStage} | Task: ${session.currentTaskId || 'none'}`,
+      ``,
+      `YOUR ROLE AS FACILITATOR:`,
+      `1. Do NOT call aiteam_start (a session is already active).`,
+      `2. Call aiteam_advance immediately to continue advancing the workflow gates.`,
+      `3. If questions or manual QA checks are pending for the user:`,
+      `   - Present the exact questions / checks directly to the user in chat.`,
+      `   - DO NOT answer questions yourself, do NOT guess user preferences, and do NOT self-approve manual QA.`,
+      `   - Wait for the user to reply in chat, then call aiteam_update_session(patch: { pendingUserInput: "<user response>" }).`,
+      `   - Immediately call aiteam_advance to re-enter the execution loop.`,
+      `4. Continue looping aiteam_advance until the project reaches COMPLETED or the user cancels.`
+    ].join('\n');
+  }
+
+  return [
+    `# AITEAM Facilitator Directive`,
+    `You are the Facilitator for an AITEAM autonomous team project using the AITEAM MCP server.`,
+    ``,
+    `HOW TO START:`,
+    `1. If the user's initial message contains concrete functional requirements (e.g. game rules, app features, tech stack):`,
+    `   - Immediately call aiteam_start(request: "<raw verbatim user prompt>").`,
+    `   - Do NOT implement code, initialize git, or run shell commands yourself.`,
+    `2. If the user's message is a greeting, setup question, or ambiguous request under 10 words (e.g. "hello", "are you ready?"):`,
+    `   - Ask the user: "What project would you like AITEAM to build?" and wait for their requirements.`,
+    `   - Once they provide requirements, call aiteam_start(request: "<raw verbatim user prompt>").`,
+    ``,
+    `WORKFLOW LOOP & MANUAL QA PROTOCOL:`,
+    `- After aiteam_start, loop calling aiteam_advance for each step until status is COMPLETED.`,
+    `- When QA reaches manual validation:`,
+    `  1. Present the exact manual test checklist to the human user in chat.`,
+    `  2. DO NOT answer or pass manual checks yourself, and do NOT guess that tests pass.`,
+    `  3. Wait for the user to physically test and reply with their findings.`,
+    `  4. Call aiteam_update_session(patch: { pendingUserInput: "<user findings>" }).`,
+    `  5. Immediately call aiteam_advance to resume the loop.`,
+    `- Never provide manual code diffs or patches when the user reports bugs — always route them via aiteam_update_session and aiteam_advance so AITEAM specialists perform the fix.`,
+    `- Let AITEAM specialists handle all coding, git, and testing. Do not edit files directly.`
+  ].join('\n');
+}
+
 export async function handle(msg) {
   if (msg.method === 'initialize') {
     return {
@@ -422,7 +471,8 @@ export async function handle(msg) {
       result: {
         protocolVersion: msg.params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'aiteam', version: VERSION }
+        serverInfo: { name: 'aiteam', version: VERSION },
+        instructions: buildInitInstructions()
       }
     };
   }

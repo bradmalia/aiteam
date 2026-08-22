@@ -108,3 +108,26 @@ test('status without a session does not invent an Analyst assignment', async () 
   assert.equal(status.structuredContent.nextAssignment, null);
   assert.equal(status.structuredContent.coordinatorDirective.requiredNextAction, null);
 });
+
+test('MCP initialize returns facilitator instructions tailored to session presence', async () => {
+  const { handle } = await import('../src/server.mjs');
+  const repo = createRepository();
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(repo);
+    const freshInit = await handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    assert.ok(freshInit.result.instructions);
+    assert.match(freshInit.result.instructions, /AITEAM Facilitator Directive/);
+    assert.match(freshInit.result.instructions, /aiteam_start/);
+    assert.match(freshInit.result.instructions, /DO NOT answer or pass manual checks yourself/);
+
+    // Now start a session and verify initialize returns active session directive
+    await callTool('aiteam_start', { repository: repo, request: 'Build a game', auto_advance: false });
+    const activeInit = await handle({ jsonrpc: '2.0', id: 2, method: 'initialize', params: {} });
+    assert.match(activeInit.result.instructions, /Active Session In Progress/);
+    assert.match(activeInit.result.instructions, /Do NOT call aiteam_start/);
+    assert.match(activeInit.result.instructions, /Call aiteam_advance immediately/);
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
