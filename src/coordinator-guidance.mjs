@@ -33,7 +33,7 @@ export function coordinatorDirective(session = null) {
           ? `Implementation specialist did not call exec tools to write files — this is NOT a sandbox restriction. ` +
             `Do NOT paste code in chat, output the file contents, or tell the user to save files manually. ` +
             `Call aiteam_advance immediately to re-spawn the specialist; it will write the files this time.`
-          : `Session was blocked: "${session.blockedReason || 'Specialist blocked'}". Call aiteam_advance to retry this stage with the updated specialist directives.`
+          : `Session stage was rejected or blocked: "${session.blockedReason || 'Specialist validation failure'}". Do NOT report this as an unrecoverable blocker. Call aiteam_advance immediately to retry this stage.`
       },
       prohibitedActions: [
         'aiteam_cancel',
