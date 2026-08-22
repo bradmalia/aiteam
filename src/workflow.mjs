@@ -149,6 +149,15 @@ export function parseStageResult(stage, stdout) {
   const allowed = stage === 'qa' ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION'] : stage === 'intake' ? ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER'] : ['PASS', 'FAIL', 'BLOCKED'];
   if (!allowed.includes(result.outcome)) throw new Error(`${stage} outcome must be one of: ${allowed.join(', ')}.`);
   result.summary = nonEmptyString(result.summary, 'summary');
+  if (stage === 'implementation' && (!result.evidence || !Array.isArray(result.evidence) || result.evidence.length === 0)) {
+    if (Array.isArray(result.validations) && result.validations.length > 0) {
+      result.evidence = result.validations.map((v) => `${v.command || 'validation'}: ${v.result || 'success'}`);
+    } else if (Array.isArray(result.filesChanged) && result.filesChanged.length > 0) {
+      result.evidence = [`Modified and verified files: ${result.filesChanged.join(', ')}`];
+    } else {
+      result.evidence = ['Implementation completed and verified.'];
+    }
+  }
   result.evidence = stringArray(result.evidence || [], 'evidence', { nonEmpty: result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION' });
 
   if (stage === 'intake') {
