@@ -316,6 +316,8 @@ function assignmentText(stage, session) {
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, plan, and QA feasibility.',
     implementation: currentTask(session)?.['code-reviewFailure']
       ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use bash tools (e.g. cat << 'EOF' > file) to modify the files on disk NOW. Only after the files are written and verified with ls/cat may you emit outcome "PASS". Do NOT return FAIL.`
+      : currentTask(session)?.qaFailure
+      ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nQA validation failed with the following issue:\n${JSON.stringify(currentTask(session).qaFailure, null, 2)}\n\nYou MUST use bash tools (e.g. cat << 'EOF' > file) to modify the files on disk NOW to fix the reported bugs. Only after the files are written and verified may you emit outcome "PASS". Do NOT return FAIL.`
       : `You MUST execute your bash tool (e.g. cat << 'EOF' > filename) to physically write all necessary files to the repository filesystem NOW. Do NOT just output the schema without writing files to disk.\n\nCRITICAL SCOPE BOUNDARY:\nImplement ONLY task ${JSON.stringify(currentTask(session))}.\nDo NOT implement features or subsystems that belong to other tasks (such as game physics, sound synthesis, or complex AI if not in this task's acceptanceCriteria). Focus strictly on fulfilling the acceptanceCriteria of THIS task.\n\nOnly after the files exist on disk, return outcome "PASS" with "filesChanged" containing the created/modified relative paths. Do not commit.`,
     'code-review': currentTask(session)?.['code-reviewFailure']
       ? `This is a repair verification. The previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nReview ONLY the current task and its changed paths to verify these specific findings have been resolved. Use bash tools (cat, git diff) to read the files directly from disk.`
@@ -601,12 +603,22 @@ export function confirmManualQa(repo, response) {
   }
   const task = session.taskLedger.find((item) => item.id === pending.taskId);
   if (!task || task.status !== 'qa-awaiting-manual') throw new Error('The QA manual validation task is no longer active.');
+
+  const trimmedResponse = response.trim();
+  const isFailed = /\b(fail|failed|broken|bug|error|issue|problem|fix|incorrect|not working)\b/i.test(trimmedResponse);
+
   const next = {
     ...session,
-    pendingUserInput: { ...pending, response: response.trim(), answeredAt: new Date().toISOString() },
-    currentStage: 'integration',
+    pendingUserInput: { ...pending, response: trimmedResponse, answeredAt: new Date().toISOString() },
+    currentStage: isFailed ? 'implementation' : 'integration',
     taskLedger: session.taskLedger.map((item) => item.id === task.id
-      ? { ...item, status: 'qa-passed', qa: { ...item.qa, manualValidationResponse: response.trim() }, completedAt: new Date().toISOString() }
+      ? {
+        ...item,
+        status: isFailed ? 'needs-rework' : 'qa-passed',
+        qa: { ...item.qa, manualValidationResponse: trimmedResponse },
+        qaFailure: isFailed ? { outcome: 'FAIL', summary: `Manual QA failed by user: ${trimmedResponse}` } : null,
+        completedAt: isFailed ? null : new Date().toISOString()
+      }
       : item)
   };
   return writeSession(repo, next);
