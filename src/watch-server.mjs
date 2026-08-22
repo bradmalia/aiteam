@@ -94,18 +94,17 @@ function snapshot(repo) {
         .at(-1);
       if (targetFile) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
-        const thinkIdx = rawContent.indexOf('\nthinking\n');
-        const execIdx = rawContent.indexOf('\nexec\n');
-        let actionIdx = -1;
-        if (thinkIdx !== -1 && execIdx !== -1) {
-          actionIdx = Math.min(thinkIdx, execIdx);
-        } else if (thinkIdx !== -1) {
-          actionIdx = thinkIdx;
-        } else if (execIdx !== -1) {
-          actionIdx = execIdx;
-        }
-        if (actionIdx !== -1) {
-          activeLogTail = rawContent.slice(actionIdx).trim();
+        const responseIdx = rawContent.lastIndexOf('# Response');
+        if (responseIdx !== -1) {
+          const afterResponse = rawContent.slice(responseIdx);
+          const metaWarning = 'warning: Model metadata for `v100-qwen3.6-codex-256k` not found.';
+          const metaIdx = afterResponse.indexOf(metaWarning);
+          if (metaIdx !== -1) {
+            const cleanContent = afterResponse.slice(metaIdx + metaWarning.length).replace(/^Defaulting to fallback metadata; this can degrade performance and cause issues\.\r?\n?/i, '').trim();
+            activeLogTail = cleanContent || 'Agent initialized · processing task commands…';
+          } else {
+            activeLogTail = afterResponse.replace(/^# Response[^\n]*\n?/i, '').trim();
+          }
         } else {
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
           activeLogTail = lines.slice(-25).join('\n').trim();
