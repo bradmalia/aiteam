@@ -165,10 +165,11 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     '',
     '# REQUIRED USER-VISIBLE PHASE REPORTING',
     'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> Architecture -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration.',
-    'Immediately before every aiteam_advance call, use the assignment in the latest AITEAM response and tell the user exactly:',
+    '1. Cadence: When providing background or status progress updates to the user, report updates every 15 to 30 seconds (NOT 5-10 minutes). Keep the user continuously informed of active tasks and gates.',
+    '2. Immediately before every aiteam_advance call, use the assignment in the latest AITEAM response and tell the user exactly:',
     'AITEAM | Agent: <role> (<agent_id>) | Phase: <current phase> | Remaining: <ordered phases after this phase, or none>',
-    'Immediately after the synchronous call returns, tell the user exactly:',
+    '3. Immediately after the synchronous call returns, tell the user exactly:',
     'AITEAM | Agent: <role> (<agent_id>) <finished|failed> | Phase: <current phase> | Remaining: <ordered phases after this phase, or none>',
-    'If the workflow plan changes, show the revised remaining phases. Never leave the user guessing which agent or phase is active.'
+    '4. If the workflow plan changes, show the revised remaining phases. Never leave the user guessing which agent or phase is active.'
   ].join('\n');
 }
