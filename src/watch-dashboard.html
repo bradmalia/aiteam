@@ -372,8 +372,18 @@
     popoutWindow.document.close();
   }
 
-  async function refresh() { try { const response = await fetch('/api/state', { cache:'no-store' }); render(await response.json()); } catch (error) { $('refresh').textContent = `Connection error: ${error.message}`; } }
-  refresh(); setInterval(refresh, 1500);
+  async function refresh() {
+    try {
+      const response = await fetch('/api/state', { cache:'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      render(data);
+    } catch (error) {
+      $('refresh').textContent = `Connection error: ${error.message}`;
+    }
+  }
+  refresh();
+  setInterval(refresh, 1500);
 </script>
 </body>
 </html>
