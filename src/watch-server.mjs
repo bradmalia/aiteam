@@ -96,7 +96,7 @@ function snapshot(repo) {
         if (matching) {
           const logContent = fs.readFileSync(path.join(runsDir, matching), 'utf8');
           const lines = logContent.split(/\r?\n/).filter(Boolean);
-          activeLogTail = lines.slice(-25).join('\n');
+          activeLogTail = lines.slice(-300).join('\n');
         }
       }
     } catch {}
