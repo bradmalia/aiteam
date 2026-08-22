@@ -146,7 +146,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;
   const schemaPath = outputSchemaPath(repo, base, stage);
-  const invocation = buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage });
+  const invocation = buildAgentInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage });
   const { command, args, childEnv } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
   const stderrPath = path.join(dir, 'runs', `${base}.stderr.txt`);
@@ -243,6 +243,29 @@ function parseStringArray(name, value) {
 
 function configString(value) {
   return JSON.stringify(String(value));
+}
+
+export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
+  const command = env.AITEAM_AGY_BIN || '/home/brad/.local/bin/agy';
+  const args = [
+    '--dangerously-skip-permissions',
+    '--add-dir', repo,
+    '--disable-slash-commands',
+    '-p=' + prompt
+  ];
+  const selectedModel = model || env.AITEAM_AGY_MODEL;
+  if (selectedModel) args.push('--model', selectedModel);
+  const effectiveSchema = (stage === 'implementation') ? null : schemaPath;
+  if (effectiveSchema) args.push('--json-schema', effectiveSchema);
+  return { command, args, childEnv: { ...env } };
+}
+
+export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
+  const runner = env.AITEAM_RUNNER || (env.AITEAM_CODEX_BIN ? 'codex' : 'agy');
+  if (runner === 'agy') {
+    return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, env });
+  }
+  return buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, env });
 }
 
 export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
