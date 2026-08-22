@@ -15,7 +15,7 @@ const VERSION = '0.2.0';
 export const toolDefs = [
   {
     name: 'aiteam_start',
-    description: 'Initialize a server-governed AITEAM request in the repository directory and synchronously run the first required specialist stage. COORDINATOR ROLE: You are strictly a message facilitator and dispatcher. You are PROHIBITED from directly creating, editing, fixing, or testing project code yourself. Present intake/manual QA questions to the user verbatim, submit responses via aiteam_update_session, and loop aiteam_advance until completion.',
+    description: 'Initialize a server-governed AITEAM request in the repository directory and synchronously run the first required specialist stage. This does not start background workers; the coordinator must advance each stage. Present intake/manual QA questions to the user verbatim, submit responses via aiteam_update_session, and loop aiteam_advance until completion.',
     inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'The exact raw text of the user prompt. DO NOT REPHRASE, SUMMARIZE, OR EXPAND. Pass the raw string verbatim.' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
@@ -25,7 +25,7 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_advance',
-    description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. COORDINATOR ROLE: Do NOT implement code, fix bugs, or run tests yourself. Loop aiteam_advance to let spawned specialists perform all work.',
+    description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. The call is synchronous; use the Watch Dashboard for live subprocess output and report the result after it returns.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 } } }
   },
   {
@@ -100,12 +100,13 @@ export function advanceResultText(result) {
   const stateLabel = result.result.outcome === 'AWAITING_USER'
     ? 'awaiting user'
     : ['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed';
+  const updatedWorkflow = workflowStatus(result.session);
   const finished = phaseLine({
-    ...workflowStatus(result.assignment.session),
+    ...updatedWorkflow,
     agentId: result.assignment.agentId,
     agentRole: result.assignment.role,
     phase: result.assignment.phase,
-    remainingPhases: workflowStatus(result.assignment.session).remainingPhases
+    remainingPhases: updatedWorkflow.remainingPhases
   }, ` ${stateLabel}`);
   const manualChecksText = result.result.outcome === 'PASS_WITH_MANUAL_VALIDATION' && result.result.manualChecks?.length
     ? `\nManual validation requested by QA:\n${result.result.manualChecks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n`
@@ -127,10 +128,20 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
+const watchPorts = new Map();
+
 export function getWatchPort(repo) {
-  if (process.env.AITEAM_WATCH_PORT) return Number(process.env.AITEAM_WATCH_PORT);
-  const hash = crypto.createHash('sha256').update(path.resolve(repo)).digest();
-  return 4320 + (hash.readUInt16BE(0) % 500);
+  const resolved = path.resolve(repo);
+  if (watchPorts.has(resolved)) return watchPorts.get(resolved);
+  if (process.env.AITEAM_WATCH_PORT) {
+    const configured = Number(process.env.AITEAM_WATCH_PORT);
+    if (!Number.isInteger(configured) || configured < 1024 || configured > 65535) {
+      throw new Error('AITEAM_WATCH_PORT must be an integer between 1024 and 65535.');
+    }
+    return configured;
+  }
+  const hash = crypto.createHash('sha256').update(resolved).digest();
+  return 4320 + (hash.readUInt32BE(0) % 20000);
 }
 
 function openBrowser(url) {
@@ -141,64 +152,66 @@ function openBrowser(url) {
   } catch {}
 }
 
-function ensureWatchServer(repo) {
-  if (process.env.NODE_ENV === 'test' || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
-    return Promise.resolve();
-  }
-  const resolved = path.resolve(repo);
-  const port = getWatchPort(resolved);
-  const url = `http://127.0.0.1:${port}/`;
+function watchHealth(port) {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const req = http.get(`http://127.0.0.1:${port}/health`, (res) => {
-      res.resume();
-      openBrowser(url);
-      resolve();
-    });
-    req.setTimeout(1500, () => { req.destroy(); });
-    req.on('error', () => {
-      const watchScript = path.resolve(fileURLToPath(import.meta.url), '../watch-server.mjs');
-      const child = spawn(process.execPath, [watchScript, '--repo', resolved, '--port', String(port)], {
-        detached: true,
-        stdio: 'ignore'
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { if (body.length < 8192) body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return finish({ occupied: true, repository: null });
+        try {
+          const parsed = JSON.parse(body);
+          finish({ occupied: true, repository: parsed.repository ? path.resolve(parsed.repository) : null });
+        } catch {
+          finish({ occupied: true, repository: null });
+        }
       });
-      child.unref();
-      setTimeout(() => {
-        openBrowser(url);
-        resolve();
-      }, 500);
     });
+    req.setTimeout(500, () => { req.destroy(); finish(null); });
+    req.on('error', () => finish(null));
   });
 }
 
-const AGENTS_MD_MARKER = '<!-- aiteam-base-contract -->';
-const AGENTS_MD_SECTION = `${AGENTS_MD_MARKER}
-## AITEAM Implementation Specialist Contract
-
-You are an AITEAM implementation specialist with **full workspace-write access**.
-
-- You MUST call \`exec_command\` or bash tools to write every file to disk **before** emitting your JSON response.
-- Do NOT output file contents in chat and do NOT claim the sandbox is read-only. It is not.
-- Only AFTER running a shell command that writes the file and verifying it exists (e.g. \`ls -la filename\`) may you emit your final JSON.
-- Return outcome \`"PASS"\` with non-empty \`filesChanged\`. Never return \`"FAIL"\` for your own implementation task.
-- **TASK SCOPE BOUNDARY (NO OVERACHIEVING)**: Implement ONLY what is specified in the current task's \`acceptanceCriteria\`.
-  - Do NOT implement features belonging to future tasks.
-  - If building a scaffold or UI, do NOT implement the underlying audio, physics, or game logic until assigned to those specific tasks.
-  - Adding unassigned features breaks the review and QA pipeline.
-- **Large files MUST be written in chunks.** The exec_command output limit is ~200 lines per call. For files longer than 150 lines:
-  - First chunk: \`cat << 'AITEAM_EOF' > filename\` … first ~100 lines … \`AITEAM_EOF\`
-  - Each subsequent chunk: \`cat << 'AITEAM_EOF' >> filename\` … next ~100 lines … \`AITEAM_EOF\` (note \`>>\` for append)
-  - After all chunks: verify with \`wc -l filename\`
-  - Never write an entire large file in one heredoc — it will be truncated and silently corrupt the file.
-`;
-
-
-function ensureAgentsMd(repo) {
-  const agentsMdPath = path.join(repo, 'AGENTS.md');
-  let current = '';
-  try { current = fs.readFileSync(agentsMdPath, 'utf8'); } catch { /* file doesn't exist yet */ }
-  if (current.includes(AGENTS_MD_MARKER)) return; // already written
-  const separator = current.trim() ? '\n\n' : '';
-  fs.writeFileSync(agentsMdPath, current + separator + AGENTS_MD_SECTION);
+async function ensureWatchServer(repo) {
+  if (process.env.NODE_ENV === 'test' || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
+    return getWatchPort(repo);
+  }
+  const resolved = path.resolve(repo);
+  const basePort = getWatchPort(resolved);
+  const watchScript = path.resolve(fileURLToPath(import.meta.url), '../watch-server.mjs');
+  for (let offset = 0; offset < 20; offset += 1) {
+    const port = 1024 + ((basePort - 1024 + offset) % (65535 - 1024 + 1));
+    const existing = await watchHealth(port);
+    if (existing?.repository === resolved) {
+      watchPorts.set(resolved, port);
+      openBrowser(`http://127.0.0.1:${port}/`);
+      return port;
+    }
+    if (existing?.occupied) continue;
+    const child = spawn(process.execPath, [watchScript, '--repo', resolved, '--port', String(port)], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const started = await watchHealth(port);
+      if (started?.repository === resolved) {
+        watchPorts.set(resolved, port);
+        openBrowser(`http://127.0.0.1:${port}/`);
+        return port;
+      }
+      if (started?.occupied) break;
+    }
+  }
+  throw new Error(`Unable to allocate an AITEAM Watch port for ${resolved}.`);
 }
 
 export async function callTool(name, args) {
@@ -209,25 +222,24 @@ export async function callTool(name, args) {
       throw new Error('aiteam_start requires a non-empty "request" string.');
     }
     ensureGitRepo(repo);
-    ensureAgentsMd(repo);
 
     const existing = readSession(repo);
     if (existing && ['ACTIVE', 'BLOCKED', 'READY_TO_COMPLETE'].includes(existing.status)) {
       throw new Error(`AITEAM session ${existing.id} is already ${existing.status}. Complete or cancel it before starting another request.`);
     }
     const git = gitSnapshot(repo);
-    const session = newSession(repo, args.request);
+    let session = newSession(repo, args.request);
     const registry = loadRegistry(repo);
-    const workflow = workflowStatus(session, repo);
     const coordinatorReadOnly = process.env.AITEAM_COORDINATOR_READ_ONLY === 'true';
-    
-    await ensureWatchServer(repo);
+    const watchPort = await ensureWatchServer(repo);
+    session = patchSession(repo, { watchPort });
+    const workflow = workflowStatus(session, repo);
     
     const text = [
       `AITEAM ${VERSION} session started.`,
       `Repository: ${repo}`,
       `Git: ${git.branch}@${git.head.slice(0, 12)}`,
-      `Watch Dashboard: http://127.0.0.1:${getWatchPort(repo)}/`,
+      `Watch Dashboard: http://127.0.0.1:${watchPort}/`,
       '',
       coordinatorContract(),
       '',
@@ -259,7 +271,8 @@ export async function callTool(name, args) {
           repo,
           timeoutSeconds: args.timeout_seconds,
           model: args.model || null,
-          coordinatorContext: args.request || ''
+          coordinatorContext: args.request || '',
+          ...(args.runner ? { runner: args.runner } : {})
         });
       } catch (error) {
         const failure = `${text}\n\nAITEAM first-stage execution failed: ${error.message}\nThe session remains active; required next action: call aiteam_advance after resolving the specialist failure.`;
@@ -435,7 +448,7 @@ function buildInitInstructions(repo = process.cwd()) {
       ``,
       `YOUR ROLE AS FACILITATOR:`,
       `1. Do NOT call aiteam_start (a session is already active).`,
-      `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${getWatchPort(repo)}/)."`,
+      `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${session.watchPort || getWatchPort(repo)}/)."`,
       `3. Call aiteam_advance immediately to continue advancing the workflow gates.`,
       `4. If questions or manual QA checks are pending for the user:`,
       `   - Present the exact questions / checks directly to the user in chat.`,
@@ -453,7 +466,7 @@ function buildInitInstructions(repo = process.cwd()) {
     `HOW TO START:`,
     `1. If the user's initial message contains concrete functional requirements (e.g. game rules, app features, tech stack):`,
     `   - Immediately call aiteam_start(request: "<raw verbatim user prompt>").`,
-    `   - Report to the user that the project has started and provide them the clickable AITEAM Watch link: [AITEAM Watch Dashboard](http://127.0.0.1:4317/) to monitor live progress.`,
+    `   - Report to the user that the project has started and provide them the clickable AITEAM Watch link: [AITEAM Watch Dashboard](http://127.0.0.1:${getWatchPort(repo)}/) to monitor live progress.`,
     `   - Do NOT implement code, initialize git, or run shell commands yourself.`,
     `2. If the user's message is a greeting, setup question, or ambiguous request (e.g. "hello", "are you ready?"):`,
     `   - Greet the user warmly and ask them to describe the project they would like to create:`,
@@ -461,11 +474,11 @@ function buildInitInstructions(repo = process.cwd()) {
     `     2. Visual style / theme preferences?`,
     `     3. Key features or requirements?`,
     `     4. Preferred tech stack / platform?`,
-    `   - Inform the user that once started, they can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:4317/).`,
-    `   - Once they provide requirements, call aiteam_start(request: "<raw verbatim user prompt>") and share the [AITEAM Watch Dashboard](http://127.0.0.1:4317/) link.`,
+    `   - Inform the user that once started, they can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${getWatchPort(repo)}/).`,
+    `   - Once they provide requirements, call aiteam_start(request: "<raw verbatim user prompt>") and share the [AITEAM Watch Dashboard](http://127.0.0.1:${getWatchPort(repo)}/) link.`,
     ``,
     `WORKFLOW LOOP & MANUAL QA PROTOCOL:`,
-    `- After calling aiteam_start, confirm: "The AITEAM project is now running! You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:4317/)."`,
+    `- After calling aiteam_start, confirm: "The AITEAM project is now running! Use the Watch Dashboard URL returned by aiteam_start to monitor live progress."`,
     `- Loop calling aiteam_advance for each step until status is COMPLETED.`,
     `- When QA reaches manual validation:`,
     `  1. Present the exact manual test checklist to the human user in chat.`,

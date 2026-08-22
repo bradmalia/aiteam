@@ -44,6 +44,7 @@ The installer creates `~/.local/bin/aiteam-mcp`. Add the delegation contract fro
 ```toml
 [mcp_servers.aiteam]
 command = "/home/YOUR_USER/.local/bin/aiteam-mcp"
+env = { AITEAM_RUNNER = "codex" }
 env_vars = [
   "AITEAM_CODEX_BIN",
   "AITEAM_CODEX_PREFIX_ARGS_JSON",
@@ -57,12 +58,19 @@ env_vars = [
   "AITEAM_CODEX_CONTEXT_WINDOW",
   "AITEAM_CODEX_AUTO_COMPACT_LIMIT",
   "AITEAM_COORDINATOR_READ_ONLY",
+  "AITEAM_WATCH_PORT",
 ]
 startup_timeout_sec = 10
 tool_timeout_sec = 7200
 ```
 
 Restart Codex after changing MCP configuration.
+
+For Agy, configure the same server with an explicit runner identity so host detection does not depend on stripped subprocess environment variables:
+
+```bash
+agy mcp add --env AITEAM_RUNNER=agy aiteam /home/YOUR_USER/.local/bin/aiteam-mcp
+```
 
 ## Local Qwen on v100-ai
 

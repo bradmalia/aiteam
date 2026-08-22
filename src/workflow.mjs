@@ -46,7 +46,7 @@ Use AWAITING_USER when clarification is needed: include non-empty questions and 
   architecture: `${COMMON_SCHEMA}
 Also return "design" (non-empty string array), "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI), and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work.`,
   'ui-design': `${COMMON_SCHEMA}
-Also return "theme" ({"palette","typography","spacing"}), "screens" (array of {"name","layout","components","interactionStates"}), and "designTokens" (array of strings). Produce concrete visual specifications aligned with the chosen architecture.`,
+Also return "theme" ({"palette": string array, "typography": string array, "spacing": string array}), "screens" (array of {"name": string, "layout": string, "components": string array, "interactionStates": string array}), and "designTokens" (string array). All collections must be non-empty on PASS. Produce concrete visual specifications aligned with the chosen architecture.`,
   recruiting: `${COMMON_SCHEMA}
 Also return "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path.`,
   planning: `${COMMON_SCHEMA}
@@ -160,14 +160,8 @@ export function parseStageResult(stage, stdout) {
   const allowed = stage === 'qa' ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION'] : stage === 'intake' ? ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER'] : ['PASS', 'FAIL', 'BLOCKED'];
   if (!allowed.includes(result.outcome)) throw new Error(`${stage} outcome must be one of: ${allowed.join(', ')}.`);
   result.summary = nonEmptyString(result.summary, 'summary');
-  if (stage === 'implementation' && (!result.evidence || !Array.isArray(result.evidence) || result.evidence.length === 0)) {
-    if (Array.isArray(result.validations) && result.validations.length > 0) {
-      result.evidence = result.validations.map((v) => `${v.command || 'validation'}: ${v.result || 'success'}`);
-    } else if (Array.isArray(result.filesChanged) && result.filesChanged.length > 0) {
-      result.evidence = [`Modified and verified files: ${result.filesChanged.join(', ')}`];
-    } else {
-      result.evidence = ['Implementation completed and verified.'];
-    }
+  if (stage === 'implementation' && (!result.evidence || !Array.isArray(result.evidence) || result.evidence.length === 0) && Array.isArray(result.validations) && result.validations.length > 0) {
+    result.evidence = result.validations.map((v) => `${v.command || 'validation'}: ${v.result || 'success'}`);
   }
   result.evidence = stringArray(result.evidence || [], 'evidence', { nonEmpty: result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION' });
 
@@ -188,12 +182,32 @@ export function parseStageResult(stage, stdout) {
     if (result.outcome === 'PASS' && (result.questions.length > 0 || !result.userConfirmed)) throw new Error('Intake cannot PASS while questions remain or userConfirmed is false.');
   } else if (stage === 'architecture') {
     result.design = stringArray(result.design || [], 'design', { nonEmpty: result.outcome === 'PASS' });
+    if (result.outcome === 'PASS' && typeof result.hasUserInterface !== 'boolean') throw new Error('hasUserInterface must be a boolean on PASS.');
+    if (result.hasUserInterface !== undefined && typeof result.hasUserInterface !== 'boolean') throw new Error('hasUserInterface must be a boolean.');
+    result.hasUserInterface = result.hasUserInterface === true;
     if (!Array.isArray(result.specialistNeeds || [])) throw new Error('specialistNeeds must be an array.');
     result.specialistNeeds = (result.specialistNeeds || []).map((gap, index) => ({
       capability: nonEmptyString(gap?.capability, `specialistNeeds[${index}].capability`),
       reason: nonEmptyString(gap?.reason, `specialistNeeds[${index}].reason`),
       suggestedId: nonEmptyString(gap?.suggestedId, `specialistNeeds[${index}].suggestedId`)
     }));
+  } else if (stage === 'ui-design') {
+    if (result.outcome === 'PASS' && (!result.theme || typeof result.theme !== 'object' || Array.isArray(result.theme))) throw new Error('theme must be an object on PASS.');
+    if (result.theme !== undefined && (!result.theme || typeof result.theme !== 'object' || Array.isArray(result.theme))) throw new Error('theme must be an object.');
+    const theme = result.theme || {};
+    result.theme = {
+      palette: stringArray(theme.palette || [], 'theme.palette', { nonEmpty: result.outcome === 'PASS' }),
+      typography: stringArray(theme.typography || [], 'theme.typography', { nonEmpty: result.outcome === 'PASS' }),
+      spacing: stringArray(theme.spacing || [], 'theme.spacing', { nonEmpty: result.outcome === 'PASS' })
+    };
+    if (!Array.isArray(result.screens || []) || (result.outcome === 'PASS' && result.screens.length === 0)) throw new Error('screens must be a non-empty array on PASS.');
+    result.screens = (result.screens || []).map((screen, index) => ({
+      name: nonEmptyString(screen?.name, `screens[${index}].name`),
+      layout: nonEmptyString(screen?.layout, `screens[${index}].layout`),
+      components: stringArray(screen?.components || [], `screens[${index}].components`, { nonEmpty: result.outcome === 'PASS' }),
+      interactionStates: stringArray(screen?.interactionStates || [], `screens[${index}].interactionStates`, { nonEmpty: result.outcome === 'PASS' })
+    }));
+    result.designTokens = stringArray(result.designTokens || [], 'designTokens', { nonEmpty: result.outcome === 'PASS' });
   } else if (stage === 'recruiting') {
     if (result.outcome === 'PASS' && (!result.specialist || typeof result.specialist !== 'object')) throw new Error('Recruiter must return a specialist proposal on PASS.');
   } else if (stage === 'planning') {
@@ -252,7 +266,7 @@ export function parseStageResult(stage, stdout) {
     }
   } else if (stage === 'implementation') {
     result.filesChanged = stringArray(result.filesChanged || [], 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
-    if (!Array.isArray(result.validations || [])) throw new Error('validations must be an array.');
+    if (!Array.isArray(result.validations || []) || (result.outcome === 'PASS' && result.validations.length === 0)) throw new Error('validations must be a non-empty array on PASS.');
     result.validations = (result.validations || []).map((validation, index) => ({
       command: nonEmptyString(validation?.command, `validations[${index}].command`),
       result: nonEmptyString(validation?.result, `validations[${index}].result`)
@@ -285,12 +299,23 @@ function nextRunnableTask(session) {
   return session.taskLedger.find((task) => ['planned', 'needs-rework'].includes(task.status) && task.dependencies.every((id) => done.has(id))) || null;
 }
 
+function integrationSucceeded(task) {
+  return Boolean(task?.integration?.committed || task?.integration?.reason === 'no_changes' || task?.integration?.integrated);
+}
+
+function phasePlanWithUiDesign(phasePlan, enabled) {
+  const withoutUi = (phasePlan || []).filter((stage) => stage !== 'ui-design');
+  if (!enabled) return withoutUi;
+  const architectureIndex = withoutUi.indexOf('architecture');
+  if (architectureIndex < 0) return ['ui-design', ...withoutUi];
+  return [...withoutUi.slice(0, architectureIndex + 1), 'ui-design', ...withoutUi.slice(architectureIndex + 1)];
+}
+
 export function workflowStatus(session, repo = null) {
   if (!session) return { active: false, message: 'No active AITEAM session exists.' };
   const stage = session.currentStage;
   const phase = STAGE_LABELS[stage] || stage;
-  const normalized = phase.toLowerCase().replaceAll(' ', '-');
-  const index = session.phasePlan.indexOf(normalized);
+  const index = session.phasePlan.indexOf(stage);
   const remaining = index >= 0 ? session.phasePlan.slice(index + 1).map((item) => STAGE_LABELS[item] || item) : [];
   let agentId = FIXED_AGENTS[stage] || null;
   if (stage === 'implementation') agentId = currentTask(session)?.specialistId || nextRunnableTask(session)?.specialistId || null;
@@ -328,6 +353,7 @@ function stageContext(session, repo) {
       currentTask: task,
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
+      uiDesign: session.stageEvidence['ui-design']?.result || null,
       pendingUserInput: session.pendingUserInput
     }, null, 2);
   }
@@ -340,6 +366,7 @@ function stageContext(session, repo) {
       currentStage: stage,
       requirements: session.stageEvidence.intake?.result || null,
       architecture: session.stageEvidence.architecture?.result || null,
+      uiDesign: session.stageEvidence['ui-design']?.result || null,
       plan: session.stageEvidence.planning?.result || null,
       lockedCriticalFindings: session.lockedCriticalFindings,
       taskLedger: session.taskLedger,
@@ -354,6 +381,7 @@ function stageContext(session, repo) {
     currentStage: stage,
     requirements: session.stageEvidence.intake?.result || null,
     architecture: session.stageEvidence.architecture?.result || null,
+    uiDesign: session.stageEvidence['ui-design']?.result || null,
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
     taskLedger: session.taskLedger,
@@ -448,7 +476,7 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     }
   }
   if (session.currentStage === 'integration') {
-    const changed = session.taskLedger.find((item) => item.qaFingerprint && !item.integration?.committed && fingerprintPaths(repo, item.filesChanged) !== item.qaFingerprint);
+    const changed = session.taskLedger.find((item) => item.qaFingerprint && !integrationSucceeded(item) && fingerprintPaths(repo, item.filesChanged) !== item.qaFingerprint);
     if (changed) {
       const reason = `Task ${changed.id} changed after QA approval.`;
       writeSession(repo, {
@@ -566,6 +594,7 @@ function applyResult(repo, session, assignment, result, run) {
   } else if (stage === 'architecture') {
     next.completedStages = [...new Set([...next.completedStages, 'architecture'])];
     next.recruiterQueue = result.specialistNeeds.filter((gap) => !hasSpecialist(repo, proposedSpecialistId(gap)));
+    next.phasePlan = phasePlanWithUiDesign(next.phasePlan, result.hasUserInterface);
     const nextStageAfterRecruiting = result.hasUserInterface ? 'ui-design' : 'planning';
     if (next.recruiterQueue.length) {
       next.resumeStage = nextStageAfterRecruiting;
@@ -659,11 +688,11 @@ function applyResult(repo, session, assignment, result, run) {
     }
     const commit = commitValidatedPaths(repo, paths, result.commitMessage);
     if (task) {
-      task.integration = { ...commit, runId: run.runId, evidence: result.evidence };
+      task.integration = { ...commit, integrated: commit.committed || commit.reason === 'no_changes', runId: run.runId, evidence: result.evidence };
       if (!task.completedAt) task.completedAt = new Date().toISOString();
     }
-    next.integration = { ...commit, runId: run.runId, evidence: result.evidence };
-    const unfinished = next.taskLedger.some((t) => t.status !== 'qa-passed' || !t.integration?.committed);
+    next.integration = { ...commit, integrated: commit.committed || commit.reason === 'no_changes', runId: run.runId, evidence: result.evidence };
+    const unfinished = next.taskLedger.some((t) => t.status !== 'qa-passed' || !integrationSucceeded(t));
     next.currentTaskId = null;
     if (unfinished) {
       next.currentStage = 'implementation';
@@ -812,7 +841,7 @@ export function completeWorkflow(repo) {
   const git = gitSnapshot(repo);
   if (git.head !== session.integration.head) throw new Error('Cannot complete: repository HEAD changed after AITEAM integration.');
   for (const task of session.taskLedger) {
-    if (!task.integration?.committed && fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
+    if (!integrationSucceeded(task) && fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
       throw new Error(`Cannot complete: task ${task.id} changed after QA approval.`);
     }
   }

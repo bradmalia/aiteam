@@ -27,6 +27,10 @@ Classify remaining checks honestly:
 - implementation defect (FAIL) - broken code, syntax errors, missing criteria, or scope creep/overachieving
 - machine-verifiable validation issue (FAIL) - test assertion failures in existing runnable tests
 - human-only validation (PASS_WITH_MANUAL_VALIDATION) - visual aesthetics, glow effects, audio playback quality, manual playfeel for THIS task only
+- out of scope (INFO)
+
+When automated and semantic validation passes and only visual or interactive human testing for this task remains—or appropriate headless tools are unavailable—return `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user. Never return `FAIL` solely because a headless screenshot or interactive tool could not run.
+
 ## Actionable Rework Guidance on FAIL
 When rejecting code (returning outcome `FAIL`):
 1. **State the exact file path and line numbers** where the failure occurs.

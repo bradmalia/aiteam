@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { advanceResultText, callTool, toolDefs } from '../src/server.mjs';
+import { advanceResultText, callTool, getWatchPort, toolDefs } from '../src/server.mjs';
 
 function createRepository() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-guidance-'));
@@ -24,6 +24,22 @@ test('MCP tool descriptions explain coordinator-driven execution', () => {
   assert.match(descriptions.aiteam_advance, /server-owned workflow gate/i);
   assert.match(descriptions.aiteam_spawn_agent, /Compatibility alias/i);
   assert.match(descriptions.aiteam_register_specialist, /successful Recruiter stage/i);
+});
+
+test('watch ports are deterministic, repository-specific, and validate overrides', () => {
+  const first = getWatchPort('/tmp/aiteam-watch-one');
+  assert.equal(first, getWatchPort('/tmp/aiteam-watch-one'));
+  assert.notEqual(first, getWatchPort('/tmp/aiteam-watch-two'));
+  assert.ok(first >= 4320 && first < 24320);
+
+  const previous = process.env.AITEAM_WATCH_PORT;
+  try {
+    process.env.AITEAM_WATCH_PORT = 'not-a-port';
+    assert.throws(() => getWatchPort('/tmp/aiteam-watch-invalid-override'), /integer between 1024 and 65535/);
+  } finally {
+    if (previous === undefined) delete process.env.AITEAM_WATCH_PORT;
+    else process.env.AITEAM_WATCH_PORT = previous;
+  }
 });
 
 test('awaiting-user results put the exact questions before any next-step guidance', () => {
@@ -70,7 +86,9 @@ test('start auto-runs the first specialist and status exposes the next gate', as
   assert.match(startText, /Do not wait, sleep, repeatedly poll/);
   assert.match(startText, /REQUIRED USER-VISIBLE PHASE REPORTING/);
   assert.match(startText, /AITEAM \| Agent: <role> \(<agent_id>\) \| Phase:/);
-  assert.match(startText, /Intake -> Architecture -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration/);
+  assert.match(startText, /Intake -> Architecture -> optional UI\/UX Design -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration/);
+  assert.match(startText, /AITEAM advances synchronously/);
+  assert.doesNotMatch(startText, /git add <files>|patch `aiteam\/agents/);
   assert.equal(started.structuredContent.coordinatorDirective.autonomous, false);
   assert.equal(started.structuredContent.coordinatorDirective.userProgressReporting.required, true);
   assert.match(started.structuredContent.coordinatorDirective.userProgressReporting.beforeEveryAdvance, /Remaining:/);

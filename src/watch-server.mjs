@@ -88,21 +88,21 @@ function snapshot(repo) {
   const runsDir = path.join(repo, '.aiteam', 'runs');
   try {
     if (fs.existsSync(runsDir)) {
-      let targetFile = null;
-      if (activeRun) {
-        targetFile = fs.readdirSync(runsDir)
-          .filter((f) => f.endsWith('.stderr.txt') && f.includes(activeRun.agentId || ''))
-          .sort()
-          .at(-1);
-      }
-      if (!targetFile) {
-        targetFile = fs.readdirSync(runsDir)
-          .filter((f) => f.endsWith('.stderr.txt'))
-          .sort()
-          .at(-1);
-      }
-      if (targetFile) {
-        const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
+      const outputFiles = fs.readdirSync(runsDir).filter((file) => /\.(?:stdout|stderr)\.txt$/.test(file));
+      const matchingFiles = activeRun
+        ? outputFiles.filter((file) => file.includes(activeRun.agentId || ''))
+        : outputFiles;
+      const latestBase = matchingFiles
+        .map((file) => file.replace(/\.(?:stdout|stderr)\.txt$/, ''))
+        .sort()
+        .at(-1);
+      if (latestBase) {
+        const stderrPath = path.join(runsDir, `${latestBase}.stderr.txt`);
+        const stdoutPath = path.join(runsDir, `${latestBase}.stdout.txt`);
+        const stderrContent = fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, 'utf8').trim() : '';
+        const stdoutContent = fs.existsSync(stdoutPath) ? fs.readFileSync(stdoutPath, 'utf8').trim() : '';
+        const codexProgress = /# Response|\bthinking\b|\bexec\b|mcp startup:/i.test(stderrContent);
+        const rawContent = codexProgress ? stderrContent : (stdoutContent || stderrContent);
         const responseIdx = rawContent.lastIndexOf('# Response');
         if (responseIdx !== -1) {
           const sub = rawContent.slice(responseIdx);

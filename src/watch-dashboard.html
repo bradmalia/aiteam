@@ -94,11 +94,12 @@
     const plan = session?.phasePlan || [];
     const completed = new Set(session?.completedStages || []);
     const tasks = session?.taskLedger || [];
-    const completedTasksCount = tasks.filter((t) => t.status === 'qa-passed' && t.integration?.committed).length;
+    const isIntegrated = (task) => Boolean(task.integration?.committed || task.integration?.reason === 'no_changes' || task.integration?.integrated);
+    const completedTasksCount = tasks.filter((t) => t.status === 'qa-passed' && isIntegrated(t)).length;
     const totalTasks = tasks.length;
     
     let gatesHtml = '';
-    const setupGates = ['intake', 'architecture', 'planning', 'critical-review'];
+    const setupGates = ['intake', 'architecture', 'ui-design', 'planning', 'critical-review'];
     gatesHtml += setupGates.filter((g) => plan.includes(g)).map((gate) => {
       const isPassed = completed.has(gate);
       const isCurrent = gate === session?.currentStage;
@@ -109,7 +110,7 @@
       const taskCycleStages = ['implementation', 'code-review', 'qa', 'integration'];
       let activeTaskIdx = tasks.findIndex((t) => t.id === currentTaskId);
       if (activeTaskIdx < 0) {
-        activeTaskIdx = tasks.findIndex((t) => t.status !== 'qa-passed' || !t.integration?.committed);
+        activeTaskIdx = tasks.findIndex((t) => t.status !== 'qa-passed' || !isIntegrated(t));
       }
       const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : totalTasks;
       const allDone = completed.has('integration') || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
@@ -215,8 +216,8 @@
       liveLogEl.style.height = 'auto';
       liveLogEl.style.borderColor = 'var(--amber)';
       liveLogEl.style.background = 'rgba(255, 209, 102, 0.08)';
-      liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL BROWSER VERIFICATION</div>` +
-        `<div style="color:var(--text); font-size:13px; line-height:1.6;">Please perform the manual checks below in your browser at <a href="http://localhost:3000" target="_blank" style="color:var(--cyan); text-decoration:underline;">http://localhost:3000</a>:<br>` +
+      liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
+        `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
         `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
         `<div style="margin-top:12px; padding:8px 12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:4px; font-size:12px; line-height:1.5;">` +
         `<strong style="color:var(--green);">✓ If all checks pass:</strong> Reply in chat with <code>PASS: All manual checks confirmed</code> to proceed with Integration.<br>` +

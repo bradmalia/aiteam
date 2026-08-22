@@ -56,7 +56,7 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
 
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Add feature'], acceptanceCriteria: ['Feature is validated'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Use one Python module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Use one Python module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement feature', specialistId: 'python', acceptanceCriteria: ['app.py exists'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
@@ -79,15 +79,71 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
   assert.equal(completed.status, 'COMPLETE');
 });
 
+test('UI projects run a validated UI-design stage and propagate its result to Planning', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build a browser UI');
+  const calls = [];
+  const queued = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['Browser UI'], acceptanceCriteria: ['UI is responsive'], questions: [], userConfirmed: true }) },
+    { stdout: result('PASS', { design: ['Browser architecture'], hasUserInterface: true, specialistNeeds: [] }) },
+    { stdout: result('PASS', {
+      theme: { palette: ['background #111111'], typography: ['body 16px sans-serif'], spacing: ['base 8px'] },
+      screens: [{ name: 'Game', layout: 'Responsive single-column layout', components: ['Canvas', 'Score'], interactionStates: ['focused', 'paused'] }],
+      designTokens: ['color-background: #111111']
+    }) },
+    { stdout: result('PASS', { tasks: [{ id: 'ui-task', title: 'UI', description: 'Implement UI', specialistId: 'python', acceptanceCriteria: ['UI is responsive'], dependencies: [] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'responsive', status: 'PASS', evidence: 'validated' }], manualChecks: [] }) },
+    { stdout: result('PASS', { commitMessage: 'Implement responsive UI' }) }
+  ]);
+  const runner = async (args) => {
+    calls.push(args);
+    return queued(args);
+  };
+
+  for (let index = 0; index < 9; index += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const ready = readSession(repo);
+  const planningCall = calls.find((call) => call.stage === 'planning');
+  assert.equal(ready.status, 'READY_TO_COMPLETE');
+  assert.ok(ready.phasePlan.includes('ui-design'));
+  assert.ok(ready.completedStages.includes('ui-design'));
+  assert.equal(ready.stageEvidence['ui-design'].result.designTokens[0], 'color-background: #111111');
+  assert.match(planningCall.context, /color-background: #111111/);
+});
+
+test('already-implemented tasks complete successfully when Integration has no Git changes', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Verify the existing README');
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['README exists'], acceptanceCriteria: ['README is valid'], questions: [], userConfirmed: true }) },
+    { stdout: result('PASS', { design: ['Existing documentation'], hasUserInterface: false, specialistNeeds: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'verify-readme', title: 'Verify README', description: 'Verify existing file', specialistId: 'python', acceptanceCriteria: ['README is valid'], dependencies: [] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { filesChanged: ['README.md'], validations: [{ command: 'test -s README.md', result: 'passed' }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'README', status: 'PASS', evidence: 'file is non-empty' }], manualChecks: [] }) },
+    { stdout: result('PASS', { commitMessage: 'Verify existing README' }) }
+  ]);
+
+  for (let index = 0; index < 8; index += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const ready = readSession(repo);
+  assert.equal(ready.status, 'READY_TO_COMPLETE');
+  assert.equal(ready.taskLedger[0].integration.reason, 'no_changes');
+  assert.equal(ready.taskLedger[0].integration.integrated, true);
+  assert.equal(completeWorkflow(repo).status, 'COMPLETE');
+});
+
 test('review failure routes the same task back to implementation', async () => {
   const repo = createRepository();
   newSession(repo, 'Build feature');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', location: 'app.py', impact: 'Wrong value', recommendation: 'Fix it' }] }) }
   ]);
   for (let i = 0; i < 6; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -103,7 +159,7 @@ test('architecture capability gaps must pass through Recruiter provenance before
   const contract = 'Implement Phaser browser games using TypeScript. Inspect existing project conventions, limit edits to assigned tasks, run available validation, and return concrete evidence without committing.';
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Browser game'], acceptanceCriteria: ['Runs'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Phaser architecture'], specialistNeeds: [{ capability: 'Phaser', reason: 'No built-in web specialist', suggestedId: 'phaser-programmer' }] }) },
+    { stdout: result('PASS', { design: ['Phaser architecture'], hasUserInterface: false, specialistNeeds: [{ capability: 'Phaser', reason: 'No built-in web specialist', suggestedId: 'phaser-programmer' }] }) },
     { stdout: result('PASS', { specialist: { id: 'phaser-programmer', role: 'Phaser Programmer', sandbox: 'workspace-write', triggers: ['phaser'], capabilities: ['TypeScript', 'Phaser'], contract } }) }
   ]);
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -123,10 +179,10 @@ test('post-QA path changes invalidate approval and route back to implementation'
   newSession(repo, 'Build feature');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { checks: [{ name: 'check', status: 'PASS', evidence: 'observed' }], manualChecks: [] }) }
   ]);
@@ -144,10 +200,10 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
   newSession(repo, 'Build browser feature');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Browser feature'], acceptanceCriteria: ['Looks correct'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Browser module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Browser module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'browser-task', title: 'Browser feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Looks correct'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Static checks passed'], checks: [{ name: 'browser', status: 'PASS', evidence: 'Static checks passed' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
   ]);
@@ -192,10 +248,10 @@ test('implementation cannot pass when reported files are absent from the server 
   newSession(repo, 'Build feature');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['missing.py'], validations: [] }) }
+    { stdout: result('PASS', { filesChanged: ['missing.py'], validations: [{ command: 'test -f missing.py', result: 'reported passed' }] }) }
   ]);
   for (let i = 0; i < 4; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await assert.rejects(advanceWorkflow({ repo, runner, timeoutSeconds: 300 }), /did not write files to disk/);
@@ -207,7 +263,7 @@ test('implementation FAIL routes to BLOCKED with retry instructions instead of s
   newSession(repo, 'Build feature');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
-    { stdout: result('PASS', { design: ['Module'], specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('FAIL', { summary: 'Cannot run the command due to insufficient sandbox permissions.' }) }
@@ -227,6 +283,9 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.equal(awaiting.userConfirmed, false);
   assert.throws(() => parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: ['Still unclear'], userConfirmed: false })), /cannot PASS/i);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [] })), /non-empty array/);
+  assert.throws(() => parseStageResult('architecture', result('PASS', { design: ['Module'], specialistNeeds: [] })), /hasUserInterface/);
+  assert.throws(() => parseStageResult('ui-design', result('PASS', { theme: { palette: [], typography: [], spacing: [] }, screens: [], designTokens: [] })), /must not be empty|non-empty array/);
+  assert.throws(() => parseStageResult('implementation', result('PASS', { filesChanged: ['app.py'], validations: [] })), /validations must be a non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
   assert.equal(normalizeTimeoutSeconds(1), 300);
   assert.equal(normalizeTimeoutSeconds(9000), 7200);
@@ -239,7 +298,7 @@ test('Analyst Intake pauses for user answers and blocks Architecture until confi
   const runner = queuedRunner(repo, [
     { stdout: JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need platform decision', evidence: ['User requirements are incomplete'], requirements: [], acceptanceCriteria: [], questions: ['Should this be browser-based?'], userConfirmed: false }) },
     { stdout: result('PASS', { requirements: ['Browser game'], acceptanceCriteria: ['Runs in a browser'], questions: [], userConfirmed: true }) },
-    { stdout: result('PASS', { design: ['Use a browser game architecture'], specialistNeeds: [] }) }
+    { stdout: result('PASS', { design: ['Use a browser game architecture'], hasUserInterface: false, specialistNeeds: [] }) }
   ]);
 
   const awaiting = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -278,8 +337,8 @@ import { buildAgentPrompt } from '../src/registry.mjs';
 test('implementation specialist prompt contains chunked-write instructions (heredoc truncation regression)', () => {
   // Regression: specialist tried to write a large file in one heredoc, hitting
   // the exec_command output token limit and silently truncating the file.
-  // These assertions ensure the chunking instructions are present in all three
-  // layers: base contract, AGENTS.md template, and end-of-prompt reminder.
+  // These assertions ensure the chunking instructions are present in the
+  // specialist prompt without mutating the target repository's AGENTS.md.
 
   const repo = createRepository();
   const agent = getAgent('python', repo); // any workspace-write specialist
@@ -299,17 +358,14 @@ test('implementation specialist prompt contains chunked-write instructions (here
   );
 });
 
-test('AGENTS.md written to workspace contains chunked-write instructions', async () => {
-  // Regression: the AGENTS.md template written by aiteam_start must include
-  // the chunking rule so Codex reads it as privileged developer instructions.
+test('aiteam_start does not create or modify repository AGENTS.md', async () => {
   const repo = createRepository();
+  const agentsMdPath = path.join(repo, 'AGENTS.md');
+  fs.writeFileSync(agentsMdPath, '# Project-specific instructions\n');
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['R1'], acceptanceCriteria: ['AC1'], questions: [], userConfirmed: true }) }
   ]);
   await callTool('aiteam_start', { repository: repo, request: 'test', runner });
 
-  const agentsMd = fs.readFileSync(path.join(repo, 'AGENTS.md'), 'utf8');
-  assert.ok(agentsMd.includes('AITEAM_EOF'), 'AGENTS.md must reference AITEAM_EOF heredoc marker');
-  assert.ok(agentsMd.includes('>>'), 'AGENTS.md must include append mode instruction');
-  assert.ok(agentsMd.includes('chunk') || agentsMd.includes('truncat'), 'AGENTS.md must warn about chunking');
+  assert.equal(fs.readFileSync(agentsMdPath, 'utf8'), '# Project-specific instructions\n');
 });

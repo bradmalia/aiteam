@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ensureStateDir, appendEvent } from './state.mjs';
 import { buildAgentPrompt, getAgent } from './registry.mjs';
@@ -8,7 +9,7 @@ function safeName(s) {
   return s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'agent';
 }
 
-function outputSchemaPath(repo, runBase, stage = null) {
+export function outputSchemaPath(repo, runBase, stage = null) {
   const schemaPath = path.join(ensureStateDir(repo), 'runs', `${runBase}.schema.json`);
   const baseProperties = {
     outcome: { type: 'string', enum: ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER', 'PASS_WITH_MANUAL_VALIDATION'] },
@@ -24,6 +25,7 @@ function outputSchemaPath(repo, runBase, stage = null) {
     baseProperties.userConfirmed = { type: 'boolean' };
   } else if (stage === 'architecture') {
     baseProperties.design = { type: 'array', items: { type: 'string' } };
+    baseProperties.hasUserInterface = { type: 'boolean' };
     baseProperties.specialistNeeds = {
       type: 'array',
       items: {
@@ -33,6 +35,32 @@ function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
+  } else if (stage === 'ui-design') {
+    baseProperties.theme = {
+      type: 'object',
+      required: ['palette', 'typography', 'spacing'],
+      properties: {
+        palette: { type: 'array', items: { type: 'string' } },
+        typography: { type: 'array', items: { type: 'string' } },
+        spacing: { type: 'array', items: { type: 'string' } }
+      },
+      additionalProperties: false
+    };
+    baseProperties.screens = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'layout', 'components', 'interactionStates'],
+        properties: {
+          name: { type: 'string' },
+          layout: { type: 'string' },
+          components: { type: 'array', items: { type: 'string' } },
+          interactionStates: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.designTokens = { type: 'array', items: { type: 'string' } };
   } else if (stage === 'recruiting') {
     baseProperties.specialist = {
       type: 'object',
@@ -202,7 +230,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
         role: agent.role,
         task,
         command,
-        args: args.slice(0, -1).concat(['<prompt omitted>']),
+        args: redactInvocationArgs(args, prompt),
         exitCode: code,
         signal,
         timedOut,
@@ -245,26 +273,38 @@ function configString(value) {
   return JSON.stringify(String(value));
 }
 
+export function redactInvocationArgs(args, prompt) {
+  const printPrompt = `-p=${prompt}`;
+  return args.map((arg) => arg === prompt || arg === printPrompt ? '<prompt omitted>' : arg);
+}
+
 export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
-  const command = env.AITEAM_AGY_BIN || '/home/brad/.local/bin/agy';
-  const args = [
-    '--dangerously-skip-permissions',
-    '--add-dir', repo,
-    '--disable-slash-commands',
-    '-p=' + prompt
-  ];
+  const command = env.AITEAM_AGY_BIN || 'agy';
+  const writable = agent.sandbox === 'workspace-write';
+  const args = ['--add-dir', repo, '--disable-slash-commands'];
+  if (writable) args.push('--dangerously-skip-permissions', '--mode', 'accept-edits');
+  else args.push('--sandbox', '--mode', 'plan');
+  args.push('-p=' + prompt);
   const selectedModel = model || env.AITEAM_AGY_MODEL;
   if (selectedModel) args.push('--model', selectedModel);
   const effectiveSchema = (stage === 'implementation') ? null : schemaPath;
-  if (effectiveSchema) args.push('--json-schema', effectiveSchema);
+  if (effectiveSchema) {
+    args.push('--output-format', 'json');
+    args.push('--json-schema', effectiveSchema);
+  }
   return { command, args, childEnv: { ...env } };
 }
 
 export function detectRunner(env = process.env) {
-  if (env.AITEAM_RUNNER) return env.AITEAM_RUNNER;
+  if (env.AITEAM_RUNNER) {
+    if (!['agy', 'codex'].includes(env.AITEAM_RUNNER)) {
+      throw new Error('AITEAM_RUNNER must be either "agy" or "codex".');
+    }
+    return env.AITEAM_RUNNER;
+  }
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_PROJECT_ID || env.ANTIGRAVITY_LS_ADDRESS) return 'agy';
   if (env.AITEAM_CODEX_BIN || env.CODEX_HOME || env.CODEX_THREAD_ID) return 'codex';
-  return 'agy'; // Default to agy on host
+  return 'codex';
 }
 
 export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
@@ -301,8 +341,13 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
     if (wireApi) {
       args.push('-c', `model_providers.${provider}.wire_api=${configString(wireApi)}`);
     }
-    const requiresAuth = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH === 'true';
-    args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuth}`);
+    const requiresAuthSetting = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH ?? (provider === 'v100_ollama' ? 'false' : null);
+    if (requiresAuthSetting != null) {
+      if (!['true', 'false'].includes(requiresAuthSetting)) {
+        throw new Error('AITEAM_CODEX_REQUIRES_OPENAI_AUTH must be "true" or "false".');
+      }
+      args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuthSetting}`);
+    }
   }
 
   const contextWindow = env.AITEAM_CODEX_CONTEXT_WINDOW || 262144;
@@ -324,7 +369,7 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push(prompt);
 
   const childEnv = { ...env };
-  const codexHome = env.AITEAM_CODEX_HOME || '/home/brad/.aiteam-codex-home';
+  const codexHome = env.AITEAM_CODEX_HOME || path.join(os.homedir(), '.aiteam-codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   childEnv.CODEX_HOME = codexHome;
   return { command, args, childEnv };
