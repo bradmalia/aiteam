@@ -65,6 +65,18 @@ test('Agy invocations enforce read-only and writable specialist boundaries', () 
   assert.deepEqual(writable.args.slice(writable.args.indexOf('--mode'), writable.args.indexOf('--mode') + 2), ['--mode', 'accept-edits']);
   assert.ok(!writable.args.includes('--sandbox'));
   assert.ok(!writable.args.includes('--json-schema'));
+
+  const reportingRetry = buildAgyInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Report the implemented task',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'implementation',
+    enforceSchema: true,
+    env: { AITEAM_AGY_BIN: 'agy' }
+  });
+  assert.ok(reportingRetry.args.includes('--json-schema'));
+  assert.ok(reportingRetry.args.includes('/tmp/result.schema.json'));
 });
 
 test('run metadata redacts prompts regardless of runner argument ordering', () => {
@@ -169,6 +181,31 @@ test('workspace-write specialists receive an explicit repository write scope and
   assert.ok(invocation.args.includes('--output-schema'));
   assert.ok(invocation.args.includes('/tmp/example-repo/.aiteam/runs/agent.schema.json'));
   assert.equal(invocation.args.at(-1), 'Implement the assigned task');
+});
+
+test('implementation retries can enforce structured output after tool-using work', () => {
+  const childHome = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-implementation-report-')), 'codex-home');
+  const initial = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the assigned task',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'implementation',
+    env: { AITEAM_CODEX_HOME: childHome }
+  });
+  const reportingRetry = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Report the implemented task',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'implementation',
+    enforceSchema: true,
+    env: { AITEAM_CODEX_HOME: childHome }
+  });
+
+  assert.ok(!initial.args.includes('--output-schema'));
+  assert.ok(reportingRetry.args.includes('--output-schema'));
+  assert.ok(reportingRetry.args.includes('/tmp/result.schema.json'));
 });
 
 test('timeout terminates the full specialist process group', async () => {

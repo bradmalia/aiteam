@@ -166,7 +166,7 @@ export function outputSchemaPath(repo, runBase, stage = null) {
 
 export const activeProcesses = new Map();
 
-export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null }) {
+export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null, enforceSchema = false }) {
   const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
   const prompt = buildAgentPrompt(agent, task, context, stage);
@@ -174,7 +174,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `${stamp}-${safeName(agentId)}`;
   const schemaPath = outputSchemaPath(repo, base, stage);
-  const invocation = buildAgentInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage });
+  const invocation = buildAgentInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema });
   const { command, args, childEnv } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
   const stderrPath = path.join(dir, 'runs', `${base}.stderr.txt`);
@@ -234,6 +234,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
         exitCode: code,
         signal,
         timedOut,
+        enforceSchema,
         stdoutPath,
         stderrPath,
         schemaPath,
@@ -278,7 +279,7 @@ export function redactInvocationArgs(args, prompt) {
   return args.map((arg) => arg === prompt || arg === printPrompt ? '<prompt omitted>' : arg);
 }
 
-export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
+export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
   const command = env.AITEAM_AGY_BIN || 'agy';
   const writable = agent.sandbox === 'workspace-write';
   const args = ['--add-dir', repo, '--disable-slash-commands'];
@@ -287,7 +288,7 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
   args.push('-p=' + prompt);
   const selectedModel = model || env.AITEAM_AGY_MODEL;
   if (selectedModel) args.push('--model', selectedModel);
-  const effectiveSchema = (stage === 'implementation') ? null : schemaPath;
+  const effectiveSchema = stage === 'implementation' && !enforceSchema ? null : schemaPath;
   if (effectiveSchema) {
     args.push('--output-format', 'json');
     args.push('--json-schema', effectiveSchema);
@@ -307,15 +308,15 @@ export function detectRunner(env = process.env) {
   return 'codex';
 }
 
-export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
+export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
   const runner = detectRunner(env);
   if (runner === 'agy') {
-    return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, env });
+    return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
   }
-  return buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, env });
+  return buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
 }
 
-export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
+export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
   const command = env.AITEAM_CODEX_BIN || 'codex';
   const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
   const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
@@ -364,7 +365,7 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   // without ever calling exec_command to write files. Without the schema,
   // Qwen enters the normal multi-turn loop, calls tools, then emits a JSON
   // result that parseJson extracts from the final free-form message.
-  const effectiveSchema = (stage === 'implementation') ? null : schemaPath;
+  const effectiveSchema = stage === 'implementation' && !enforceSchema ? null : schemaPath;
   if (effectiveSchema) args.push('--output-schema', effectiveSchema);
   args.push(prompt);
 

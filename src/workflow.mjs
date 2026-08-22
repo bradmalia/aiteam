@@ -303,6 +303,18 @@ function integrationSucceeded(task) {
   return Boolean(task?.integration?.committed || task?.integration?.reason === 'no_changes' || task?.integration?.integrated);
 }
 
+function processExists(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    if (error?.code === 'EPERM') return true;
+    throw error;
+  }
+}
+
 function phasePlanWithUiDesign(phasePlan, enabled) {
   const withoutUi = (phasePlan || []).filter((stage) => stage !== 'ui-design');
   if (!enabled) return withoutUi;
@@ -443,12 +455,16 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
   if (session.activeRun) {
     const age = Date.now() - Date.parse(session.activeRun.startedAt || 0);
     const staleRunMs = Number(process.env.AITEAM_STALE_RUN_MS) || 3 * 60 * 60 * 1000;
-    if (Number.isFinite(age) && age < staleRunMs) {
+    const ownerGone = Number.isInteger(session.activeRun.ownerPid) && !processExists(session.activeRun.ownerPid);
+    if (!ownerGone && Number.isFinite(age) && age < staleRunMs) {
       throw new Error(`AITEAM specialist ${session.activeRun.agentId} is already running for stage ${session.activeRun.stage}.`);
     }
     const staleRun = session.activeRun;
-    session = writeSession(repo, { ...session, activeRun: null, lastFailure: 'Recovered stale active-run lease.' });
-    appendEvent(repo, { type: 'stale_active_run_recovered', previous: staleRun });
+    const recoveryReason = ownerGone
+      ? `Recovered active-run lease after owner process ${staleRun.ownerPid} exited.`
+      : 'Recovered stale active-run lease after its timeout window elapsed.';
+    session = writeSession(repo, { ...session, activeRun: null, lastFailure: recoveryReason });
+    appendEvent(repo, { type: 'stale_active_run_recovered', reason: recoveryReason, previous: staleRun });
   }
   let task = currentTask(session);
   if (session.currentStage === 'implementation' && (!task || !['planned', 'needs-rework'].includes(task.status))) {
@@ -715,10 +731,13 @@ export function confirmManualQa(repo, response) {
 
   const trimmedResponse = response.trim();
   const isFailed = /\b(fail|failed|broken|bug|error|issue|problem|fix|incorrect|not working)\b/i.test(trimmedResponse);
+  const answeredAt = new Date().toISOString();
+  const answeredManualQa = { ...pending, response: trimmedResponse, answeredAt };
 
   const next = {
     ...session,
-    pendingUserInput: { ...pending, response: trimmedResponse, answeredAt: new Date().toISOString() },
+    pendingUserInput: null,
+    manualQaHistory: [...(session.manualQaHistory || []), answeredManualQa],
     currentStage: isFailed ? 'implementation' : 'integration',
     taskLedger: session.taskLedger.map((item) => item.id === task.id
       ? {
@@ -752,6 +771,7 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
   const maxAttempts = runner === runAgent ? 2 : 1;
   let retryContext = coordinatorContext;
   let lastError = null;
+  let enforceImplementationSchema = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let currentSession = readSession(repo);
     if (!currentSession || (currentSession.status !== 'ACTIVE' && currentSession.status !== 'BLOCKED')) {
@@ -760,7 +780,7 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
     if (currentSession.status === 'BLOCKED') {
       currentSession = writeSession(repo, { ...currentSession, status: 'ACTIVE', blockedReason: null });
     }
-    const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, attempt, startedAt: new Date().toISOString() };
+    const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, attempt, ownerPid: process.pid, startedAt: new Date().toISOString() };
     if (currentSession.currentStage !== assignment.stage) {
       throw new Error(`Cannot advance ${assignment.stage}: the workflow moved to ${currentSession.currentStage}.`);
     }
@@ -775,7 +795,8 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
         task: assignment.task,
         context: [assignment.context, retryContext].filter(Boolean).join('\n\n'),
         timeoutMs: timeout * 1000,
-        model
+        model,
+        enforceSchema: enforceImplementationSchema
       });
     } catch (error) {
       lastError = error;
@@ -819,7 +840,8 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
       if (attempt < maxAttempts) {
         patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
         appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: String(error?.message || error), runId: run.runId });
-        retryContext = `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\nReturn ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
+        if (assignment.stage === 'implementation') enforceImplementationSchema = true;
+        retryContext = `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\n${assignment.stage === 'implementation' ? 'The previous attempt may already have changed the assigned files. Inspect the current files, run the required validations, and report the existing implementation without redoing unrelated work. This retry enforces the result schema.\n' : ''}Return ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
         continue;
       }
       patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });

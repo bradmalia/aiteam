@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { advanceWorkflow, completeWorkflow, normalizeTimeoutSeconds, parseStageResult } from '../src/workflow.mjs';
-import { newSession, readSession } from '../src/state.mjs';
+import { advanceWorkflow, completeWorkflow, getCurrentAssignment, normalizeTimeoutSeconds, parseStageResult } from '../src/workflow.mjs';
+import { newSession, readSession, writeSession } from '../src/state.mjs';
 import { callTool } from '../src/server.mjs';
 import { getAgent } from '../src/registry.mjs';
 
@@ -217,6 +217,9 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
   assert.equal(session.currentStage, 'integration');
   assert.equal(session.taskLedger[0].status, 'qa-passed');
   assert.match(session.taskLedger[0].qa.manualValidationResponse, /renders correctly/);
+  assert.equal(session.pendingUserInput, null);
+  assert.equal(session.manualQaHistory.length, 1);
+  assert.match(session.manualQaHistory[0].response, /renders correctly/);
 });
 
 test('invalid structured output and out-of-order agents cannot advance workflow', async () => {
@@ -368,4 +371,26 @@ test('aiteam_start does not create or modify repository AGENTS.md', async () => 
   await callTool('aiteam_start', { repository: repo, request: 'test', runner });
 
   assert.equal(fs.readFileSync(agentsMdPath, 'utf8'), '# Project-specific instructions\n');
+});
+
+test('an active-run lease is recovered immediately when its owner process exited', () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Recover interrupted work');
+  writeSession(repo, {
+    ...session,
+    activeRun: {
+      agentId: 'analyst',
+      role: 'Analyst',
+      stage: 'intake',
+      attempt: 1,
+      ownerPid: 2147483647,
+      startedAt: new Date().toISOString()
+    }
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  const recovered = readSession(repo);
+  assert.equal(assignment.stage, 'intake');
+  assert.equal(recovered.activeRun, null);
+  assert.match(recovered.lastFailure, /owner process .* exited/);
 });
