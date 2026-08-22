@@ -435,7 +435,7 @@ function buildInitInstructions(repo = process.cwd()) {
       ``,
       `YOUR ROLE AS FACILITATOR:`,
       `1. Do NOT call aiteam_start (a session is already active).`,
-      `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:4317/)."`,
+      `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${getWatchPort(repo)}/)."`,
       `3. Call aiteam_advance immediately to continue advancing the workflow gates.`,
       `4. If questions or manual QA checks are pending for the user:`,
       `   - Present the exact questions / checks directly to the user in chat.`,
