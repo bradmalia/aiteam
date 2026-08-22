@@ -253,35 +253,36 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
   args.push('-c', 'mcp_servers={}');
 
-  const provider = env.AITEAM_CODEX_PROVIDER;
+  const provider = env.AITEAM_CODEX_PROVIDER || 'v100_ollama';
   if (provider) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(provider)) {
       throw new Error('AITEAM_CODEX_PROVIDER contains unsupported characters.');
     }
     args.push('-c', `model_provider=${configString(provider)}`);
-    if (env.AITEAM_CODEX_PROVIDER_NAME) {
-      args.push('-c', `model_providers.${provider}.name=${configString(env.AITEAM_CODEX_PROVIDER_NAME)}`);
+    const providerName = env.AITEAM_CODEX_PROVIDER_NAME || (provider === 'v100_ollama' ? 'V100 Ollama' : null);
+    if (providerName) {
+      args.push('-c', `model_providers.${provider}.name=${configString(providerName)}`);
     }
-    if (env.AITEAM_CODEX_BASE_URL) {
-      args.push('-c', `model_providers.${provider}.base_url=${configString(env.AITEAM_CODEX_BASE_URL)}`);
+    const baseUrl = env.AITEAM_CODEX_BASE_URL || (provider === 'v100_ollama' ? 'http://192.168.122.50:11434/v1/' : null);
+    if (baseUrl) {
+      args.push('-c', `model_providers.${provider}.base_url=${configString(baseUrl)}`);
     }
-    if (env.AITEAM_CODEX_WIRE_API) {
-      args.push('-c', `model_providers.${provider}.wire_api=${configString(env.AITEAM_CODEX_WIRE_API)}`);
+    const wireApi = env.AITEAM_CODEX_WIRE_API || (provider === 'v100_ollama' ? 'responses' : null);
+    if (wireApi) {
+      args.push('-c', `model_providers.${provider}.wire_api=${configString(wireApi)}`);
     }
-    if (env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH) {
-      const requiresAuth = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH === 'true';
-      args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuth}`);
-    }
+    const requiresAuth = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH === 'true';
+    args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuth}`);
   }
 
-  if (env.AITEAM_CODEX_CONTEXT_WINDOW) {
-    args.push('-c', `model_context_window=${Number(env.AITEAM_CODEX_CONTEXT_WINDOW)}`);
-  }
-  if (env.AITEAM_CODEX_AUTO_COMPACT_LIMIT) {
-    args.push('-c', `model_auto_compact_token_limit=${Number(env.AITEAM_CODEX_AUTO_COMPACT_LIMIT)}`);
-  }
+  const contextWindow = env.AITEAM_CODEX_CONTEXT_WINDOW || 262144;
+  args.push('-c', `model_context_window=${Number(contextWindow)}`);
 
-  const selectedModel = model || env.AITEAM_CODEX_MODEL;
+  const autoCompactLimit = env.AITEAM_CODEX_AUTO_COMPACT_LIMIT || 229376;
+  args.push('-c', `model_auto_compact_token_limit=${Number(autoCompactLimit)}`);
+  args.push('-c', 'model_auto_compact_token_limit_scope="total"');
+
+  const selectedModel = model || env.AITEAM_CODEX_MODEL || 'v100-qwen3.6-codex-256k';
   if (selectedModel) args.push('--model', selectedModel);
   // Skip --output-schema for implementation stages: the schema constraint causes
   // Qwen to bypass the agentic tool-calling loop and emit JSON in a single pass
