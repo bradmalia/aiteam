@@ -161,6 +161,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     '3. You are PROHIBITED from directly writing tests, fixing bugs, or executing regression test suites outside of spawned specialists.',
     '4. ALL implementation, code review, QA testing, and git operations MUST be performed exclusively by spawned specialists via aiteam_advance.',
     '5. If a specialist fails, encounters an error, or times out, DO NOT write the fix yourself. Simply call aiteam_advance again to let the workflow engine route the rework to the appropriate specialist.',
+    '6. TIMEOUT HANDLING: Complex engine builds and smoke test suites (e.g. Godot, Unity, TypeScript full suites) may take several minutes to compile and execute. Always allow aiteam_advance to run up to 3600 seconds (1 hour). NEVER cancel or assume the server has hung while a specialist tool call is in progress.',
     '',
     '# REQUIRED USER-VISIBLE PHASE REPORTING',
     'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> Architecture -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration.',
