@@ -297,9 +297,16 @@ function stageContext(session, repo) {
   // We explicitly DO NOT leak the global session.request to implementation agents to prevent scope creep / overachieving.
   if (['implementation', 'code-review', 'qa'].includes(stage)) {
     const arch = session.stageEvidence.architecture?.result;
+    const completedPriorTasks = stage === 'qa'
+      ? session.taskLedger
+          .filter((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
+          .map((t) => ({ id: t.id, title: t.title, acceptanceCriteria: t.acceptanceCriteria, filesChanged: t.filesChanged || [] }))
+      : undefined;
+
     return JSON.stringify({
       currentStage: stage,
       currentTask: task,
+      completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
       pendingUserInput: session.pendingUserInput
     }, null, 2);
@@ -357,8 +364,12 @@ function assignmentText(stage, session) {
       ? `This is a REPAIR VERIFICATION for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use bash tools (cat, git diff) to read the files directly from disk.`
       : `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.\n\nYou MUST use bash tools (e.g. cat <file>, git diff) to read and inspect the code files directly from disk before returning your review findings.`,
     qa: currentTask(session)?.qaFailure
-      ? `This is a REPAIR VERIFICATION for task ${JSON.stringify(currentTask(session))}.\nThe previous QA validation failed with:\n${JSON.stringify(currentTask(session).qaFailure, null, 2)}\n\nYou MUST execute a FULL regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed issue is resolved AND that all previously passing acceptance criteria still pass without regressions. Return a verified check in "checks" for every acceptance criterion.`
-      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\nCRITICAL SCOPE BOUNDARY: Generate checks and manualChecks strictly for the acceptance criteria of THIS current task. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
+      ? `This is a REPAIR VERIFICATION for task ${JSON.stringify(currentTask(session))}.\nThe previous QA validation failed with:\n${JSON.stringify(currentTask(session).qaFailure, null, 2)}\n\nYou MUST execute a FULL regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed issue is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion.`
+      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\n` +
+        (session.taskLedger.some((t) => t.id !== currentTask(session)?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
+          ? `CROSS-TASK REGRESSION: You must also verify that this task's changes did not break any previously passing completed tasks listed in your context (completedPriorTasks).\n\n`
+          : '') +
+        `CRITICAL SCOPE BOUNDARY: Generate checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
     integration: currentTask(session)
       ? `Inspect QA-approved work for task ${JSON.stringify(currentTask(session))} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'

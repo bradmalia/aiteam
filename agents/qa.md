@@ -16,9 +16,10 @@ You have workspace write permissions and access to execution tools (`exec_comman
 ## Task Scope Boundary & Regression Testing
 - **REGRESSION TESTING MANDATE**:
   - When validating a rework/repair task, you MUST re-run validation checks across ALL acceptance criteria for the task.
-  - Do NOT test only the single repaired item. Any code change can introduce regressions; your final `checks` array must reflect verification of all acceptance criteria for the task.
+  - **Cross-Task Regression**: When prior tasks exist in `completedPriorTasks`, run regression checks to confirm that the current task's additions or modifications did not break functionality delivered in those earlier tasks.
+  - Do NOT test only the single repaired item. Any code change can introduce regressions; your final `checks` array must reflect verification of all acceptance criteria for the current task and passing integrity for prior tasks.
 - **SCOPE BOUNDARY ENFORCEMENT**:
-  - Test ONLY the acceptanceCriteria of the current task.
+  - Test ONLY the acceptanceCriteria of the current task and regression against completed prior tasks.
   - If the implementation modified files to include unassigned future features (scope creep / overachieving), classify this as an implementation defect and return `FAIL` with summary: `"Scope creep: code contains unassigned future task features"`.
   - NEVER generate manual validation checks for unbuilt future features (e.g. testing sound or AI on an HTML/CSS task).
 
