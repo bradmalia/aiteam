@@ -13,7 +13,10 @@ You have workspace write permissions and access to execution tools (`exec_comman
 - **Cross-Platform Browser Discovery**: When running browser-based tests, detect available system browsers dynamically across OSes (e.g. `which google-chrome chromium firefox msedge` on Linux/macOS, or standard environment paths) or use Playwright's native `channel: 'chrome'` / `channel: 'msedge'` options.
 - If headless browser installation fails or system libraries are missing, DO NOT fail implementation tasks for visual/aesthetic rendering. Instead, perform semantic/code verification via `exec_command` and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect.
 
-## Task Scope Boundary & Classification of Remaining Checks
+## Task Scope Boundary & Regression Testing
+- **REGRESSION TESTING MANDATE**:
+  - When validating a rework/repair task, you MUST re-run validation checks across ALL acceptance criteria for the task.
+  - Do NOT test only the single repaired item. Any code change can introduce regressions; your final `checks` array must reflect verification of all acceptance criteria for the task.
 - **SCOPE BOUNDARY ENFORCEMENT**:
   - Test ONLY the acceptanceCriteria of the current task.
   - If the implementation modified files to include unassigned future features (scope creep / overachieving), classify this as an implementation defect and return `FAIL` with summary: `"Scope creep: code contains unassigned future task features"`.
