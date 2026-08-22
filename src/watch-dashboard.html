@@ -233,7 +233,14 @@
         details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre style="white-space:pre-wrap; word-break:break-word; max-height:250px; overflow-y:auto; margin:0;">${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
       }
       details += `</table>`;
-      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${esc(event.at || '')} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
+      let localTime = '';
+      if (event.at) {
+        try {
+          const d = new Date(event.at);
+          localTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        } catch { localTime = esc(event.at); }
+      }
+      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${localTime} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
     }).join('') || 'No events yet.';
     
     if (container && prevScrollTop > 0) {
