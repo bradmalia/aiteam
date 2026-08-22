@@ -719,16 +719,19 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
   if (expectedAgentId && expectedAgentId !== assignment.agentId) {
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }
-  const timeout = normalizeTimeoutSeconds(timeoutSeconds);
+    const timeout = normalizeTimeoutSeconds(timeoutSeconds);
   const maxAttempts = runner === runAgent ? 2 : 1;
   let retryContext = coordinatorContext;
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, attempt, startedAt: new Date().toISOString() };
-    const currentSession = readSession(repo);
-    if (!currentSession || currentSession.status !== 'ACTIVE') {
+    let currentSession = readSession(repo);
+    if (!currentSession || (currentSession.status !== 'ACTIVE' && currentSession.status !== 'BLOCKED')) {
       throw new Error(`Cannot advance ${assignment.stage}: the AITEAM session is no longer active.`);
     }
+    if (currentSession.status === 'BLOCKED') {
+      currentSession = writeSession(repo, { ...currentSession, status: 'ACTIVE', blockedReason: null });
+    }
+    const activeRun = { agentId: assignment.agentId, role: assignment.role, stage: assignment.stage, attempt, startedAt: new Date().toISOString() };
     if (currentSession.currentStage !== assignment.stage) {
       throw new Error(`Cannot advance ${assignment.stage}: the workflow moved to ${currentSession.currentStage}.`);
     }
