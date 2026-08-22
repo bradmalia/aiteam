@@ -94,14 +94,13 @@ function snapshot(repo) {
         .at(-1);
       if (targetFile) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
-        // Strip system prompt preamble and start from where the model begins thinking/acting
-        const parts = rawContent.split(/\n(?=(?:thinking|exec|codex|I will|The user|Let me|Looking at))/i);
-        if (parts.length > 1) {
-          activeLogTail = parts.slice(1).join('\n').trim();
+        const splitIndex = rawContent.lastIndexOf('mcp startup: no servers');
+        if (splitIndex !== -1) {
+          const afterMcp = rawContent.slice(splitIndex).replace(/^mcp startup: no servers\r?\n?/i, '').trim();
+          activeLogTail = afterMcp.replace(/^warning: Model metadata[^\n]*\n?/i, '').trim();
         } else {
-          // Fallback: take the last 40 lines of the current task run
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
-          activeLogTail = lines.slice(-40).join('\n').trim();
+          activeLogTail = lines.slice(-25).join('\n').trim();
         }
       }
     }
