@@ -206,18 +206,20 @@
     $('questions').innerHTML = questions.map((question) => `<li>${md(question)}</li>`).join('');
 
     const liveLogEl = $('liveLog');
-    if (data.activeLogTail && active) {
+    if (data.activeLogTail) {
       $('liveActivityPanel').hidden = false;
-      $('liveAgentTag').textContent = `[${active.role || active.agentId} · ${active.stage || ''}]`;
-      const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= liveLogEl.scrollTop + 30;
+      if (active) {
+        $('liveAgentTag').textContent = `[${active.role || active.agentId} · ${active.stage || ''}]`;
+      } else {
+        $('liveAgentTag').textContent = `[idle · waiting for next gate]`;
+      }
+      const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= liveLogEl.scrollTop + 50;
       liveLogEl.textContent = data.activeLogTail;
       if (isScrolledToBottom) {
         liveLogEl.scrollTop = liveLogEl.scrollHeight;
       }
-    } else if (!liveLogEl.textContent.trim()) {
-      $('liveActivityPanel').hidden = true;
     } else {
-      $('liveAgentTag').textContent = `[idle · waiting for next gate]`;
+      $('liveActivityPanel').hidden = true;
     }
     
     const result = data.currentResult;
