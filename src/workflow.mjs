@@ -658,6 +658,7 @@ function applyResult(repo, session, assignment, result, run) {
     const commit = commitValidatedPaths(repo, paths, result.commitMessage);
     if (task) {
       task.integration = { ...commit, runId: run.runId, evidence: result.evidence };
+      if (!task.completedAt) task.completedAt = new Date().toISOString();
     }
     next.integration = { ...commit, runId: run.runId, evidence: result.evidence };
     const unfinished = next.taskLedger.some((t) => t.status !== 'qa-passed' || !t.integration?.committed);
