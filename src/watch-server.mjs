@@ -94,19 +94,18 @@ function snapshot(repo) {
         .at(-1);
       if (targetFile) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
-        // Look for the model's actual response start after prompt injection
-        const markers = ['\nthinking\n', '\nexec\n', '\ncodex\n', '\nuser\n#'];
-        let startIndex = -1;
-        const lastThinking = rawContent.lastIndexOf('\nthinking\n');
-        const lastExec = rawContent.lastIndexOf('\nexec\n');
-        if (lastThinking !== -1 || lastExec !== -1) {
-          startIndex = Math.min(
-            lastThinking !== -1 ? lastThinking : Infinity,
-            lastExec !== -1 ? lastExec : Infinity
-          );
-        }
-        if (startIndex !== -1 && startIndex < rawContent.length) {
-          activeLogTail = rawContent.slice(startIndex).trim();
+        // The assistant output starts after '# Response' and the metadata warning
+        const responseIdx = rawContent.lastIndexOf('# Response');
+        if (responseIdx !== -1) {
+          const sub = rawContent.slice(responseIdx);
+          const thinkIdx = sub.indexOf('\nthinking\n');
+          const execIdx = sub.indexOf('\nexec\n');
+          const actionIdx = thinkIdx !== -1 && execIdx !== -1 ? Math.min(thinkIdx, execIdx) : (thinkIdx !== -1 ? thinkIdx : execIdx);
+          if (actionIdx !== -1) {
+            activeLogTail = sub.slice(actionIdx).trim();
+          } else {
+            activeLogTail = sub.replace(/^# Response[^\n]*\n?/i, '').replace(/mcp startup:[^\n]*\n?/i, '').replace(/warning: Model metadata[^\n]*\n?/i, '').trim();
+          }
         } else {
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
           activeLogTail = lines.slice(-25).join('\n').trim();
