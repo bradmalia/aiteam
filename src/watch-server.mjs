@@ -94,18 +94,18 @@ function snapshot(repo) {
         .at(-1);
       if (targetFile) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
-        // The assistant output starts after '# Response' and the metadata warning
-        const responseIdx = rawContent.lastIndexOf('# Response');
-        if (responseIdx !== -1) {
-          const sub = rawContent.slice(responseIdx);
-          const thinkIdx = sub.indexOf('\nthinking\n');
-          const execIdx = sub.indexOf('\nexec\n');
-          const actionIdx = thinkIdx !== -1 && execIdx !== -1 ? Math.min(thinkIdx, execIdx) : (thinkIdx !== -1 ? thinkIdx : execIdx);
-          if (actionIdx !== -1) {
-            activeLogTail = sub.slice(actionIdx).trim();
-          } else {
-            activeLogTail = sub.replace(/^# Response[^\n]*\n?/i, '').replace(/mcp startup:[^\n]*\n?/i, '').replace(/warning: Model metadata[^\n]*\n?/i, '').trim();
-          }
+        const thinkIdx = rawContent.indexOf('\nthinking\n');
+        const execIdx = rawContent.indexOf('\nexec\n');
+        let actionIdx = -1;
+        if (thinkIdx !== -1 && execIdx !== -1) {
+          actionIdx = Math.min(thinkIdx, execIdx);
+        } else if (thinkIdx !== -1) {
+          actionIdx = thinkIdx;
+        } else if (execIdx !== -1) {
+          actionIdx = execIdx;
+        }
+        if (actionIdx !== -1) {
+          activeLogTail = rawContent.slice(actionIdx).trim();
         } else {
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
           activeLogTail = lines.slice(-25).join('\n').trim();
