@@ -83,12 +83,32 @@ function snapshot(repo) {
   const evidence = Object.values(session?.stageEvidence || {}).filter((item) => item?.result).sort((a, b) => Date.parse(a.completedAt || 0) - Date.parse(b.completedAt || 0));
   const stageResult = evidence.at(-1)?.result || null;
   const packageJson = readJson(path.join(ROOT, '..', 'package.json'));
+  
+  let activeLogTail = null;
+  if (activeRun) {
+    const runsDir = path.join(repo, '.aiteam', 'runs');
+    try {
+      if (fs.existsSync(runsDir)) {
+        const matching = fs.readdirSync(runsDir)
+          .filter((f) => f.endsWith('.stderr.txt') && f.includes(activeRun.agentId || ''))
+          .sort()
+          .at(-1);
+        if (matching) {
+          const logContent = fs.readFileSync(path.join(runsDir, matching), 'utf8');
+          const lines = logContent.split(/\r?\n/).filter(Boolean);
+          activeLogTail = lines.slice(-25).join('\n');
+        }
+      }
+    } catch {}
+  }
+
   return {
     repository: repo,
     version: packageJson?.version || 'unknown',
     updatedAt: session?.updatedAt || lastEvent?.at || null,
     session,
     activeRun,
+    activeLogTail,
     elapsedSeconds: activeRunElapsedSeconds ?? sessionElapsedSeconds,
     activeRunElapsedSeconds,
     sessionElapsedSeconds,

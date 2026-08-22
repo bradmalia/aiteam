@@ -31,6 +31,7 @@
     <div class="panel wide"><div class="label">Repository</div><div id="repo" class="value">—</div></div>
     <div class="panel wide"><h2>Gate Progress</h2><div id="gates" class="muted">—</div></div>
     <div class="panel wide" id="questionsPanel" hidden><h2>User Input Required</h2><ol id="questions"></ol></div>
+    <div class="panel wide" id="liveActivityPanel" hidden><h2>⚡ Live Specialist Activity <span id="liveAgentTag" style="font-size:12px; color:var(--amber); font-weight:normal; margin-left:8px;"></span></h2><pre id="liveLog" style="background:#0c0814; padding:12px; border-radius:6px; border:1px solid rgba(255,209,102,0.25); max-height:220px; overflow-y:auto; font-size:13px; color:#fffae0;"></pre></div>
     <div class="panel wide"><h2>Latest Agent Result</h2><div id="result" class="empty">No result yet.</div></div>
     <div class="panel wide"><h2>Task Ledger</h2><div id="tasks" class="empty">No implementation tasks have been planned yet.</div></div>
     <div class="panel wide"><h2>Recent Events</h2><div class="events-container" id="eventsContainer"><div id="events" class="empty">No events yet.</div></div></div>
@@ -194,6 +195,13 @@
     const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
     $('questionsPanel').hidden = questions.length === 0;
     $('questions').innerHTML = questions.map((question) => `<li>${md(question)}</li>`).join('');
+
+    const hasLive = Boolean(data.activeLogTail && active);
+    $('liveActivityPanel').hidden = !hasLive;
+    if (hasLive) {
+      $('liveAgentTag').textContent = `[${active.role || active.agentId} · ${active.stage || ''}]`;
+      $('liveLog').textContent = data.activeLogTail;
+    }
     
     const result = data.currentResult;
     $('result').className = result ? '' : 'empty';
