@@ -620,7 +620,9 @@ function applyResult(repo, session, assignment, result, run) {
       filesChanged: result.filesChanged,
       validations: result.validations,
       implementationFingerprint,
-      implementationRunId: run.runId
+      implementationRunId: run.runId,
+      'code-reviewFailure': null,
+      qaFailure: null
     } : task);
     next.currentStage = 'code-review';
   } else if (stage === 'code-review') {
