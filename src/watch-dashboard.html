@@ -39,7 +39,7 @@
           <button id="popoutBtn" onclick="popoutLive()" style="background:#38204a; color:var(--cyan); border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; font-family:inherit; font-size:12px;">↗ Pop-out Window</button>
         </div>
       </div>
-      <pre id="liveLog" style="background:#0c0814; padding:14px; border-radius:6px; border:1px solid rgba(255,209,102,0.25); height:450px; overflow-y:auto; font-size:13px; color:#fffae0;"></pre>
+      <pre id="liveLog" style="background:#0c0814; padding:10px 14px; border-radius:6px; border:1px solid rgba(255,209,102,0.25); height:110px; overflow-y:auto; font-size:13px; color:#fffae0;"></pre>
     </div>
     <div class="panel wide"><h2>Latest Agent Result</h2><div id="result" class="empty">No result yet.</div></div>
     <div class="panel wide"><h2>Task Ledger</h2><div id="tasks" class="empty">No implementation tasks have been planned yet.</div></div>
@@ -286,7 +286,7 @@
       logEl.style.height = '80vh';
       btn.textContent = 'Collapse';
     } else {
-      logEl.style.height = '450px';
+      logEl.style.height = '110px';
       btn.textContent = '⛶ Expand';
     }
   }
