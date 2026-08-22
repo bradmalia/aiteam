@@ -9,6 +9,7 @@ import { runAgent } from './runtime.mjs';
 const STAGE_LABELS = {
   intake: 'Intake',
   architecture: 'Architecture',
+  'ui-design': 'UI/UX Design',
   recruiting: 'Architecture',
   planning: 'Planning',
   'critical-review': 'Critical Review',
@@ -21,6 +22,7 @@ const STAGE_LABELS = {
 const FIXED_AGENTS = {
   intake: 'analyst',
   architecture: 'architect',
+  'ui-design': 'ui-designer',
   recruiting: 'recruiter',
   planning: 'planner',
   'critical-review': 'critical-reviewer',
@@ -42,7 +44,9 @@ const STAGE_SCHEMAS = {
 For Intake, "outcome" may also be "AWAITING_USER". Also return "requirements" (string array), "acceptanceCriteria" (string array), "questions" (string array), and boolean "userConfirmed".
 Use AWAITING_USER when clarification is needed: include non-empty questions and set userConfirmed to false. Use PASS only when questions is empty, requirements and acceptanceCriteria are complete, and userConfirmed is true.`,
   architecture: `${COMMON_SCHEMA}
-Also return "design" (non-empty string array) and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work.`,
+Also return "design" (non-empty string array), "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI), and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work.`,
+  'ui-design': `${COMMON_SCHEMA}
+Also return "theme" ({"palette","typography","spacing"}), "screens" (array of {"name","layout","components","interactionStates"}), and "designTokens" (array of strings). Produce concrete visual specifications aligned with the chosen architecture.`,
   recruiting: `${COMMON_SCHEMA}
 Also return "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path.`,
   planning: `${COMMON_SCHEMA}
@@ -358,12 +362,13 @@ function stageContext(session, repo) {
 function assignmentText(stage, session) {
   const details = {
     intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
-    architecture: 'Design the implementation architecture and identify only genuine specialist capability gaps.',
+    architecture: 'Design the implementation architecture, select the technology stack, declare whether the project has a user-facing visual UI (hasUserInterface: true/false), and identify only genuine specialist capability gaps.',
+    'ui-design': 'Translate the user requirements and the Architect’s chosen tech stack into concrete visual tokens, layout hierarchies, interaction states, and responsive styling.',
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
-    planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs.',
+    planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs, incorporating architectural and UI/UX design specifications.',
     'critical-review': session.lockedCriticalFindings.length
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
-      : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, plan, and QA feasibility.',
+      : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, UI/UX design (if present), plan, and QA feasibility.',
     implementation: currentTask(session)?.['code-reviewFailure']
       ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
       : currentTask(session)?.qaFailure
@@ -550,10 +555,16 @@ function applyResult(repo, session, assignment, result, run) {
   } else if (stage === 'architecture') {
     next.completedStages = [...new Set([...next.completedStages, 'architecture'])];
     next.recruiterQueue = result.specialistNeeds.filter((gap) => !hasSpecialist(repo, proposedSpecialistId(gap)));
+    const nextStageAfterRecruiting = result.hasUserInterface ? 'ui-design' : 'planning';
     if (next.recruiterQueue.length) {
-      next.resumeStage = 'planning';
+      next.resumeStage = nextStageAfterRecruiting;
       next.currentStage = 'recruiting';
-    } else next.currentStage = 'planning';
+    } else {
+      next.currentStage = nextStageAfterRecruiting;
+    }
+  } else if (stage === 'ui-design') {
+    next.completedStages = [...new Set([...next.completedStages, 'ui-design'])];
+    next.currentStage = 'planning';
   } else if (stage === 'recruiting') {
     const id = proposalId(run, result.specialist);
     const provenance = { source: 'recruiter', runId: run.runId, proposalId: id };
