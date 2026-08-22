@@ -237,7 +237,7 @@
       if (event.at) {
         try {
           const d = new Date(event.at);
-          localTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+          localTime = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
         } catch { localTime = esc(event.at); }
       }
       return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${localTime} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
