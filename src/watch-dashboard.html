@@ -347,11 +347,15 @@
         const tag = document.getElementById('popoutTag');
         const log = document.getElementById('popoutLog');
         const time = document.getElementById('popoutTime');
+        const repoName = data.repository ? data.repository.split('/').filter(Boolean).pop() : (data.session?.repository ? data.session.repository.split('/').filter(Boolean).pop() : 'Repo');
+        const agentName = data.activeRun ? (data.activeRun.role || data.activeRun.agentId) : 'idle';
+        
+        document.title = `[${repoName}] ${agentName} — Live Activity`;
         time.textContent = 'Updated ' + new Date().toLocaleTimeString();
         if (data.activeRun) {
-          tag.textContent = '[' + (data.activeRun.role || data.activeRun.agentId) + ' · ' + (data.activeRun.stage || '') + ']';
+          tag.textContent = `[${repoName}] · [${data.activeRun.role || data.activeRun.agentId} · ${data.activeRun.stage || ''}]`;
         } else {
-          tag.textContent = '[idle]';
+          tag.textContent = `[${repoName}] · [idle]`;
         }
         if (data.activeLogTail) {
           const isBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
