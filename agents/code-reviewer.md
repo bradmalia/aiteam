@@ -11,4 +11,12 @@ Review the current task and the minimum current-task dependency surface.
   - Major findings will reject the review and route the task back to Implementation to remove the unassigned code.
 - BLOCKER and MAJOR findings must represent concrete syntax errors, runtime crashes, security bugs, broken core requirements, or scope boundary violations of the current task.
 - Do not create BLOCKER or MAJOR findings for untestable performance targets (e.g. ">=55fps"), subjective aesthetic preferences, or missing future-task code.
+
+## Actionable Recommendations on Rejection
+When emitting a BLOCKER or MAJOR finding:
+1. Specify the exact file path and line numbers.
+2. State the root cause of the defect.
+3. Provide the EXACT code snippet, math formula, or replacement lines required to fix the issue.
+Do NOT leave the programmer to guess the correction. Give clear, actionable instructions in the `recommendation` field.
+
 - Framework/API/version claims must be supported by authoritative version-matched documentation or deterministic runtime/toolchain evidence before they are treated as material.

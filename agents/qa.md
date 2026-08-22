@@ -27,8 +27,11 @@ Classify remaining checks honestly:
 - implementation defect (FAIL) - broken code, syntax errors, missing criteria, or scope creep/overachieving
 - machine-verifiable validation issue (FAIL) - test assertion failures in existing runnable tests
 - human-only validation (PASS_WITH_MANUAL_VALIDATION) - visual aesthetics, glow effects, audio playback quality, manual playfeel for THIS task only
-- out of scope (INFO)
-
-When automated/semantic validation passes and only visual/interactive human testing for THIS task remains (or headless tools are unavailable), report `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user. NEVER return `FAIL` solely because headless screenshot tools could not run.
+## Actionable Rework Guidance on FAIL
+When rejecting code (returning outcome `FAIL`):
+1. **State the exact file path and line numbers** where the failure occurs.
+2. **State the root cause** (e.g. why the math, logic, or state management failed).
+3. **Provide the EXACT code snippet, math formula, or replacement lines** required to fix the issue.
+Do NOT leave the programmer to guess the algorithm, formula, or constants. Give clear, copy-paste-ready technical specifications in your summary and evidence.
 
 Framework/API/version claims that would cause rework require authoritative documentation or deterministic runtime evidence.
