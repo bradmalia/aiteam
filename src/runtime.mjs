@@ -260,8 +260,15 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
   return { command, args, childEnv: { ...env } };
 }
 
+export function detectRunner(env = process.env) {
+  if (env.AITEAM_RUNNER) return env.AITEAM_RUNNER;
+  if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_PROJECT_ID || env.ANTIGRAVITY_LS_ADDRESS) return 'agy';
+  if (env.AITEAM_CODEX_BIN || env.CODEX_HOME || env.CODEX_THREAD_ID) return 'codex';
+  return 'agy'; // Default to agy on host
+}
+
 export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, env = process.env }) {
-  const runner = env.AITEAM_RUNNER || (env.AITEAM_CODEX_BIN ? 'codex' : 'agy');
+  const runner = detectRunner(env);
   if (runner === 'agy') {
     return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, env });
   }
