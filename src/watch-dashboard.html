@@ -339,7 +339,7 @@
     <div style="font-size:12px; color:#b8a8c1;" id="popoutTime"></div>
   </header>
   <pre id="popoutLog">Waiting for live specialist stream…</pre>
-  <script>
+  ` + '<' + `script>
     async function update() {
       try {
         const res = await fetch('/api/state', { cache: 'no-store' });
@@ -350,12 +350,12 @@
         const repoName = data.repository ? data.repository.split('/').filter(Boolean).pop() : (data.session?.repository ? data.session.repository.split('/').filter(Boolean).pop() : 'Repo');
         const agentName = data.activeRun ? (data.activeRun.role || data.activeRun.agentId) : 'idle';
         
-        document.title = `[${repoName}] ${agentName} — Live Activity`;
+        document.title = '[' + repoName + '] ' + agentName + ' — Live Activity';
         time.textContent = 'Updated ' + new Date().toLocaleTimeString();
         if (data.activeRun) {
-          tag.textContent = `[${repoName}] · [${data.activeRun.role || data.activeRun.agentId} · ${data.activeRun.stage || ''}]`;
+          tag.textContent = '[' + repoName + '] · [' + (data.activeRun.role || data.activeRun.agentId) + ' · ' + (data.activeRun.stage || '') + ']';
         } else {
-          tag.textContent = `[${repoName}] · [idle]`;
+          tag.textContent = '[' + repoName + '] · [idle]';
         }
         if (data.activeLogTail) {
           const isBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
@@ -366,7 +366,7 @@
     }
     update();
     setInterval(update, 1000);
-  <\/script>
+  ` + '<' + `/script>
 </body>
 </html>`);
     popoutWindow.document.close();
