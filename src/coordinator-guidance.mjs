@@ -168,7 +168,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     '   a) Inspect the last 2 rejection logs to diagnose the exact root cause (e.g. vague reviewer guidance, scope ambiguity, or missing formula).',
     '   b) Synthesize the concrete algorithmic solution or mathematical formula required.',
     '   c) Supply this exact guidance in the `context` argument of `aiteam_advance({ context: "..." })` so the next specialist implements it on the first attempt.',
-    '   d) If the bounce-back was caused by an ambiguous prompt or contract in AITEAM, patch `aiteam/agents/*.md` immediately to prevent recurring loops across tasks.',
+    '   d) If the bounce-back was caused by an ambiguous prompt or framework contract in AITEAM, patch `aiteam/agents/*.md` immediately and COMMIT the changes to Git (`git add <files> && git commit -m "fix(aiteam): ..."`) to persist the self-healing improvements across future sessions.',
     '',
     '# REQUIRED USER-VISIBLE PHASE REPORTING',
     'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> Architecture -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration.',
