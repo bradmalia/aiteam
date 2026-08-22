@@ -56,7 +56,7 @@ CRITICAL SCOPE BOUNDARY: Implement ONLY the exact acceptanceCriteria specified f
 Also return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
 Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","evidence"} and "manualChecks" as a string array.
-CRITICAL SCOPE BOUNDARY: Generate checks and manualChecks ONLY for the specific acceptanceCriteria of the current task. Do NOT validate future features, future task behaviors, or unrelated subsystems. FAIL means an implementation defect or failed machine-verifiable check for THIS task. Do not modify files.`,
+CRITICAL SCOPE BOUNDARY: Generate checks for the specific acceptanceCriteria of the current task AND regression checks for completedPriorTasks. Do NOT validate unbuilt future features or unassigned subsystems. FAIL means an implementation defect or failed check for this task or regression. Do not modify files.`,
   integration: `${COMMON_SCHEMA}
 Also return "commitMessage" as a concise non-empty string. Inspect the validated paths and repository state, but do not stage or commit; the AITEAM server owns Git integration.`
 };
