@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Give every specialist a fixed one-hour execution timeout, regardless of shorter or longer compatibility inputs from a coordinator.
+- Discard stale downstream review and QA artifacts when implementation rework succeeds.
+- Enforce structured reporting retries after implementation output-contract failures.
+
 ## 0.2.0 - 2026-08-19
 
 - Explicit coordinator-driven execution guidance; no passive status polling

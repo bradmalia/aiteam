@@ -37,7 +37,7 @@ Authoritative session fields cannot be patched through MCP. Coordinator may pers
 
 Specialists use the launcher-selected Codex version, model provider, context limits, and isolated child `CODEX_HOME`. Analysis, review, QA, Recruiter, and Maintainer roles are read-only. Registered implementation specialists use their declared workspace sandbox.
 
-On POSIX, each specialist is a detached process-group leader. Timeout sends `SIGTERM` to the whole group and follows with `SIGKILL`, preventing descendant Codex processes from continuing to edit after a timeout. MCP timeouts are clamped to 300–7200 seconds.
+On POSIX, each specialist is a detached process-group leader. Every specialist receives a fixed one-hour execution timeout. If that hour expires, AITEAM sends `SIGTERM` to the whole process group and follows with `SIGKILL`, preventing descendant Codex processes from continuing to edit after a timeout. The MCP client's longer `tool_timeout_sec` is transport headroom and does not extend specialist execution beyond one hour.
 
 ## Structured evidence
 

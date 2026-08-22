@@ -326,9 +326,11 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.throws(() => parseStageResult('ui-design', result('PASS', { theme: { palette: [], typography: [], spacing: [] }, screens: [], designTokens: [] })), /must not be empty|non-empty array/);
   assert.throws(() => parseStageResult('implementation', result('PASS', { filesChanged: ['app.py'], validations: [] })), /validations must be a non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
-  assert.equal(normalizeTimeoutSeconds(1), 300);
-  assert.equal(normalizeTimeoutSeconds(9000), 7200);
+  assert.equal(normalizeTimeoutSeconds(1), 3600);
+  assert.equal(normalizeTimeoutSeconds(300), 3600);
+  assert.equal(normalizeTimeoutSeconds(9000), 3600);
   assert.equal(normalizeTimeoutSeconds(undefined), 3600);
+  assert.throws(() => normalizeTimeoutSeconds('not-a-number'), /finite number/);
 });
 
 test('Analyst Intake pauses for user answers and blocks Architecture until confirmation', async () => {

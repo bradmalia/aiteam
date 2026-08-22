@@ -790,10 +790,13 @@ export function confirmManualQa(repo, response) {
   return writeSession(repo, next);
 }
 
+export const SPECIALIST_TIMEOUT_SECONDS = 60 * 60;
+
 export function normalizeTimeoutSeconds(value) {
-  const parsed = Number(value || 3600);
-  if (!Number.isFinite(parsed)) throw new Error('timeout_seconds must be a finite number.');
-  return Math.min(7200, Math.max(300, Math.floor(parsed)));
+  if (value !== undefined && !Number.isFinite(Number(value))) {
+    throw new Error('timeout_seconds must be a finite number.');
+  }
+  return SPECIALIST_TIMEOUT_SECONDS;
 }
 
 export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
@@ -805,7 +808,7 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
   if (expectedAgentId && expectedAgentId !== assignment.agentId) {
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }
-    const timeout = normalizeTimeoutSeconds(timeoutSeconds);
+  const timeout = normalizeTimeoutSeconds(timeoutSeconds);
   const maxAttempts = runner === runAgent ? 2 : 1;
   let retryContext = coordinatorContext;
   let lastError = null;

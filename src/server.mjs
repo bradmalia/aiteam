@@ -16,7 +16,7 @@ export const toolDefs = [
   {
     name: 'aiteam_start',
     description: 'Initialize a server-governed AITEAM request in the repository directory and synchronously run the first required specialist stage. This does not start background workers; the coordinator must advance each stage. Present intake/manual QA questions to the user verbatim, submit responses via aiteam_update_session, and loop aiteam_advance until completion.',
-    inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'The exact raw text of the user prompt. DO NOT REPHRASE, SUMMARIZE, OR EXPAND. Pass the raw string verbatim.' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
+    inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'The exact raw text of the user prompt. DO NOT REPHRASE, SUMMARIZE, OR EXPAND. Pass the raw string verbatim.' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', description: 'Compatibility input. The server always gives every specialist exactly one hour.' }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
     name: 'aiteam_status',
@@ -26,12 +26,12 @@ export const toolDefs = [
   {
     name: 'aiteam_advance',
     description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. The call is synchronous; use the Watch Dashboard for live subprocess output and report the result after it returns.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 } } }
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', description: 'Compatibility input. The server always gives every specialist exactly one hour.' } } }
   },
   {
     name: 'aiteam_spawn_agent',
     description: 'Compatibility alias for aiteam_advance. The requested agent_id must equal the server-required agent for the current phase; arbitrary or out-of-order delegation is rejected.',
-    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, agent_id: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer' } }, required: ['agent_id', 'task'] }
+    inputSchema: { type: 'object', properties: { repository: { type: 'string' }, agent_id: { type: 'string' }, task: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', description: 'Compatibility input. The server always gives every specialist exactly one hour.' } }, required: ['agent_id', 'task'] }
   },
   {
     name: 'aiteam_register_specialist',
