@@ -292,9 +292,8 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push(prompt);
 
   const childEnv = { ...env };
-  if (env.AITEAM_CODEX_HOME) {
-    fs.mkdirSync(env.AITEAM_CODEX_HOME, { recursive: true });
-    childEnv.CODEX_HOME = env.AITEAM_CODEX_HOME;
-  }
+  const codexHome = env.AITEAM_CODEX_HOME || '/home/brad/.aiteam-codex-home';
+  fs.mkdirSync(codexHome, { recursive: true });
+  childEnv.CODEX_HOME = codexHome;
   return { command, args, childEnv };
 }
