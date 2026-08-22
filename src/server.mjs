@@ -15,7 +15,7 @@ const VERSION = '0.2.0';
 export const toolDefs = [
   {
     name: 'aiteam_start',
-    description: 'Initialize a server-governed AITEAM request in the repository directory and synchronously run the first required specialist stage. This does not start background workers; the coordinator must advance each stage. Your role as Facilitator: if intake questions or user checks are returned, present them verbatim to the user in chat. DO NOT explore the codebase, answer intake questions, or guess user preferences yourself. After receiving user answers, submit them via aiteam_update_session and immediately loop aiteam_advance until the project is completed.',
+    description: 'Initialize a server-governed AITEAM request in the repository directory and synchronously run the first required specialist stage. COORDINATOR ROLE: You are strictly a message facilitator and dispatcher. You are PROHIBITED from directly creating, editing, fixing, or testing project code yourself. Present intake/manual QA questions to the user verbatim, submit responses via aiteam_update_session, and loop aiteam_advance until completion.',
     inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'The exact raw text of the user prompt. DO NOT REPHRASE, SUMMARIZE, OR EXPAND. Pass the raw string verbatim.' }, repository: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 }, auto_advance: { type: 'boolean', description: 'Testing/compatibility escape hatch; defaults to true.' } }, required: ['request'] }
   },
   {
@@ -25,7 +25,7 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_advance',
-    description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. The Coordinator cannot select or skip phases.',
+    description: 'Run exactly the specialist required by the server-owned workflow gate, validate its structured result, update the task ledger, and advance or route rework. COORDINATOR ROLE: Do NOT implement code, fix bugs, or run tests yourself. Loop aiteam_advance to let spawned specialists perform all work.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' }, context: { type: 'string' }, timeout_seconds: { type: 'integer', minimum: 300, maximum: 7200 } } }
   },
   {
