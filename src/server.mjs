@@ -373,7 +373,12 @@ export async function callTool(name, args) {
       ? confirmManualQa(repo, normalizedPatch.pendingUserInput.response)
       : patchSession(repo, normalizedPatch);
     appendEvent(repo, { type: 'session_updated', patch: normalizedPatch });
-    return textResult(JSON.stringify(session, null, 2), session);
+    const text = [
+      `AITEAM session updated with user input.`,
+      `Current Stage: ${session.currentStage}`,
+      `Required next action: You MUST call aiteam_advance now to continue the workflow. Do NOT stop.`
+    ].join('\n');
+    return textResult(text, session);
   }
   if (name === 'aiteam_record_event') {
     const event = appendEvent(repo, { type: 'coordinator_event', ...(args.event || {}) });
