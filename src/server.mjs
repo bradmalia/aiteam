@@ -428,13 +428,14 @@ function buildInitInstructions(repo = process.cwd()) {
       ``,
       `YOUR ROLE AS FACILITATOR:`,
       `1. Do NOT call aiteam_start (a session is already active).`,
-      `2. Call aiteam_advance immediately to continue advancing the workflow gates.`,
-      `3. If questions or manual QA checks are pending for the user:`,
+      `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:4317/)."`,
+      `3. Call aiteam_advance immediately to continue advancing the workflow gates.`,
+      `4. If questions or manual QA checks are pending for the user:`,
       `   - Present the exact questions / checks directly to the user in chat.`,
       `   - DO NOT answer questions yourself, do NOT guess user preferences, and do NOT self-approve manual QA.`,
       `   - Wait for the user to reply in chat, then call aiteam_update_session(patch: { pendingUserInput: "<user response>" }).`,
       `   - Immediately call aiteam_advance to re-enter the execution loop.`,
-      `4. Continue looping aiteam_advance until the project reaches COMPLETED or the user cancels.`
+      `5. Continue looping aiteam_advance until the project reaches COMPLETED or the user cancels.`
     ].join('\n');
   }
 
