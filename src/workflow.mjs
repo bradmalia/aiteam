@@ -346,6 +346,32 @@ export function workflowStatus(session, repo = null) {
   };
 }
 
+function currentTaskPromptView(task) {
+  if (!task) return null;
+  const {
+    id,
+    title,
+    description,
+    specialistId,
+    acceptanceCriteria,
+    dependencies,
+    status,
+    filesChanged,
+    validations
+  } = task;
+  return {
+    id,
+    title,
+    description,
+    specialistId,
+    acceptanceCriteria,
+    dependencies,
+    status,
+    filesChanged: filesChanged || [],
+    validations: validations || []
+  };
+}
+
 function stageContext(session, repo) {
   const stage = session.currentStage;
   const task = currentTask(session);
@@ -362,7 +388,7 @@ function stageContext(session, repo) {
 
     return JSON.stringify({
       currentStage: stage,
-      currentTask: task,
+      currentTask: currentTaskPromptView(task),
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
       uiDesign: session.stageEvidence['ui-design']?.result || null,
@@ -407,6 +433,8 @@ function stageContext(session, repo) {
 
 
 function assignmentText(stage, session) {
+  const task = currentTask(session);
+  const taskJson = JSON.stringify(currentTaskPromptView(task));
   const details = {
     intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
     architecture: 'Design the implementation architecture, select the technology stack, declare whether the project has a user-facing visual UI (hasUserInterface: true/false), and identify only genuine specialist capability gaps.',
@@ -416,27 +444,27 @@ function assignmentText(stage, session) {
     'critical-review': session.lockedCriticalFindings.length
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, UI/UX design (if present), plan, and QA feasibility.',
-    implementation: currentTask(session)?.['code-reviewFailure']
-      ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
-      : currentTask(session)?.qaFailure
-      ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nQA validation failed with the following issue:\n${JSON.stringify(currentTask(session).qaFailure, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW to fix the reported bugs. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
-      : `Implement or verify task ${JSON.stringify(currentTask(session))}.\n\n` +
+    implementation: task?.['code-reviewFailure']
+      ? `This is a REWORK assignment for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
+      : task?.qaFailure
+      ? `This is a REWORK assignment for task ${taskJson}.\nQA validation failed with the following issue:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW to fix the reported bugs. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
+      : `Implement or verify task ${taskJson}.\n\n` +
         `If the code for this task is not yet written, you MUST execute your tools (e.g. node, python, or shell scripts) to physically write the necessary files to disk NOW.\n` +
         `If the acceptance criteria are already satisfied by pre-existing code, verify the criteria using test/inspection commands and list those source files in "filesChanged".\n\n` +
         `CRITICAL SCOPE BOUNDARY:\nImplement ONLY the acceptanceCriteria of THIS task.\nDo NOT implement features or subsystems belonging to other tasks. Focus strictly on fulfilling the criteria of THIS task.\n\n` +
         `Return outcome "PASS" with "filesChanged" containing the non-empty repository-relative paths containing the implementation. Do not commit.`,
-    'code-review': currentTask(session)?.['code-reviewFailure']
-      ? `This is a REPAIR VERIFICATION for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk.`
-      : `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.`,
-    qa: currentTask(session)?.qaFailure
-      ? `This is a REPAIR VERIFICATION for task ${JSON.stringify(currentTask(session))}.\nThe previous QA validation failed with:\n${JSON.stringify(currentTask(session).qaFailure, null, 2)}\n\nYou MUST execute a FULL regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed issue is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion.`
-      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\n` +
-        (session.taskLedger.some((t) => t.id !== currentTask(session)?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
+    'code-review': task?.['code-reviewFailure']
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk.`
+      : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.`,
+    qa: task?.qaFailure
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed issue is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion.`
+      : `Validate the current task against its acceptance criteria: ${taskJson}.\n\n` +
+        (session.taskLedger.some((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
           ? `CROSS-TASK REGRESSION: You must also verify that this task's changes did not break any previously passing completed tasks listed in your context (completedPriorTasks).\n\n`
           : '') +
         `CRITICAL SCOPE BOUNDARY: Generate checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
-    integration: currentTask(session)
-      ? `Inspect QA-approved work for task ${JSON.stringify(currentTask(session))} and propose a conventional commit message. Do not stage or commit.`
+    integration: task
+      ? `Inspect QA-approved work for task ${taskJson} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
   }[stage];
   return `${details}\n\n${STAGE_SCHEMAS[stage]}`;
@@ -582,7 +610,11 @@ function applyResult(repo, session, assignment, result, run) {
       next.lockedCriticalFindings = result.findings;
       next.currentStage = result.repairStage;
     } else if (stage === 'code-review' || stage === 'qa') {
-      next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'needs-rework', [`${stage}Failure`]: result } : task);
+      next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId
+        ? stage === 'code-review'
+          ? { ...task, status: 'needs-rework', review: null, 'code-reviewFailure': result, qa: null, qaFailure: null, qaFingerprint: null, completedAt: null, integration: null }
+          : { ...task, status: 'needs-rework', qa: null, qaFailure: result, qaFingerprint: null, completedAt: null, integration: null }
+        : task);
       next.currentStage = 'implementation';
     } else if (stage === 'implementation') {
       // Implementation specialists are forbidden from returning FAIL — they must write files and return PASS.
@@ -666,8 +698,14 @@ function applyResult(repo, session, assignment, result, run) {
       validations: result.validations,
       implementationFingerprint,
       implementationRunId: run.runId,
+      review: null,
       'code-reviewFailure': null,
-      qaFailure: null
+      qa: null,
+      qaFailure: null,
+      qaFingerprint: null,
+      completedAt: null,
+      integration: null,
+      integrityFailure: null
     } : task);
     next.currentStage = 'code-review';
   } else if (stage === 'code-review') {

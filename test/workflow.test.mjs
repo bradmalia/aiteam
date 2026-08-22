@@ -222,6 +222,42 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
   assert.match(session.manualQaHistory[0].response, /renders correctly/);
 });
 
+test('specialist prompts exclude stale downstream QA history after rework', () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Repair browser feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: {
+      ...session.stageEvidence,
+      intake: { result: { userConfirmed: true } }
+    },
+    currentTaskId: 'browser-task',
+    taskLedger: [{
+      id: 'browser-task',
+      title: 'Browser feature',
+      description: 'Repair the browser feature',
+      specialistId: 'python',
+      acceptanceCriteria: ['Current source renders correctly'],
+      dependencies: [],
+      status: 'review-passed',
+      filesChanged: ['app.py'],
+      validations: [{ command: 'python -m py_compile app.py', result: 'passed' }],
+      review: { outcome: 'PASS', summary: 'Current review passed' },
+      qa: { outcome: 'PASS_WITH_MANUAL_VALIDATION', manualValidationResponse: 'STALE_MANUAL_FAILURE' },
+      qaFailure: null
+    }]
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  assert.equal(assignment.stage, 'qa');
+  assert.match(assignment.task, /Current source renders correctly/);
+  assert.doesNotMatch(assignment.task, /STALE_MANUAL_FAILURE/);
+  assert.doesNotMatch(assignment.context, /STALE_MANUAL_FAILURE/);
+  assert.doesNotMatch(assignment.context, /manualValidationResponse/);
+});
+
 test('invalid structured output and out-of-order agents cannot advance workflow', async () => {
   const repo = createRepository();
   newSession(repo, 'Build feature');
