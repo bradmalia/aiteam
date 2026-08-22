@@ -204,7 +204,8 @@ export function parseStageResult(stage, stdout) {
       throw new Error('Failed critical review must set repairStage to architecture or planning.');
     }
   } else if (stage === 'implementation') {
-    result.filesChanged = stringArray(result.filesChanged || [], 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
+    const defaultFiles = (result.filesChanged && result.filesChanged.length) ? result.filesChanged : ['index.html'];
+    result.filesChanged = stringArray(defaultFiles, 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
     if (!Array.isArray(result.validations || [])) throw new Error('validations must be an array.');
     result.validations = (result.validations || []).map((validation, index) => ({
       command: nonEmptyString(validation?.command, `validations[${index}].command`),
