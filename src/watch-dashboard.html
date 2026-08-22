@@ -218,7 +218,9 @@
       liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL BROWSER VERIFICATION</div>` +
         `<div style="color:var(--text); font-size:13px; line-height:1.6;">Please perform the manual checks below in your browser at <a href="http://localhost:3000" target="_blank" style="color:var(--cyan); text-decoration:underline;">http://localhost:3000</a>:<br>` +
         `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
-        `<div style="margin-top:10px; font-size:12px; color:var(--muted);">Reply in chat with <code>All manual checks confirmed</code> to proceed with Integration.</div></div>`;
+        `<div style="margin-top:12px; padding:8px 12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:4px; font-size:12px; line-height:1.5;">` +
+        `<strong style="color:var(--green);">✓ If all checks pass:</strong> Reply in chat with <code>PASS: All manual checks confirmed</code> to proceed with Integration.<br>` +
+        `<strong style="color:var(--red);">✗ If you spot defects:</strong> Reply in chat with <code>FAIL: [list of bugs/issues]</code> to route the task back to the programmer for rework.</div></div>`;
     } else if (data.activeLogTail) {
       $('liveActivityPanel').hidden = false;
       $('liveAgentTag').style.color = 'var(--amber)';
