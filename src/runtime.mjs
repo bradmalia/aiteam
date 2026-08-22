@@ -251,6 +251,7 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
   if (agent.sandbox === 'workspace-write') args.push('--add-dir', repo);
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
+  args.push('-c', 'mcp_servers={}');
 
   const provider = env.AITEAM_CODEX_PROVIDER;
   if (provider) {
