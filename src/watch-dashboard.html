@@ -31,7 +31,16 @@
     <div class="panel wide"><div class="label">Repository</div><div id="repo" class="value">—</div></div>
     <div class="panel wide"><h2>Gate Progress</h2><div id="gates" class="muted">—</div></div>
     <div class="panel wide" id="questionsPanel" hidden><h2>User Input Required</h2><ol id="questions"></ol></div>
-    <div class="panel wide" id="liveActivityPanel" hidden><h2>⚡ Live Specialist Activity <span id="liveAgentTag" style="font-size:12px; color:var(--amber); font-weight:normal; margin-left:8px;"></span></h2><pre id="liveLog" style="background:#0c0814; padding:12px; border-radius:6px; border:1px solid rgba(255,209,102,0.25); max-height:220px; overflow-y:auto; font-size:13px; color:#fffae0;"></pre></div>
+    <div class="panel wide" id="liveActivityPanel" hidden>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h2 style="margin:0;">⚡ Live Specialist Activity <span id="liveAgentTag" style="font-size:12px; color:var(--amber); font-weight:normal; margin-left:8px;"></span></h2>
+        <div style="display:flex; gap:8px;">
+          <button id="expandBtn" onclick="toggleExpandLive()" style="background:#38204a; color:var(--cyan); border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; font-family:inherit; font-size:12px;">⛶ Expand</button>
+          <button id="popoutBtn" onclick="popoutLive()" style="background:#38204a; color:var(--cyan); border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; font-family:inherit; font-size:12px;">↗ Pop-out Window</button>
+        </div>
+      </div>
+      <pre id="liveLog" style="background:#0c0814; padding:14px; border-radius:6px; border:1px solid rgba(255,209,102,0.25); height:450px; overflow-y:auto; font-size:13px; color:#fffae0;"></pre>
+    </div>
     <div class="panel wide"><h2>Latest Agent Result</h2><div id="result" class="empty">No result yet.</div></div>
     <div class="panel wide"><h2>Task Ledger</h2><div id="tasks" class="empty">No implementation tasks have been planned yet.</div></div>
     <div class="panel wide"><h2>Recent Events</h2><div class="events-container" id="eventsContainer"><div id="events" class="empty">No events yet.</div></div></div>
@@ -265,6 +274,79 @@
     
     $('refresh').textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 1.5s`;
   }
+
+  let isExpanded = false;
+  function toggleExpandLive() {
+    isExpanded = !isExpanded;
+    const logEl = $('liveLog');
+    const btn = $('expandBtn');
+    if (isExpanded) {
+      logEl.style.height = '80vh';
+      btn.textContent = 'Collapse';
+    } else {
+      logEl.style.height = '450px';
+      btn.textContent = '⛶ Expand';
+    }
+  }
+
+  let popoutWindow = null;
+  function popoutLive() {
+    if (popoutWindow && !popoutWindow.closed) {
+      popoutWindow.focus();
+      return;
+    }
+    popoutWindow = window.open('', 'AITEAM_Live_Activity', 'width=950,height=750,menubar=no,toolbar=no,location=no,status=no');
+    if (!popoutWindow) {
+      alert('Pop-up was blocked. Please allow pop-ups for http://127.0.0.1:4317 to use the pop-out window.');
+      return;
+    }
+    popoutWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AITEAM Live Specialist Activity</title>
+  <style>
+    body { margin:0; padding:16px; background:#0c0814; color:#fffae0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #513d62; padding-bottom:10px; margin-bottom:12px; }
+    h1 { margin:0; font-size:16px; color:#57e6ed; }
+    pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚡ Live Specialist Activity <span id="popoutTag" style="color:#ffd166; font-size:13px; font-weight:normal;"></span></h1>
+    <div style="font-size:12px; color:#b8a8c1;" id="popoutTime"></div>
+  </header>
+  <pre id="popoutLog">Waiting for live specialist stream…</pre>
+  <script>
+    async function update() {
+      try {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        const data = await res.json();
+        const tag = document.getElementById('popoutTag');
+        const log = document.getElementById('popoutLog');
+        const time = document.getElementById('popoutTime');
+        time.textContent = 'Updated ' + new Date().toLocaleTimeString();
+        if (data.activeRun) {
+          tag.textContent = '[' + (data.activeRun.role || data.activeRun.agentId) + ' · ' + (data.activeRun.stage || '') + ']';
+        } else {
+          tag.textContent = '[idle]';
+        }
+        if (data.activeLogTail) {
+          const isBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
+          log.textContent = data.activeLogTail;
+          if (isBottom) window.scrollTo(0, document.body.scrollHeight);
+        }
+      } catch (err) {}
+    }
+    update();
+    setInterval(update, 1000);
+  <\/script>
+</body>
+</html>`);
+    popoutWindow.document.close();
+  }
+
   async function refresh() { try { const response = await fetch('/api/state', { cache:'no-store' }); render(await response.json()); } catch (error) { $('refresh').textContent = `Connection error: ${error.message}`; } }
   refresh(); setInterval(refresh, 1500);
 </script>
