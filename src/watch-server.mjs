@@ -96,15 +96,17 @@ function snapshot(repo) {
         const rawContent = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
         const responseIdx = rawContent.lastIndexOf('# Response');
         if (responseIdx !== -1) {
-          const afterResponse = rawContent.slice(responseIdx);
-          const metaWarning = 'warning: Model metadata for `v100-qwen3.6-codex-256k` not found.';
-          const metaIdx = afterResponse.indexOf(metaWarning);
-          if (metaIdx !== -1) {
-            const cleanContent = afterResponse.slice(metaIdx + metaWarning.length).replace(/^Defaulting to fallback metadata; this can degrade performance and cause issues\.\r?\n?/i, '').trim();
-            activeLogTail = cleanContent || 'Agent initialized · processing task commands…';
-          } else {
-            activeLogTail = afterResponse.replace(/^# Response[^\n]*\n?/i, '').trim();
-          }
+          const sub = rawContent.slice(responseIdx);
+          const lines = sub.split(/\r?\n/).filter((l) => {
+            const trimmed = l.trim();
+            return trimmed &&
+              !trimmed.startsWith('# Response') &&
+              !trimmed.startsWith('Return your conclusions') &&
+              !trimmed.startsWith('mcp startup:') &&
+              !trimmed.startsWith('warning: Model metadata') &&
+              !trimmed.startsWith('Defaulting to fallback metadata');
+          });
+          activeLogTail = lines.join('\n').trim() || 'Specialist running task verification…';
         } else {
           const lines = rawContent.split(/\r?\n/).filter(Boolean);
           activeLogTail = lines.slice(-25).join('\n').trim();
