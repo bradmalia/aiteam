@@ -107,9 +107,15 @@ export function writeSession(repo, session) {
   ensureStateDir(repo);
   const next = { ...session, updatedAt: new Date().toISOString() };
   const serialized = JSON.stringify(next, null, 2) + '\n';
-  fs.writeFileSync(sessionPath(repo), serialized);
-  fs.writeFileSync(protectedSessionPath(repo), serialized);
+  atomicWrite(sessionPath(repo), serialized);
+  atomicWrite(protectedSessionPath(repo), serialized);
   return next;
+}
+
+function atomicWrite(filePath, data) {
+  const tmp = filePath + '.tmp';
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filePath);
 }
 
 export function patchSession(repo, patch) {

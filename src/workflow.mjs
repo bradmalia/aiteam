@@ -78,41 +78,68 @@ function parseJson(stdout) {
   const text = String(stdout || '').trim();
   if (!text) throw new Error('Specialist returned no structured result.');
 
-  // 1. Fenced code block (```json ... ```)
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) {
-    try { return JSON.parse(fenced[1].trim()); } catch { /* fall through */ }
-  }
-
-  // 2. Entire output is a JSON object (--output-schema mode)
+  // 1. Entire output is a JSON object (--output-schema mode)
   try { return JSON.parse(text); } catch { /* fall through */ }
 
-  // 3. Free-form prose: look for any JSON object with "outcome" in the output
-  const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const candidate = matches[i][0];
+  // 2. Fenced code block — prefer the LAST fenced block (LLMs often show
+  //    examples before emitting their final answer)
+  const fencedAll = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (let i = fencedAll.length - 1; i >= 0; i--) {
     try {
-      const parsed = JSON.parse(candidate);
+      const parsed = JSON.parse(fencedAll[i][1].trim());
       if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
     } catch { /* continue searching */ }
   }
+  // If any fenced block parsed at all (even without outcome), use the last one
+  for (let i = fencedAll.length - 1; i >= 0; i--) {
+    try { return JSON.parse(fencedAll[i][1].trim()); } catch { /* continue */ }
+  }
 
-  // 4. Fallback: match from the last '{' to the balanced closing '}'
-  const lastBrace = text.lastIndexOf('{');
-  if (lastBrace !== -1) {
-    const candidate = text.slice(lastBrace);
-    let depth = 0;
-    let end = -1;
-    for (let i = 0; i < candidate.length; i++) {
-      if (candidate[i] === '{') depth++;
-      else if (candidate[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
-    }
-    if (end !== -1) {
-      try { return JSON.parse(candidate.slice(0, end + 1)); } catch { /* fall through */ }
-    }
+  // 3. Brace-balanced extraction: find all top-level JSON objects in the text
+  //    by scanning for '{' and tracking brace depth. This correctly handles
+  //    nested objects unlike the previous non-greedy regex approach.
+  const candidates = extractBalancedObjects(text);
+  // Prefer the last candidate with an "outcome" field
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(candidates[i]);
+      if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
+    } catch { /* continue searching */ }
+  }
+  // Fall back to the last parseable candidate
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try { return JSON.parse(candidates[i]); } catch { /* continue */ }
   }
 
   throw new Error(`Specialist result is not valid JSON. Output was: ${text.slice(0, 300)}`);
+}
+
+/** Extract all brace-balanced substrings from text (handles nested objects). */
+function extractBalancedObjects(text) {
+  const results = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{') continue;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inString) { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          results.push(text.slice(i, j + 1));
+          i = j; // skip past this object for the outer loop
+          break;
+        }
+      }
+    }
+  }
+  return results;
 }
 
 
@@ -204,8 +231,7 @@ export function parseStageResult(stage, stdout) {
       throw new Error('Failed critical review must set repairStage to architecture or planning.');
     }
   } else if (stage === 'implementation') {
-    const defaultFiles = (result.filesChanged && result.filesChanged.length) ? result.filesChanged : ['index.html'];
-    result.filesChanged = stringArray(defaultFiles, 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
+    result.filesChanged = stringArray(result.filesChanged || [], 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
     if (!Array.isArray(result.validations || [])) throw new Error('validations must be an array.');
     result.validations = (result.validations || []).map((validation, index) => ({
       command: nonEmptyString(validation?.command, `validations[${index}].command`),

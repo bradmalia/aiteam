@@ -195,6 +195,9 @@ export async function callTool(name, args) {
   const repo = repoOf(args);
 
   if (name === 'aiteam_start') {
+    if (typeof args.request !== 'string' || !args.request.trim()) {
+      throw new Error('aiteam_start requires a non-empty "request" string.');
+    }
     ensureGitRepo(repo);
     ensureAgentsMd(repo);
 
@@ -443,7 +446,7 @@ export async function runServer() {
     if (!line.trim()) continue;
     let msg;
     try { msg = JSON.parse(line); }
-    catch { continue; }
+    catch (parseErr) { process.stderr.write(`AITEAM: malformed JSON-RPC input (${parseErr.message}): ${line.slice(0, 200)}\n`); continue; }
     
     handle(msg).then((response) => {
       if (response) process.stdout.write(JSON.stringify(response) + '\n');

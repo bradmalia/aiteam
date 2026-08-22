@@ -189,7 +189,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     child.on('close', (code, signal) => {
       activeProcesses.delete(repo);
       clearTimeout(timer);
-      if (forceKillTimer && !timedOut) clearTimeout(forceKillTimer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       fs.writeFileSync(stdoutPath, stdout);
       fs.writeFileSync(stderrPath, stderr);
       const meta = {
