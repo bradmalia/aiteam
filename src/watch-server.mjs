@@ -87,20 +87,11 @@ function snapshot(repo) {
   let activeLogTail = null;
   const runsDir = path.join(repo, '.aiteam', 'runs');
   try {
-    if (fs.existsSync(runsDir)) {
-      let targetFile = null;
-      if (activeRun) {
-        targetFile = fs.readdirSync(runsDir)
-          .filter((f) => f.endsWith('.stderr.txt') && f.includes(activeRun.agentId || ''))
-          .sort()
-          .at(-1);
-      }
-      if (!targetFile) {
-        targetFile = fs.readdirSync(runsDir)
-          .filter((f) => f.endsWith('.stderr.txt'))
-          .sort()
-          .at(-1);
-      }
+    if (fs.existsSync(runsDir) && activeRun) {
+      const targetFile = fs.readdirSync(runsDir)
+        .filter((f) => f.endsWith('.stderr.txt') && f.includes(activeRun.agentId || ''))
+        .sort()
+        .at(-1);
       if (targetFile) {
         activeLogTail = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
       }
