@@ -87,13 +87,20 @@ function parseJson(stdout) {
   // 2. Entire output is a JSON object (--output-schema mode)
   try { return JSON.parse(text); } catch { /* fall through */ }
 
-  // 3. Free-form prose: find the last {...} block in the output.
-  // This handles the agentic loop case where the model writes files via tools
-  // then emits a JSON result as its final message without --output-schema.
+  // 3. Free-form prose: look for any JSON object with "outcome" in the output
+  const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const candidate = matches[i][0];
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
+    } catch { /* continue searching */ }
+  }
+
+  // 4. Fallback: match from the last '{' to the balanced closing '}'
   const lastBrace = text.lastIndexOf('{');
   if (lastBrace !== -1) {
     const candidate = text.slice(lastBrace);
-    // Find the matching closing brace
     let depth = 0;
     let end = -1;
     for (let i = 0; i < candidate.length; i++) {
