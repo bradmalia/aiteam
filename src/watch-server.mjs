@@ -88,16 +88,22 @@ function snapshot(repo) {
   const runsDir = path.join(repo, '.aiteam', 'runs');
   try {
     if (fs.existsSync(runsDir)) {
-      const allRuns = fs.readdirSync(runsDir)
-        .filter((f) => f.endsWith('.stderr.txt'))
-        .sort();
-      const recentLogs = allRuns.slice(-8).map((filename) => {
-        const agentTag = filename.replace(/\.stderr\.txt$/, '').replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z-/, '');
-        const content = fs.readFileSync(path.join(runsDir, filename), 'utf8').trim();
-        if (!content) return '';
-        return `════════════════════════════════════════════════════════════════════════════════\n▶ SPECIALIST: [${agentTag}]\n════════════════════════════════════════════════════════════════════════════════\n${content}`;
-      }).filter(Boolean);
-      activeLogTail = recentLogs.join('\n\n');
+      let targetFile = null;
+      if (activeRun) {
+        targetFile = fs.readdirSync(runsDir)
+          .filter((f) => f.endsWith('.stderr.txt') && f.includes(activeRun.agentId || ''))
+          .sort()
+          .at(-1);
+      }
+      if (!targetFile) {
+        targetFile = fs.readdirSync(runsDir)
+          .filter((f) => f.endsWith('.stderr.txt'))
+          .sort()
+          .at(-1);
+      }
+      if (targetFile) {
+        activeLogTail = fs.readFileSync(path.join(runsDir, targetFile), 'utf8').trim();
+      }
     }
   } catch {}
 
