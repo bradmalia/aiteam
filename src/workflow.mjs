@@ -46,15 +46,17 @@ Also return "design" (non-empty string array) and "specialistNeeds" (array of {"
   recruiting: `${COMMON_SCHEMA}
 Also return "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path.`,
   planning: `${COMMON_SCHEMA}
-Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist.`,
+Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow.`,
   'critical-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR remains, outcome must be FAIL and "repairStage" must be "architecture" or "planning".`,
   implementation: `${COMMON_SCHEMA}
-For Implementation, you MUST perform the code edits in the workspace using your tools and return outcome "PASS". Never return outcome "FAIL" for your own implementation task. Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}).`,
+For Implementation, you MUST perform code edits in the workspace using your tools and return outcome "PASS". Never return outcome "FAIL" for your own implementation task.
+CRITICAL SCOPE BOUNDARY: Implement ONLY the exact acceptanceCriteria specified for this task. Do NOT implement future features, sound effects, game physics, or unrelated modules if they are not in your task's acceptanceCriteria. Overachieving or implementing unassigned features is a boundary violation. Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}).`,
   'code-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
-Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","evidence"} and "manualChecks" as a string array. FAIL means an implementation defect or failed machine-verifiable check. Do not modify files.`,
+Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","evidence"} and "manualChecks" as a string array.
+CRITICAL SCOPE BOUNDARY: Generate checks and manualChecks ONLY for the specific acceptanceCriteria of the current task. Do NOT validate future features, future task behaviors, or unrelated subsystems. FAIL means an implementation defect or failed machine-verifiable check for THIS task. Do not modify files.`,
   integration: `${COMMON_SCHEMA}
 Also return "commitMessage" as a concise non-empty string. Inspect the validated paths and repository state, but do not stage or commit; the AITEAM server owns Git integration.`
 };
@@ -258,17 +260,13 @@ function stageContext(session, repo) {
   const task = currentTask(session);
 
   // Implementation, code-review, and QA only need the current task + essential summaries.
-  // Sending the full task ledger and all agent lists wastes tokens and can push critical
-  // instructions out of the truncation window.
+  // We explicitly DO NOT leak the global session.request to implementation agents to prevent scope creep / overachieving.
   if (['implementation', 'code-review', 'qa'].includes(stage)) {
-    const req = session.stageEvidence.intake?.result;
     const arch = session.stageEvidence.architecture?.result;
     return JSON.stringify({
-      request: session.request,
       currentStage: stage,
-      requirements: req ? { summary: req.summary, requirements: req.requirements, acceptanceCriteria: req.acceptanceCriteria } : null,
-      architectureDesign: arch ? arch.design : null,
       currentTask: task,
+      architectureDesignOverview: arch ? arch.design : null,
       pendingUserInput: session.pendingUserInput
     }, null, 2);
   }
@@ -318,13 +316,13 @@ function assignmentText(stage, session) {
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, plan, and QA feasibility.',
     implementation: currentTask(session)?.['code-reviewFailure']
       ? `This is a REWORK assignment for task ${JSON.stringify(currentTask(session))}.\nThe previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use bash tools (e.g. cat << 'EOF' > file) to modify the files on disk NOW. Only after the files are written and verified with ls/cat may you emit outcome "PASS". Do NOT return FAIL.`
-      : `You MUST execute your bash tool (e.g. cat << 'EOF' > filename) to physically write all necessary files to the repository filesystem NOW. Do NOT just output the schema without writing files to disk.\nImplement only task ${JSON.stringify(currentTask(session))}.\nOnly after the files exist on disk, return outcome "PASS" with "filesChanged" containing the created/modified relative paths. Do not commit.`,
+      : `You MUST execute your bash tool (e.g. cat << 'EOF' > filename) to physically write all necessary files to the repository filesystem NOW. Do NOT just output the schema without writing files to disk.\n\nCRITICAL SCOPE BOUNDARY:\nImplement ONLY task ${JSON.stringify(currentTask(session))}.\nDo NOT implement features or subsystems that belong to other tasks (such as game physics, sound synthesis, or complex AI if not in this task's acceptanceCriteria). Focus strictly on fulfilling the acceptanceCriteria of THIS task.\n\nOnly after the files exist on disk, return outcome "PASS" with "filesChanged" containing the created/modified relative paths. Do not commit.`,
     'code-review': currentTask(session)?.['code-reviewFailure']
       ? `This is a repair verification. The previous review failed with the following findings:\n${JSON.stringify(currentTask(session)['code-reviewFailure'].findings, null, 2)}\n\nReview ONLY the current task and its changed paths to verify these specific findings have been resolved. Use bash tools (cat, git diff) to read the files directly from disk.`
       : `Review only the current task and its changed paths: ${JSON.stringify(currentTask(session))}.\n\nYou MUST use bash tools (e.g. cat <file>, git diff) to read and inspect the code files directly from disk before returning your review findings.`,
     qa: currentTask(session)?.qaFailure
       ? `This is a repair verification. The previous QA validation failed with the following checks:\n${JSON.stringify(currentTask(session).qaFailure.checks, null, 2)}\n\nExecute verification commands using your bash/exec tools to validate ONLY that these specific failed checks have been resolved.`
-      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
+      : `Validate the current task against its acceptance criteria: ${JSON.stringify(currentTask(session))}.\n\nCRITICAL SCOPE BOUNDARY: Generate checks and manualChecks strictly for the acceptance criteria of THIS current task. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
     integration: currentTask(session)
       ? `Inspect QA-approved work for task ${JSON.stringify(currentTask(session))} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
