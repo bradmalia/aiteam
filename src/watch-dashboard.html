@@ -206,13 +206,30 @@
     $('questions').innerHTML = questions.map((question) => `<li>${md(question)}</li>`).join('');
 
     const liveLogEl = $('liveLog');
-    if (data.activeLogTail) {
+    const isManualPending = session?.pendingUserInput?.response == null && session?.pendingUserInput?.kind === 'qa-manual';
+    
+    if (isManualPending) {
       $('liveActivityPanel').hidden = false;
+      $('liveAgentTag').textContent = `[⚠️ ACTION REQUIRED: Human Manual Review]`;
+      $('liveAgentTag').style.color = 'var(--amber)';
+      liveLogEl.style.height = 'auto';
+      liveLogEl.style.borderColor = 'var(--amber)';
+      liveLogEl.style.background = 'rgba(255, 209, 102, 0.08)';
+      liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL BROWSER VERIFICATION</div>` +
+        `<div style="color:var(--text); font-size:13px; line-height:1.6;">Please perform the manual checks below in your browser at <a href="http://localhost:3000" target="_blank" style="color:var(--cyan); text-decoration:underline;">http://localhost:3000</a>:<br>` +
+        `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
+        `<div style="margin-top:10px; font-size:12px; color:var(--muted);">Reply in chat with <code>All manual checks confirmed</code> to proceed with Integration.</div></div>`;
+    } else if (data.activeLogTail) {
+      $('liveActivityPanel').hidden = false;
+      $('liveAgentTag').style.color = 'var(--amber)';
       if (active) {
         $('liveAgentTag').textContent = `[${active.role || active.agentId} · ${active.stage || ''}]`;
       } else {
         $('liveAgentTag').textContent = `[idle · waiting for next gate]`;
       }
+      liveLogEl.style.height = '110px';
+      liveLogEl.style.borderColor = 'rgba(255,209,102,0.25)';
+      liveLogEl.style.background = '#0c0814';
       const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= liveLogEl.scrollTop + 50;
       liveLogEl.textContent = data.activeLogTail;
       if (isScrolledToBottom) {
