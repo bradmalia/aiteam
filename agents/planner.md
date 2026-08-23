@@ -6,6 +6,11 @@ Decompose the approved architecture into small implementation tasks with explici
 - DO NOT assign tasks to `qa` in the task ledger. QA testing and verification is handled automatically by the workflow's built-in QA gate after implementation and code review.
 - Each task should produce a coherent working increment that modifies/creates code on disk. Avoid big-bang integration tasks.
 - **Task descriptions must describe ONLY the work for that specific task.** Do not include implementation details, line ranges, or feature descriptions belonging to future tasks. A specialist reads only their task's `description` and `acceptanceCriteria` — any detail in `description` will be implemented, even if it belongs to another task.
-- **Acceptance criteria must be the authoritative scope boundary.** Write acceptance criteria first; the description should only elaborate on HOW to meet those criteria for this task, nothing more.
+- **Acceptance criteria must be BEHAVIORAL and OBSERVABLE, not brittle code formulas**:
+  - State the expected functional outcome, visual alignment, or invariant (e.g. *"Left paddle right edge aligns with the goal zone boundary line on screen"*, *"Paddle reaches both upper and lower boundaries without clipping off-screen"*).
+  - **DO NOT dictate exact single-line arithmetic formulas or prescribe rigid micro-implementation steps** in acceptance criteria (e.g., do NOT write *"minY uses PLAYFIELD_MARGIN directly"*). Give the Programmer specialist the autonomy to choose the right math and coordinate logic to fulfill the behavioral requirement.
+  - **DO NOT add artificial method locks** (e.g., *"Do not touch any other methods/files"*) unless strictly required by a stable public API contract. Programmers must be allowed to update coupled helper functions, physics handlers, or event listeners needed to fulfill the acceptance criteria.
+- **Repository Verification**:
+  - Always verify that target files exist on disk before referencing them in task descriptions.
 - If a task produces a scaffold or stub for future tasks, describe only the scaffold — not the future implementation. Write "create the HTML skeleton with a JS placeholder comment" not "create the HTML skeleton with the full game engine below."
 
