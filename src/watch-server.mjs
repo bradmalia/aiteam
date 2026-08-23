@@ -151,6 +151,15 @@ function sendJson(response, value, status = 200) {
   response.end(body);
 }
 
+function sendArtifact(response, repo, pathname) {
+  const name = decodeURIComponent(pathname.replace(/^\/artifacts\//, ''));
+  if (!/^[a-z0-9._-]+\.html$/i.test(name)) return sendJson(response, { error: 'Invalid artifact path.' }, 400);
+  const artifactPath = path.join(repo, '.aiteam', 'docs', name);
+  if (!fs.existsSync(artifactPath)) return sendJson(response, { error: 'Artifact not found.' }, 404);
+  response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  return response.end(fs.readFileSync(artifactPath));
+}
+
 export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}) {
   let activeRepo = path.resolve(repo);
   const server = http.createServer((request, response) => {
@@ -165,6 +174,7 @@ export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}
     if (request.method !== 'GET') return sendJson(response, { error: 'Only GET is supported.' }, 405);
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
+    if (url.pathname.startsWith('/artifacts/')) return sendArtifact(response, activeRepo, url.pathname);
     if (url.pathname === '/' || url.pathname === '/index.html') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return response.end(fs.readFileSync(dashboardPath));

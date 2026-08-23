@@ -41,13 +41,13 @@ On POSIX, each specialist is a detached process-group leader. Every specialist r
 
 ## Structured evidence
 
-Each stage returns one JSON object containing an outcome, summary, evidence, and stage-specific fields. PASS results without required evidence are rejected. Review cannot pass with BLOCKER/MAJOR findings. Planner tasks must use registered specialists and valid dependencies. QA must report executed checks and distinguish manual validation.
+Each stage returns one JSON object containing an outcome, summary, evidence, and stage-specific fields. PASS results without required evidence are rejected. Intake must produce a complete product requirements artifact, not just a feature list. After Intake, the server generates a human-readable PRD HTML document and blocks on human approval before Architecture. Architecture must produce a structured, repository-grounded artifact with context, constraints, quality attribute scenarios, solution strategy, building blocks, runtime scenarios, deployment view, cross-cutting concepts, decisions/tradeoffs, risks, UI routing, and specialist gaps. UI/UX Design must produce user flows, usability risks, accessibility heuristics, validation hypotheses, visual specifications, screens, and design tokens when routed. Review cannot pass with BLOCKER/MAJOR findings. Planner tasks must use registered specialists, valid dependencies, and predesigned black-box test plans. After Critical Review, the server generates a human-readable TRD HTML document containing the implementation and testing plan and blocks on human approval before Implementation. PRD/TRD content must be clear, simple, and usable as source-of-truth reference material by all implementation, review, QA, and integration agents. QA must report executed checks and distinguish manual validation.
 
 The server fingerprints each task's changed paths after implementation and again after QA. Any later change invalidates the approval and routes the task back to Implementation before review, QA, or integration can continue.
 
 ## Specialist recruitment
 
-Architecture may identify capability gaps. The server routes each gap to Recruiter, hashes the successful run and proposal, and writes provenance with the generated specialist. Direct registration without a matching Recruiter proposal is rejected. Contracts must be substantive inline instructions, never paths to unrelated built-in contracts.
+Architecture may identify capability gaps. The server routes each gap to Recruiter, hashes the successful run and proposal, and writes provenance with the generated specialist. Recruiter output must justify the gap, assess existing specialists, and define evaluation criteria for the new specialist. Direct registration without a matching Recruiter proposal is rejected. Contracts must be substantive inline instructions, never paths to unrelated built-in contracts.
 
 ## Git integration
 

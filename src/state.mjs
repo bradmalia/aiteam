@@ -5,9 +5,11 @@ import { execFileSync, execSync } from 'node:child_process';
 
 export const DEFAULT_PHASE_PLAN = [
   'intake',
+  'prd-review',
   'architecture',
   'planning',
   'critical-review',
+  'trd-review',
   'implementation',
   'code-review',
   'qa',

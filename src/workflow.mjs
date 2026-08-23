@@ -8,11 +8,13 @@ import { runAgent } from './runtime.mjs';
 
 const STAGE_LABELS = {
   intake: 'Intake',
+  'prd-review': 'PRD Review',
   architecture: 'Architecture',
   'ui-design': 'UI/UX Design',
   recruiting: 'Architecture',
   planning: 'Planning',
   'critical-review': 'Critical Review',
+  'trd-review': 'TRD Review',
   implementation: 'Implementation',
   'code-review': 'Code Review',
   qa: 'QA',
@@ -41,14 +43,14 @@ Do not claim commands, files, or tests that you did not actually observe.`;
 
 const STAGE_SCHEMAS = {
   intake: `${COMMON_SCHEMA}
-For Intake, "outcome" may also be "AWAITING_USER". Also return "requirements" (string array), "acceptanceCriteria" (string array), "questions" (string array), and boolean "userConfirmed".
-Use AWAITING_USER when clarification is needed: include non-empty questions and set userConfirmed to false. Use PASS only when questions is empty, requirements and acceptanceCriteria are complete, and userConfirmed is true.`,
+For Intake, "outcome" may also be "AWAITING_USER". Also return "goals", "targetUsers", "userStories", "requirements", "acceptanceCriteria", "mvpScope", "outOfScope", "assumptions", "constraints", "nonFunctionalRequirements", "successMetrics", "risks", and "questions" as string arrays, plus boolean "userConfirmed".
+Use AWAITING_USER when clarification is needed: include non-empty questions and set userConfirmed to false. Use PASS only when questions is empty, requirements are complete, and userConfirmed is true. On PASS, goals, targetUsers, userStories, requirements, acceptanceCriteria, mvpScope, and successMetrics must be non-empty. Capture unknowns as assumptions/risks instead of silently dropping them.`,
   architecture: `${COMMON_SCHEMA}
-Also return "design" (non-empty string array), "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI), and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work.`,
+Also return "design", "context", "constraints", "solutionStrategy", "deploymentView", "crossCuttingConcepts", and "risks" as non-empty string arrays; "qualityAttributes" as non-empty array of {"name","scenario","measure"}; "buildingBlocks" as non-empty array of {"name","responsibility","interfaces"}; "runtimeScenarios" as non-empty array of {"name","trigger","flow"}; "architectureDecisions" as non-empty array of {"decision","optionsConsidered","rationale","consequences"}; "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI); and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work. Derive technology choices from Intake, repository reality, constraints, quality attributes, and tradeoffs; do not choose technology first and backfill rationale.`,
   'ui-design': `${COMMON_SCHEMA}
-Also return "theme" ({"palette": string array, "typography": string array, "spacing": string array}), "screens" (array of {"name": string, "layout": string, "components": string array, "interactionStates": string array}), and "designTokens" (string array). All collections must be non-empty on PASS. Produce concrete visual specifications aligned with the chosen architecture.`,
+Also return "userFlows" (array of {"name","actor","goal","steps"}), "usabilityRisks" (string array), "accessibilityHeuristics" (string array), "validationHypotheses" (array of {"hypothesis","validationMethod","successSignal"}), "theme" ({"palette": string array, "typography": string array, "spacing": string array}), "screens" (array of {"name": string, "layout": string, "components": string array, "interactionStates": string array}), and "designTokens" (string array). All collections must be non-empty on PASS. Produce UX analysis plus concrete visual specifications aligned with the chosen architecture.`,
   recruiting: `${COMMON_SCHEMA}
-Also return "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path.`,
+Also return "gapJustification", "existingSpecialistAssessment", and "evaluationCriteria" as non-empty string arrays, plus "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path. Explain why existing specialists are insufficient and how the new specialist should be evaluated.`,
   planning: `${COMMON_SCHEMA}
 Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies","blackBoxTestPlan"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. blackBoxTestPlan must be a non-empty array of {"name","action","expected","evidenceMethod"} that designs QA's observable runtime tests ahead of implementation; it must not use source inspection, line numbers, implementation formulas, or fix guidance.`,
   'critical-review': `${COMMON_SCHEMA}
@@ -166,8 +168,18 @@ export function parseStageResult(stage, stdout) {
   result.evidence = stringArray(result.evidence || [], 'evidence', { nonEmpty: result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION' });
 
   if (stage === 'intake') {
+    result.goals = stringArray(result.goals || [], 'goals', { nonEmpty: result.outcome === 'PASS' });
+    result.targetUsers = stringArray(result.targetUsers || [], 'targetUsers', { nonEmpty: result.outcome === 'PASS' });
+    result.userStories = stringArray(result.userStories || [], 'userStories', { nonEmpty: result.outcome === 'PASS' });
     result.requirements = stringArray(result.requirements || [], 'requirements', { nonEmpty: result.outcome === 'PASS' });
     result.acceptanceCriteria = stringArray(result.acceptanceCriteria || [], 'acceptanceCriteria', { nonEmpty: result.outcome === 'PASS' });
+    result.mvpScope = stringArray(result.mvpScope || [], 'mvpScope', { nonEmpty: result.outcome === 'PASS' });
+    result.outOfScope = stringArray(result.outOfScope || [], 'outOfScope');
+    result.assumptions = stringArray(result.assumptions || [], 'assumptions');
+    result.constraints = stringArray(result.constraints || [], 'constraints');
+    result.nonFunctionalRequirements = stringArray(result.nonFunctionalRequirements || [], 'nonFunctionalRequirements');
+    result.successMetrics = stringArray(result.successMetrics || [], 'successMetrics', { nonEmpty: result.outcome === 'PASS' });
+    result.risks = stringArray(result.risks || [], 'risks');
     if (!Array.isArray(result.questions || [])) throw new Error('questions must be an array.');
     result.questions = (result.questions || []).map((q, index) => {
       if (typeof q === 'string' && q.trim()) return q.trim();
@@ -182,6 +194,37 @@ export function parseStageResult(stage, stdout) {
     if (result.outcome === 'PASS' && (result.questions.length > 0 || !result.userConfirmed)) throw new Error('Intake cannot PASS while questions remain or userConfirmed is false.');
   } else if (stage === 'architecture') {
     result.design = stringArray(result.design || [], 'design', { nonEmpty: result.outcome === 'PASS' });
+    result.context = stringArray(result.context || [], 'context', { nonEmpty: result.outcome === 'PASS' });
+    result.constraints = stringArray(result.constraints || [], 'constraints', { nonEmpty: result.outcome === 'PASS' });
+    if (!Array.isArray(result.qualityAttributes || []) || (result.outcome === 'PASS' && result.qualityAttributes.length === 0)) throw new Error('qualityAttributes must be a non-empty array on PASS.');
+    result.qualityAttributes = (result.qualityAttributes || []).map((attribute, index) => ({
+      name: nonEmptyString(attribute?.name, `qualityAttributes[${index}].name`),
+      scenario: nonEmptyString(attribute?.scenario, `qualityAttributes[${index}].scenario`),
+      measure: nonEmptyString(attribute?.measure, `qualityAttributes[${index}].measure`)
+    }));
+    result.solutionStrategy = stringArray(result.solutionStrategy || [], 'solutionStrategy', { nonEmpty: result.outcome === 'PASS' });
+    if (!Array.isArray(result.buildingBlocks || []) || (result.outcome === 'PASS' && result.buildingBlocks.length === 0)) throw new Error('buildingBlocks must be a non-empty array on PASS.');
+    result.buildingBlocks = (result.buildingBlocks || []).map((block, index) => ({
+      name: nonEmptyString(block?.name, `buildingBlocks[${index}].name`),
+      responsibility: nonEmptyString(block?.responsibility, `buildingBlocks[${index}].responsibility`),
+      interfaces: stringArray(block?.interfaces || [], `buildingBlocks[${index}].interfaces`, { nonEmpty: result.outcome === 'PASS' })
+    }));
+    if (!Array.isArray(result.runtimeScenarios || []) || (result.outcome === 'PASS' && result.runtimeScenarios.length === 0)) throw new Error('runtimeScenarios must be a non-empty array on PASS.');
+    result.runtimeScenarios = (result.runtimeScenarios || []).map((scenario, index) => ({
+      name: nonEmptyString(scenario?.name, `runtimeScenarios[${index}].name`),
+      trigger: nonEmptyString(scenario?.trigger, `runtimeScenarios[${index}].trigger`),
+      flow: stringArray(scenario?.flow || [], `runtimeScenarios[${index}].flow`, { nonEmpty: result.outcome === 'PASS' })
+    }));
+    result.deploymentView = stringArray(result.deploymentView || [], 'deploymentView', { nonEmpty: result.outcome === 'PASS' });
+    result.crossCuttingConcepts = stringArray(result.crossCuttingConcepts || [], 'crossCuttingConcepts', { nonEmpty: result.outcome === 'PASS' });
+    if (!Array.isArray(result.architectureDecisions || []) || (result.outcome === 'PASS' && result.architectureDecisions.length === 0)) throw new Error('architectureDecisions must be a non-empty array on PASS.');
+    result.architectureDecisions = (result.architectureDecisions || []).map((decision, index) => ({
+      decision: nonEmptyString(decision?.decision, `architectureDecisions[${index}].decision`),
+      optionsConsidered: stringArray(decision?.optionsConsidered || [], `architectureDecisions[${index}].optionsConsidered`, { nonEmpty: result.outcome === 'PASS' }),
+      rationale: nonEmptyString(decision?.rationale, `architectureDecisions[${index}].rationale`),
+      consequences: stringArray(decision?.consequences || [], `architectureDecisions[${index}].consequences`, { nonEmpty: result.outcome === 'PASS' })
+    }));
+    result.risks = stringArray(result.risks || [], 'risks', { nonEmpty: result.outcome === 'PASS' });
     if (result.outcome === 'PASS' && typeof result.hasUserInterface !== 'boolean') throw new Error('hasUserInterface must be a boolean on PASS.');
     if (result.hasUserInterface !== undefined && typeof result.hasUserInterface !== 'boolean') throw new Error('hasUserInterface must be a boolean.');
     result.hasUserInterface = result.hasUserInterface === true;
@@ -192,6 +235,21 @@ export function parseStageResult(stage, stdout) {
       suggestedId: nonEmptyString(gap?.suggestedId, `specialistNeeds[${index}].suggestedId`)
     }));
   } else if (stage === 'ui-design') {
+    if (!Array.isArray(result.userFlows || []) || (result.outcome === 'PASS' && (result.userFlows || []).length === 0)) throw new Error('userFlows must be a non-empty array on PASS.');
+    result.userFlows = (result.userFlows || []).map((flow, index) => ({
+      name: nonEmptyString(flow?.name, `userFlows[${index}].name`),
+      actor: nonEmptyString(flow?.actor, `userFlows[${index}].actor`),
+      goal: nonEmptyString(flow?.goal, `userFlows[${index}].goal`),
+      steps: stringArray(flow?.steps || [], `userFlows[${index}].steps`, { nonEmpty: result.outcome === 'PASS' })
+    }));
+    result.usabilityRisks = stringArray(result.usabilityRisks || [], 'usabilityRisks', { nonEmpty: result.outcome === 'PASS' });
+    result.accessibilityHeuristics = stringArray(result.accessibilityHeuristics || [], 'accessibilityHeuristics', { nonEmpty: result.outcome === 'PASS' });
+    if (!Array.isArray(result.validationHypotheses || []) || (result.outcome === 'PASS' && (result.validationHypotheses || []).length === 0)) throw new Error('validationHypotheses must be a non-empty array on PASS.');
+    result.validationHypotheses = (result.validationHypotheses || []).map((hypothesis, index) => ({
+      hypothesis: nonEmptyString(hypothesis?.hypothesis, `validationHypotheses[${index}].hypothesis`),
+      validationMethod: nonEmptyString(hypothesis?.validationMethod, `validationHypotheses[${index}].validationMethod`),
+      successSignal: nonEmptyString(hypothesis?.successSignal, `validationHypotheses[${index}].successSignal`)
+    }));
     if (result.outcome === 'PASS' && (!result.theme || typeof result.theme !== 'object' || Array.isArray(result.theme))) throw new Error('theme must be an object on PASS.');
     if (result.theme !== undefined && (!result.theme || typeof result.theme !== 'object' || Array.isArray(result.theme))) throw new Error('theme must be an object.');
     const theme = result.theme || {};
@@ -209,6 +267,9 @@ export function parseStageResult(stage, stdout) {
     }));
     result.designTokens = stringArray(result.designTokens || [], 'designTokens', { nonEmpty: result.outcome === 'PASS' });
   } else if (stage === 'recruiting') {
+    result.gapJustification = stringArray(result.gapJustification || [], 'gapJustification', { nonEmpty: result.outcome === 'PASS' });
+    result.existingSpecialistAssessment = stringArray(result.existingSpecialistAssessment || [], 'existingSpecialistAssessment', { nonEmpty: result.outcome === 'PASS' });
+    result.evaluationCriteria = stringArray(result.evaluationCriteria || [], 'evaluationCriteria', { nonEmpty: result.outcome === 'PASS' });
     if (result.outcome === 'PASS' && (!result.specialist || typeof result.specialist !== 'object')) throw new Error('Recruiter must return a specialist proposal on PASS.');
   } else if (stage === 'planning') {
     if (!Array.isArray(result.tasks || []) || (result.outcome === 'PASS' && (result.tasks || []).length === 0)) throw new Error('tasks must be a non-empty array on PASS.');
@@ -422,6 +483,36 @@ function currentTaskPromptView(task) {
   };
 }
 
+function architecturePromptView(arch) {
+  if (!arch) return null;
+  return {
+    design: arch.design || [],
+    context: arch.context || [],
+    constraints: arch.constraints || [],
+    qualityAttributes: arch.qualityAttributes || [],
+    solutionStrategy: arch.solutionStrategy || [],
+    buildingBlocks: arch.buildingBlocks || [],
+    runtimeScenarios: arch.runtimeScenarios || [],
+    deploymentView: arch.deploymentView || [],
+    crossCuttingConcepts: arch.crossCuttingConcepts || [],
+    architectureDecisions: arch.architectureDecisions || [],
+    risks: arch.risks || [],
+    hasUserInterface: arch.hasUserInterface === true,
+    specialistNeeds: arch.specialistNeeds || []
+  };
+}
+
+function reviewArtifactsPromptView(session) {
+  const reviews = session.humanReviewHistory || [];
+  const latest = (kind) => [...reviews].reverse().find((item) => item.kind === kind && item.approved && item.artifact)?.artifact
+    || (session.pendingUserInput?.kind === kind ? session.pendingUserInput.artifact : null);
+  return {
+    prd: latest('prd-review'),
+    trd: latest('trd-review'),
+    sourceOfTruth: 'Use the approved PRD for product intent and the approved TRD for architecture, implementation plan, and testing plan. If task details conflict with PRD/TRD, stop and report the conflict instead of guessing.'
+  };
+}
+
 function stageContext(session, repo) {
   const stage = session.currentStage;
   const task = currentTask(session);
@@ -441,7 +532,9 @@ function stageContext(session, repo) {
       currentTask: currentTaskPromptView(task),
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
+      architectureOverview: architecturePromptView(arch),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
+      reviewArtifacts: reviewArtifactsPromptView(session),
       pendingUserInput: session.pendingUserInput
     }, null, 2);
   }
@@ -453,10 +546,12 @@ function stageContext(session, repo) {
       request: session.request,
       currentStage: stage,
       requirements: session.stageEvidence.intake?.result || null,
-      architecture: session.stageEvidence.architecture?.result || null,
+      architecture: architecturePromptView(session.stageEvidence.architecture?.result),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
+      reviewArtifacts: reviewArtifactsPromptView(session),
       plan: session.stageEvidence.planning?.result || null,
       lockedCriticalFindings: session.lockedCriticalFindings,
+      pendingUserInput: session.pendingUserInput,
       taskLedger: session.taskLedger,
       availableAgents: registry
     }, null, 2);
@@ -468,8 +563,9 @@ function stageContext(session, repo) {
     request: session.request,
     currentStage: stage,
     requirements: session.stageEvidence.intake?.result || null,
-    architecture: session.stageEvidence.architecture?.result || null,
+    architecture: architecturePromptView(session.stageEvidence.architecture?.result),
     uiDesign: session.stageEvidence['ui-design']?.result || null,
+    reviewArtifacts: reviewArtifactsPromptView(session),
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
     taskLedger: session.taskLedger,
@@ -487,8 +583,8 @@ function assignmentText(stage, session) {
   const taskJson = JSON.stringify(currentTaskPromptView(task));
   const details = {
     intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
-    architecture: 'Design the implementation architecture, select the technology stack, declare whether the project has a user-facing visual UI (hasUserInterface: true/false), and identify only genuine specialist capability gaps.',
-    'ui-design': 'Translate the user requirements and the Architect’s chosen tech stack into concrete visual tokens, layout hierarchies, interaction states, and responsive styling.',
+    architecture: 'Produce a structured implementation architecture: context, constraints, quality attribute scenarios, solution strategy, building blocks, runtime scenarios, deployment view, cross-cutting concepts, decisions/tradeoffs, risks, UI routing, and only genuine specialist capability gaps.',
+    'ui-design': 'Translate the user requirements and the Architect’s structured architecture artifact into concrete visual tokens, layout hierarchies, interaction states, and responsive styling.',
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
     planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs, incorporating architectural and UI/UX design specifications.',
     'critical-review': session.lockedCriticalFindings.length
@@ -527,6 +623,9 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     session = writeSession(repo, { ...session, status: 'ACTIVE', blockedReason: null });
   }
   if (session.status !== 'ACTIVE') throw new Error(`AITEAM session is not active: ${session.status}`);
+  if (['prd-review', 'trd-review'].includes(session.currentStage)) {
+    throw new Error(`${STAGE_LABELS[session.currentStage]} is awaiting human approval. Open the linked HTML document, wait for the user response, then call aiteam_update_session.`);
+  }
   if (session.currentStage !== 'intake' && session.stageEvidence.intake?.result?.userConfirmed !== true) {
     throw new Error('Workflow gate rejected: Analyst Intake must produce a user-confirmed requirements artifact before Architecture.');
   }
@@ -628,6 +727,202 @@ function hasSpecialist(repo, id) {
   return Boolean(getAgent(id, repo));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function listItems(items) {
+  const values = Array.isArray(items) ? items : [];
+  return values.length
+    ? `<ul>${values.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+    : '<p class="muted">None specified.</p>';
+}
+
+function svgFlow(title, steps) {
+  const values = (steps || []).filter(Boolean).slice(0, 6);
+  const width = 980;
+  const boxWidth = Math.max(120, Math.floor((width - 80) / Math.max(values.length, 1)) - 18);
+  const boxes = values.map((step, index) => {
+    const x = 40 + index * (boxWidth + 18);
+    const arrow = index < values.length - 1
+      ? `<path d="M ${x + boxWidth} 84 L ${x + boxWidth + 14} 84" stroke="#28666e" stroke-width="3" marker-end="url(#arrow)" />`
+      : '';
+    return `${arrow}<rect x="${x}" y="44" width="${boxWidth}" height="80" rx="16" fill="#e7f5f1" stroke="#28666e" stroke-width="2" />
+      <text x="${x + boxWidth / 2}" y="78" text-anchor="middle" font-size="14" font-family="Georgia, serif" fill="#143f46">${escapeHtml(step).slice(0, 28)}</text>
+      <text x="${x + boxWidth / 2}" y="99" text-anchor="middle" font-size="12" font-family="Georgia, serif" fill="#4b6267">${escapeHtml(step).slice(28, 56)}</text>`;
+  }).join('');
+  return `<figure class="diagram"><figcaption>${escapeHtml(title)}</figcaption><svg viewBox="0 0 ${width} 160" role="img" aria-label="${escapeHtml(title)}">
+    <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#28666e" /></marker></defs>
+    ${boxes}
+  </svg></figure>`;
+}
+
+function screenMockups(uiDesign) {
+  const screens = (uiDesign?.screens || []).slice(0, 3);
+  if (!screens.length) return '<p class="muted">No UI mockups yet. UI/UX Design has not run or the product is headless.</p>';
+  return `<div class="mockups">${screens.map((screen) => `
+    <article class="mockup">
+      <div class="mockup-top">${escapeHtml(screen.name)}</div>
+      <div class="mockup-body">
+        ${(screen.components || []).slice(0, 5).map((component) => `<div class="component">${escapeHtml(component)}</div>`).join('')}
+      </div>
+      <p>${escapeHtml(screen.layout)}</p>
+    </article>`).join('')}</div>`;
+}
+
+function documentShell({ title, subtitle, body }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { --ink:#17252a; --muted:#587077; --paper:#fffaf0; --line:#d8c7a3; --accent:#28666e; --soft:#e7f5f1; }
+    body { margin:0; background:linear-gradient(135deg,#f8ecd0,#e4f3ee 55%,#f8f4e8); color:var(--ink); font-family: Georgia, "Times New Roman", serif; }
+    main { max-width:1080px; margin:0 auto; padding:48px 24px 72px; }
+    header { border:2px solid var(--line); border-radius:28px; padding:34px; background:rgba(255,250,240,.86); box-shadow:0 24px 80px rgba(40,102,110,.16); }
+    h1 { margin:0; font-size:clamp(36px,6vw,72px); letter-spacing:-.04em; line-height:.92; }
+    h2 { margin-top:34px; padding-top:18px; border-top:1px solid var(--line); font-size:28px; }
+    h3 { margin-bottom:8px; color:var(--accent); }
+    p, li { font-size:17px; line-height:1.55; }
+    .subtitle, .muted { color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; }
+    .card, table, .diagram, .mockup { background:rgba(255,255,255,.65); border:1px solid var(--line); border-radius:20px; padding:18px; }
+    table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; }
+    th, td { text-align:left; vertical-align:top; padding:12px; border-bottom:1px solid var(--line); }
+    th { color:var(--accent); }
+    figcaption { font-weight:700; margin-bottom:10px; color:var(--accent); }
+    .mockups { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:18px; }
+    .mockup-top { background:var(--accent); color:white; border-radius:14px 14px 0 0; padding:10px 14px; font-weight:700; }
+    .mockup-body { min-height:170px; border:2px solid var(--accent); border-top:0; border-radius:0 0 14px 14px; padding:18px; background:var(--soft); }
+    .component { background:white; border:1px solid #9ac2bd; border-radius:999px; padding:10px 14px; margin:10px 0; }
+    code { background:#efe3c8; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body><main><header><p class="subtitle">AITEAM Review Artifact</p><h1>${escapeHtml(title)}</h1><p class="subtitle">${escapeHtml(subtitle)}</p></header>${body}</main></body></html>`;
+}
+
+function artifactUrl(session, filename) {
+  const port = session.watchPort || process.env.AITEAM_WATCH_PORT || 4317;
+  return `http://127.0.0.1:${port}/artifacts/${encodeURIComponent(filename)}`;
+}
+
+function writeReviewArtifact(repo, session, filename, html) {
+  const dir = path.join(repo, '.aiteam', 'docs');
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, filename);
+  fs.writeFileSync(filePath, html);
+  return { path: filePath, url: artifactUrl(session, filename) };
+}
+
+function generatePrd(repo, session) {
+  const intake = session.stageEvidence.intake?.result || {};
+  const flowSteps = ['User request', 'Confirmed goals', 'MVP scope', 'Acceptance criteria', 'Human PRD approval'];
+  const requirements = intake.requirements || [];
+  const criteria = intake.acceptanceCriteria || [];
+  const html = documentShell({
+    title: 'Product Requirements Document',
+    subtitle: `Session ${session.id} · ${new Date().toLocaleString()}`,
+    body: `
+      <section class="card"><h2>How To Read This</h2><p>This PRD is the source of truth for what the product should do and why. It intentionally uses plain language. If a simpler word works, prefer it over jargon or buzzwords. A high school graduate with a strong computer science background should be able to understand it without guessing.</p></section>
+      <h2>Document Basics</h2><table><tbody>
+        <tr><th>Status</th><td>Ready for human review</td></tr>
+        <tr><th>Owner</th><td>Analyst</td></tr>
+        <tr><th>Source Request</th><td>${escapeHtml(session.request)}</td></tr>
+        <tr><th>Last Updated</th><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+      </tbody></table>
+      ${svgFlow('Product Definition Flow', flowSteps)}
+      <h2>Problem To Solve</h2><p>${escapeHtml((intake.goals || [session.request])[0])}</p>
+      <h2>Goals And Success</h2><div class="grid">
+        <section class="card"><h3>Goals</h3>${listItems(intake.goals)}</section>
+        <section class="card"><h3>Success Metrics</h3>${listItems(intake.successMetrics)}</section>
+      </div>
+      <div class="grid">
+        <section class="card"><h3>Target Users</h3>${listItems(intake.targetUsers)}</section>
+        <section class="card"><h3>User Stories</h3>${listItems(intake.userStories)}</section>
+      </div>
+      <h2>Functional Requirements</h2><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody>${requirements.map((item, index) => `<tr><td>PRD-R${index + 1}</td><td>${escapeHtml(item)}</td></tr>`).join('')}</tbody></table>
+      <h2>Acceptance Criteria</h2><table><thead><tr><th>ID</th><th>Criterion</th></tr></thead><tbody>${criteria.map((item, index) => `<tr><td>PRD-A${index + 1}</td><td>${escapeHtml(item)}</td></tr>`).join('')}</tbody></table>
+      <div class="grid">
+        <section class="card"><h3>MVP Scope</h3>${listItems(intake.mvpScope)}</section>
+        <section class="card"><h3>Out Of Scope</h3>${listItems(intake.outOfScope)}</section>
+        <section class="card"><h3>Assumptions</h3>${listItems(intake.assumptions)}</section>
+        <section class="card"><h3>Constraints</h3>${listItems(intake.constraints)}</section>
+      </div>
+      <h2>Non-Functional Requirements</h2>${listItems(intake.nonFunctionalRequirements)}
+      <h2>Risks</h2>${listItems(intake.risks)}
+      <h2>Open Questions</h2>${listItems(intake.questions)}
+      <h2>Change Notes</h2><p>This PRD should be updated if the user changes product intent, scope, acceptance criteria, or success metrics.</p>
+      <h2>Approval</h2><p>Reply in chat with <strong>approved</strong> to continue to Architecture, or describe required PRD changes.</p>`
+  });
+  return writeReviewArtifact(repo, session, 'prd.html', html);
+}
+
+function generateTrd(repo, session) {
+  const arch = architecturePromptView(session.stageEvidence.architecture?.result) || {};
+  const ui = session.stageEvidence['ui-design']?.result || null;
+  const plan = session.stageEvidence.planning?.result || {};
+  const review = session.stageEvidence['critical-review']?.result || {};
+  const intake = session.stageEvidence.intake?.result || {};
+  const tasks = plan.tasks || [];
+  const testRows = tasks.flatMap((task) => (task.blackBoxTestPlan || []).map((test) => ({ task, test })));
+  const reqs = intake.requirements || [];
+  const traceRows = tasks.flatMap((task) => (task.acceptanceCriteria || []).map((criterion) => ({ task, criterion })));
+  const html = documentShell({
+    title: 'Technical Requirements Document',
+    subtitle: `Session ${session.id} · Implementation readiness review`,
+    body: `
+      <section class="card"><h2>How To Read This</h2><p>This TRD is the source of truth for how the team plans to build and test the product. It should stay clear and practical. Use simple terms when possible, and explain technical terms only when they are necessary. Implementation, review, and QA agents should use this document before making assumptions.</p></section>
+      <h2>Document Basics</h2><table><tbody>
+        <tr><th>Status</th><td>Ready for human review</td></tr>
+        <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, Critical Reviewer</td></tr>
+        <tr><th>Last Updated</th><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+        <tr><th>Implementation Starts After</th><td>Human approval of this TRD</td></tr>
+      </tbody></table>
+      ${svgFlow('Technical Delivery Flow', ['Architecture', 'UI/UX', 'Task plan', 'Black-box tests', 'Human TRD approval', 'Implementation'])}
+      <h2>Product Requirements Covered</h2><table><thead><tr><th>PRD ID</th><th>Requirement</th></tr></thead><tbody>${reqs.map((req, index) => `<tr><td>PRD-R${index + 1}</td><td>${escapeHtml(req)}</td></tr>`).join('')}</tbody></table>
+      <h2>Architecture Overview</h2>${listItems(arch.design)}
+      <div class="grid">
+        <section class="card"><h3>Constraints</h3>${listItems(arch.constraints)}</section>
+        <section class="card"><h3>Solution Strategy</h3>${listItems(arch.solutionStrategy)}</section>
+        <section class="card"><h3>Deployment View</h3>${listItems(arch.deploymentView)}</section>
+        <section class="card"><h3>Cross-Cutting Concepts</h3>${listItems(arch.crossCuttingConcepts)}</section>
+      </div>
+      <h2>System Boundary And Runtime Flows</h2><div class="grid">
+        <section class="card"><h3>System Boundary</h3>${listItems(arch.context)}</section>
+        <section class="card"><h3>Runtime Scenarios</h3>${listItems((arch.runtimeScenarios || []).map((item) => `${item.name}: ${(item.flow || []).join(' -> ')}`))}</section>
+      </div>
+      <h2>Building Blocks</h2><table><thead><tr><th>Name</th><th>Responsibility</th><th>Interfaces</th></tr></thead><tbody>${(arch.buildingBlocks || []).map((block) => `<tr><td>${escapeHtml(block.name)}</td><td>${escapeHtml(block.responsibility)}</td><td>${escapeHtml((block.interfaces || []).join(', '))}</td></tr>`).join('')}</tbody></table>
+      <h2>Quality Attributes</h2><table><thead><tr><th>Name</th><th>Scenario</th><th>Measure</th></tr></thead><tbody>${(arch.qualityAttributes || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.scenario)}</td><td>${escapeHtml(item.measure)}</td></tr>`).join('')}</tbody></table>
+      <h2>Data, Interfaces, And Dependencies</h2><div class="grid">
+        <section class="card"><h3>Data Or State</h3>${listItems((arch.crossCuttingConcepts || []).filter((item) => /data|state|store|persist|config/i.test(item)))}</section>
+        <section class="card"><h3>Interfaces</h3>${listItems((arch.buildingBlocks || []).flatMap((block) => block.interfaces || []))}</section>
+        <section class="card"><h3>Dependencies</h3>${listItems((arch.architectureDecisions || []).map((item) => item.decision))}</section>
+      </div>
+      <h2>Security, Privacy, And Operations</h2><div class="grid">
+        <section class="card"><h3>Security And Privacy</h3>${listItems((arch.crossCuttingConcepts || []).filter((item) => /security|privacy|auth|permission|safe/i.test(item)))}</section>
+        <section class="card"><h3>Run, Deploy, And Back Out</h3>${listItems([...(arch.deploymentView || []), 'If implementation creates a serious problem, stop and route the task back to Implementation instead of shipping the change.'])}</section>
+      </div>
+      <h2>Screen Mockups</h2>${screenMockups(ui)}
+      <h2>Implementation Plan</h2><table><thead><tr><th>Task</th><th>Specialist</th><th>Acceptance Criteria</th><th>Dependencies</th></tr></thead><tbody>${tasks.map((task) => `<tr><td><strong>${escapeHtml(task.title)}</strong><br>${escapeHtml(task.description)}</td><td>${escapeHtml(task.specialistId)}</td><td>${escapeHtml((task.acceptanceCriteria || []).join(' · '))}</td><td>${escapeHtml((task.dependencies || []).join(', ') || 'none')}</td></tr>`).join('')}</tbody></table>
+      <h2>Requirements-To-Work Traceability</h2><table><thead><tr><th>Task</th><th>Acceptance Criterion</th><th>Likely PRD Link</th></tr></thead><tbody>${traceRows.map(({ task, criterion }, index) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(criterion)}</td><td>${escapeHtml(reqs[index % Math.max(reqs.length, 1)] ? `PRD-R${(index % reqs.length) + 1}` : 'PRD requirement not mapped')}</td></tr>`).join('')}</tbody></table>
+      <h2>Testing Plan</h2><table><thead><tr><th>Task</th><th>Test</th><th>Action</th><th>Expected</th><th>Evidence</th></tr></thead><tbody>${testRows.map(({ task, test }) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(test.name)}</td><td>${escapeHtml(test.action)}</td><td>${escapeHtml(test.expected)}</td><td>${escapeHtml(test.evidenceMethod)}</td></tr>`).join('')}</tbody></table>
+      <h2>Critical Review</h2>${listItems((review.findings || []).map((finding) => `${finding.severity}: ${finding.description || finding.id}`))}
+      <h2>Risks And Open Questions</h2><div class="grid">
+        <section class="card"><h3>Technical Risks</h3>${listItems(arch.risks)}</section>
+        <section class="card"><h3>Open Questions</h3>${listItems((review.findings || []).filter((finding) => finding.severity === 'INFO').map((finding) => finding.description || finding.id))}</section>
+      </div>
+      <h2>Approval</h2><p>Reply in chat with <strong>approved</strong> to begin implementation, or describe required TRD/testing-plan changes.</p>`
+  });
+  return writeReviewArtifact(repo, session, 'trd.html', html);
+}
+
 function proposalId(run, specialist) {
   return crypto.createHash('sha256').update(`${run.runId}\n${JSON.stringify(specialist)}`).digest('hex');
 }
@@ -687,8 +982,22 @@ function applyResult(repo, session, assignment, result, run) {
       : (next.interviewHistory || []);
     next.interviewHistory = nextHistory;
     next.completedStages = [...new Set([...next.completedStages, 'intake'])];
-    next.currentStage = 'architecture';
+    next.currentStage = 'prd-review';
     next.pendingUserInput = null;
+    const artifact = generatePrd(repo, next);
+    next.pendingUserInput = {
+      kind: 'prd-review',
+      stage: 'prd-review',
+      questions: [
+        `Open the Product Requirements Document: ${artifact.url}`,
+        'Reply "approved" to approve the PRD and continue to Architecture, or describe required PRD changes.'
+      ],
+      artifact,
+      response: null,
+      requestedAt: new Date().toISOString(),
+      runId: run.runId
+    };
+    appendEvent(repo, { type: 'human_review_requested', stage: 'prd-review', artifact });
   } else if (stage === 'architecture') {
     next.completedStages = [...new Set([...next.completedStages, 'architecture'])];
     next.recruiterQueue = result.specialistNeeds.filter((gap) => !hasSpecialist(repo, proposedSpecialistId(gap)));
@@ -728,8 +1037,22 @@ function applyResult(repo, session, assignment, result, run) {
   } else if (stage === 'critical-review') {
     next.completedStages = [...new Set([...next.completedStages, 'critical-review'])];
     next.lockedCriticalFindings = result.findings;
-    next.currentStage = 'implementation';
+    next.currentStage = 'trd-review';
     next.currentTaskId = null;
+    const artifact = generateTrd(repo, next);
+    next.pendingUserInput = {
+      kind: 'trd-review',
+      stage: 'trd-review',
+      questions: [
+        `Open the Technical Requirements Document: ${artifact.url}`,
+        'Review the architecture, implementation plan, and testing plan. Reply "approved" to begin implementation, or describe required TRD/testing-plan changes.'
+      ],
+      artifact,
+      response: null,
+      requestedAt: new Date().toISOString(),
+      runId: run.runId
+    };
+    appendEvent(repo, { type: 'human_review_requested', stage: 'trd-review', artifact });
   } else if (stage === 'implementation') {
     const missing = result.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
     if (missing.length) {
@@ -849,6 +1172,42 @@ export function confirmManualQa(repo, response) {
   return writeSession(repo, next);
 }
 
+export function confirmHumanReview(repo, response) {
+  const session = readSession(repo);
+  const pending = session?.pendingUserInput;
+  if (!session || !['prd-review', 'trd-review'].includes(pending?.kind) || pending.response != null) {
+    throw new Error('No PRD/TRD human review is awaiting user confirmation.');
+  }
+  const trimmedResponse = response.trim();
+  const approved = /\b(approved|approve|accepted|accept|yes|looks good|lgtm)\b/i.test(trimmedResponse) &&
+    !/\b(not approved|do not approve|reject|rejected|changes?|fix|revise|missing|incorrect|wrong|no)\b/i.test(trimmedResponse);
+  const answeredAt = new Date().toISOString();
+  const answeredReview = { ...pending, response: trimmedResponse, answeredAt, approved };
+  const reviewHistory = [...(session.humanReviewHistory || []), answeredReview];
+
+  if (pending.kind === 'prd-review') {
+    return writeSession(repo, {
+      ...session,
+      pendingUserInput: approved ? null : answeredReview,
+      humanReviewHistory: reviewHistory,
+      completedStages: approved ? [...new Set([...session.completedStages, 'prd-review'])] : session.completedStages,
+      currentStage: approved ? 'architecture' : 'intake',
+      lastFailure: approved ? null : `PRD changes requested by user: ${trimmedResponse}`
+    });
+  }
+
+  return writeSession(repo, {
+    ...session,
+    pendingUserInput: approved ? null : answeredReview,
+    humanReviewHistory: reviewHistory,
+    completedStages: approved ? [...new Set([...session.completedStages, 'trd-review'])] : session.completedStages,
+    currentStage: approved ? 'implementation' : 'planning',
+    currentTaskId: null,
+    taskLedger: approved ? session.taskLedger : [],
+    lastFailure: approved ? null : `TRD changes requested by user: ${trimmedResponse}`
+  });
+}
+
 export const SPECIALIST_TIMEOUT_SECONDS = 60 * 60;
 
 export function normalizeTimeoutSeconds(value) {
@@ -859,11 +1218,11 @@ export function normalizeTimeoutSeconds(value) {
 }
 
 export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
-  const assignment = getCurrentAssignment(repo);
   const currentSession = readSession(repo);
   if (currentSession && currentSession.pendingUserInput && currentSession.pendingUserInput.response == null) {
     throw new Error('Workflow is blocked awaiting user input. You MUST wait for the user to reply in chat, then call aiteam_update_session with their response before advancing.');
   }
+  const assignment = getCurrentAssignment(repo);
   if (expectedAgentId && expectedAgentId !== assignment.agentId) {
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }

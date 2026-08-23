@@ -8,7 +8,7 @@ import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './r
 import { activeProcesses, killChildTree } from './runtime.mjs';
 import { gitSnapshot, ensureGitRepo } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
-import { advanceWorkflow, completeWorkflow, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
+import { advanceWorkflow, completeWorkflow, confirmHumanReview, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
 
 const VERSION = '0.2.0';
 
@@ -112,7 +112,9 @@ export function advanceResultText(result) {
     ? `\nManual validation requested by QA:\n${result.result.manualChecks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n`
     : '';
   const next = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
-    ? result.session.pendingUserInput.kind === 'qa-manual'
+    ? ['prd-review', 'trd-review'].includes(result.session.pendingUserInput.kind)
+      ? `STOP CALLING TOOLS! Human ${result.session.pendingUserInput.kind === 'prd-review' ? 'PRD' : 'TRD'} approval required:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST present the URL to the user and wait for their reply. DO NOT call aiteam_update_session yet.`
+      : result.session.pendingUserInput.kind === 'qa-manual'
       ? `STOP CALLING TOOLS! Manual QA validation required before Integration:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST print these checks to the user and wait for their reply. DO NOT call aiteam_update_session yet.`
       : `STOP CALLING TOOLS! User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST print these questions to the user and wait for their reply. DO NOT call aiteam_update_session until the real user responds.`
     : result.session.status === 'READY_TO_COMPLETE'
@@ -292,7 +294,7 @@ export async function callTool(name, args) {
         ...startedContent,
         session: firstAdvance.session,
         workflow: firstAdvance.workflow,
-        nextAssignment: firstAdvance.session.status === 'ACTIVE' ? getCurrentAssignment(repo) : null,
+        nextAssignment: firstAdvance.session.status === 'ACTIVE' && !(firstAdvance.session.pendingUserInput?.response == null && firstAdvance.session.pendingUserInput?.questions?.length) ? getCurrentAssignment(repo) : null,
         coordinatorDirective: coordinatorDirective(firstAdvance.session),
         firstAdvance
       });
@@ -314,7 +316,7 @@ export async function callTool(name, args) {
       session,
       git,
       workflow,
-      nextAssignment: session?.status === 'ACTIVE' && !session.activeRun ? getCurrentAssignment(repo) : null,
+      nextAssignment: session?.status === 'ACTIVE' && !session.activeRun && !(session.pendingUserInput?.response == null && session.pendingUserInput?.questions?.length) ? getCurrentAssignment(repo) : null,
       coordinatorDirective: coordinatorDirective(session)
     });
   }
@@ -397,6 +399,8 @@ export async function callTool(name, args) {
     }
     const session = current.pendingUserInput?.kind === 'qa-manual' && Object.hasOwn(patch, 'pendingUserInput')
       ? confirmManualQa(repo, normalizedPatch.pendingUserInput.response)
+      : ['prd-review', 'trd-review'].includes(current.pendingUserInput?.kind) && Object.hasOwn(patch, 'pendingUserInput')
+      ? confirmHumanReview(repo, normalizedPatch.pendingUserInput.response)
       : patchSession(repo, normalizedPatch);
     appendEvent(repo, { type: 'session_updated', patch: normalizedPatch });
     const text = [

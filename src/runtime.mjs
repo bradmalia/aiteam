@@ -19,12 +19,81 @@ export function outputSchemaPath(repo, runBase, stage = null) {
   const required = ['outcome', 'summary', 'evidence'];
 
   if (stage === 'intake') {
+    baseProperties.goals = { type: 'array', items: { type: 'string' } };
+    baseProperties.targetUsers = { type: 'array', items: { type: 'string' } };
+    baseProperties.userStories = { type: 'array', items: { type: 'string' } };
     baseProperties.requirements = { type: 'array', items: { type: 'string' } };
     baseProperties.acceptanceCriteria = { type: 'array', items: { type: 'string' } };
+    baseProperties.mvpScope = { type: 'array', items: { type: 'string' } };
+    baseProperties.outOfScope = { type: 'array', items: { type: 'string' } };
+    baseProperties.assumptions = { type: 'array', items: { type: 'string' } };
+    baseProperties.constraints = { type: 'array', items: { type: 'string' } };
+    baseProperties.nonFunctionalRequirements = { type: 'array', items: { type: 'string' } };
+    baseProperties.successMetrics = { type: 'array', items: { type: 'string' } };
+    baseProperties.risks = { type: 'array', items: { type: 'string' } };
     baseProperties.questions = { type: 'array', items: { type: 'string' } };
     baseProperties.userConfirmed = { type: 'boolean' };
   } else if (stage === 'architecture') {
     baseProperties.design = { type: 'array', items: { type: 'string' } };
+    baseProperties.context = { type: 'array', items: { type: 'string' } };
+    baseProperties.constraints = { type: 'array', items: { type: 'string' } };
+    baseProperties.qualityAttributes = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'scenario', 'measure'],
+        properties: {
+          name: { type: 'string' },
+          scenario: { type: 'string' },
+          measure: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.solutionStrategy = { type: 'array', items: { type: 'string' } };
+    baseProperties.buildingBlocks = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'responsibility', 'interfaces'],
+        properties: {
+          name: { type: 'string' },
+          responsibility: { type: 'string' },
+          interfaces: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.runtimeScenarios = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'trigger', 'flow'],
+        properties: {
+          name: { type: 'string' },
+          trigger: { type: 'string' },
+          flow: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.deploymentView = { type: 'array', items: { type: 'string' } };
+    baseProperties.crossCuttingConcepts = { type: 'array', items: { type: 'string' } };
+    baseProperties.architectureDecisions = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['decision', 'optionsConsidered', 'rationale', 'consequences'],
+        properties: {
+          decision: { type: 'string' },
+          optionsConsidered: { type: 'array', items: { type: 'string' } },
+          rationale: { type: 'string' },
+          consequences: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.risks = { type: 'array', items: { type: 'string' } };
     baseProperties.hasUserInterface = { type: 'boolean' };
     baseProperties.specialistNeeds = {
       type: 'array',
@@ -36,6 +105,35 @@ export function outputSchemaPath(repo, runBase, stage = null) {
       }
     };
   } else if (stage === 'ui-design') {
+    baseProperties.userFlows = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'actor', 'goal', 'steps'],
+        properties: {
+          name: { type: 'string' },
+          actor: { type: 'string' },
+          goal: { type: 'string' },
+          steps: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.usabilityRisks = { type: 'array', items: { type: 'string' } };
+    baseProperties.accessibilityHeuristics = { type: 'array', items: { type: 'string' } };
+    baseProperties.validationHypotheses = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['hypothesis', 'validationMethod', 'successSignal'],
+        properties: {
+          hypothesis: { type: 'string' },
+          validationMethod: { type: 'string' },
+          successSignal: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
     baseProperties.theme = {
       type: 'object',
       required: ['palette', 'typography', 'spacing'],
@@ -62,6 +160,9 @@ export function outputSchemaPath(repo, runBase, stage = null) {
     };
     baseProperties.designTokens = { type: 'array', items: { type: 'string' } };
   } else if (stage === 'recruiting') {
+    baseProperties.gapJustification = { type: 'array', items: { type: 'string' } };
+    baseProperties.existingSpecialistAssessment = { type: 'array', items: { type: 'string' } };
+    baseProperties.evaluationCriteria = { type: 'array', items: { type: 'string' } };
     baseProperties.specialist = {
       type: 'object',
       required: ['id', 'role', 'sandbox', 'triggers', 'capabilities', 'contract'],

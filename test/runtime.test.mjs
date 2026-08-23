@@ -95,9 +95,32 @@ test('architecture and UI-design output schemas contain their routing and delive
   const ui = JSON.parse(fs.readFileSync(outputSchemaPath(repo, 'ui-design', 'ui-design'), 'utf8'));
   assert.equal(architecture.properties.hasUserInterface.type, 'boolean');
   assert.ok(architecture.required.includes('hasUserInterface'));
+  assert.ok(architecture.required.includes('qualityAttributes'));
+  assert.ok(architecture.required.includes('buildingBlocks'));
+  assert.ok(architecture.required.includes('runtimeScenarios'));
+  assert.ok(architecture.required.includes('architectureDecisions'));
+  assert.deepEqual(architecture.properties.qualityAttributes.items.required, ['name', 'scenario', 'measure']);
+  assert.deepEqual(architecture.properties.buildingBlocks.items.required, ['name', 'responsibility', 'interfaces']);
+  assert.deepEqual(architecture.properties.architectureDecisions.items.required, ['decision', 'optionsConsidered', 'rationale', 'consequences']);
   assert.deepEqual(ui.properties.theme.required, ['palette', 'typography', 'spacing']);
+  assert.ok(ui.required.includes('userFlows'));
+  assert.ok(ui.required.includes('usabilityRisks'));
+  assert.ok(ui.required.includes('accessibilityHeuristics'));
+  assert.ok(ui.required.includes('validationHypotheses'));
+  assert.deepEqual(ui.properties.userFlows.items.required, ['name', 'actor', 'goal', 'steps']);
+  assert.deepEqual(ui.properties.validationHypotheses.items.required, ['hypothesis', 'validationMethod', 'successSignal']);
   assert.ok(ui.required.includes('screens'));
   assert.ok(ui.required.includes('designTokens'));
+});
+
+test('recruiting output schema requires gap evaluation fields', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-recruiting-schema-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const recruiting = JSON.parse(fs.readFileSync(outputSchemaPath(repo, 'recruiting', 'recruiting'), 'utf8'));
+  assert.ok(recruiting.required.includes('gapJustification'));
+  assert.ok(recruiting.required.includes('existingSpecialistAssessment'));
+  assert.ok(recruiting.required.includes('evaluationCriteria'));
+  assert.ok(recruiting.required.includes('specialist'));
 });
 
 test('child Codex invocation uses launcher-selected version, provider, model, and isolated home', () => {

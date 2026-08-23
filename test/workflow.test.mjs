@@ -23,7 +23,50 @@ function createRepository() {
 }
 
 function result(outcome, extra = {}) {
-  return JSON.stringify({ outcome, summary: `${outcome} result`, evidence: outcome === 'PASS' ? ['Observed repository evidence'] : [], ...extra });
+  const intakeDefaults = Object.hasOwn(extra, 'requirements') || Object.hasOwn(extra, 'acceptanceCriteria')
+    ? {
+        goals: ['Deliver the requested user-visible outcome.'],
+        targetUsers: ['Primary user described by the request.'],
+        userStories: ['As a user, I want the requested behavior so that I can accomplish the stated goal.'],
+        mvpScope: ['Deliver the minimum useful version of the requested behavior.'],
+        outOfScope: ['No additional features beyond the confirmed request.'],
+        assumptions: ['Use sensible defaults where the user did not specify details.'],
+        constraints: ['No additional constraints identified.'],
+        nonFunctionalRequirements: ['Keep the result reliable and usable for the target user.'],
+        successMetrics: ['Acceptance criteria pass through observable behavior.'],
+        risks: ['No material risks identified.']
+      }
+    : {};
+  const architectureDefaults = Object.hasOwn(extra, 'design') || Object.hasOwn(extra, 'hasUserInterface') || Object.hasOwn(extra, 'specialistNeeds')
+    ? {
+        context: ['System boundary and primary actors are identified.'],
+        constraints: ['No additional architecture constraints identified.'],
+        qualityAttributes: [{ name: 'Usability', scenario: 'A target user completes the primary flow.', measure: 'Primary acceptance criteria pass.' }],
+        solutionStrategy: ['Use a minimal architecture aligned with the confirmed scope.'],
+        buildingBlocks: [{ name: 'Application module', responsibility: 'Deliver the requested behavior.', interfaces: ['Public user-facing or runtime interface.'] }],
+        runtimeScenarios: [{ name: 'Primary flow', trigger: 'User or caller invokes the requested behavior.', flow: ['Receive input', 'Process request', 'Return observable output'] }],
+        deploymentView: ['Run in the repository-supported local/runtime environment.'],
+        crossCuttingConcepts: ['Use existing project conventions for error handling, validation, and tests.'],
+        architectureDecisions: [{ decision: 'Use existing project conventions.', optionsConsidered: ['Existing conventions', 'Introduce new architecture'], rationale: 'Minimizes scope and risk.', consequences: ['Implementation remains narrow and compatible.'] }],
+        risks: ['No material architectural risks identified.']
+      }
+    : {};
+  const uiDefaults = Object.hasOwn(extra, 'theme') || Object.hasOwn(extra, 'screens') || Object.hasOwn(extra, 'designTokens')
+    ? {
+        userFlows: [{ name: 'Primary flow', actor: 'Target user', goal: 'Complete the requested UI task.', steps: ['Open the interface', 'Use the primary control', 'Observe the expected result'] }],
+        usabilityRisks: ['Primary controls may be hard to discover without clear hierarchy.'],
+        accessibilityHeuristics: ['Keyboard focus must be visible and follow the primary task order.'],
+        validationHypotheses: [{ hypothesis: 'A target user can complete the primary UI flow.', validationMethod: 'Run a browser or human-observed task flow check.', successSignal: 'The expected UI result is observable without confusion.' }]
+      }
+    : {};
+  const recruitingDefaults = Object.hasOwn(extra, 'specialist')
+    ? {
+        gapJustification: ['The architecture identified a concrete capability not covered by existing specialists.'],
+        existingSpecialistAssessment: ['Built-in specialists do not provide sufficient coverage for the requested framework.'],
+        evaluationCriteria: ['The specialist must preserve scope, use authoritative documentation, and run relevant validation.']
+      }
+    : {};
+  return JSON.stringify({ outcome, summary: `${outcome} result`, evidence: outcome === 'PASS' ? ['Observed repository evidence'] : [], ...intakeDefaults, ...architectureDefaults, ...uiDefaults, ...recruitingDefaults, ...extra });
 }
 
 function queuedRunner(repo, outputs) {
@@ -48,6 +91,15 @@ function queuedRunner(repo, outputs) {
   };
 }
 
+async function advanceWithHumanApprovals(args) {
+  const result = await advanceWorkflow(args);
+  const session = readSession(args.repo);
+  if (['prd-review', 'trd-review'].includes(session?.pendingUserInput?.kind) && session.pendingUserInput.response == null) {
+    await callTool('aiteam_update_session', { repository: args.repo, patch: { pendingUserInput: 'approved' } });
+  }
+  return result;
+}
+
 test('server-owned workflow enforces every gate and commits only QA-approved paths', async () => {
   const repo = createRepository();
   newSession(repo, 'Build a small Python feature');
@@ -65,7 +117,7 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
     { stdout: result('PASS', { commitMessage: 'Implement validated feature' }) }
   ]);
 
-  for (let i = 0; i < 8; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let i = 0; i < 8; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const ready = readSession(repo);
   assert.equal(ready.status, 'READY_TO_COMPLETE');
   assert.equal(ready.taskLedger[0].status, 'qa-passed');
@@ -103,7 +155,7 @@ test('UI projects run a validated UI-design stage and propagate its result to Pl
     return queued(args);
   };
 
-  for (let index = 0; index < 9; index += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let index = 0; index < 9; index += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const ready = readSession(repo);
   const planningCall = calls.find((call) => call.stage === 'planning');
   assert.equal(ready.status, 'READY_TO_COMPLETE');
@@ -127,12 +179,73 @@ test('already-implemented tasks complete successfully when Integration has no Gi
     { stdout: result('PASS', { commitMessage: 'Verify existing README' }) }
   ]);
 
-  for (let index = 0; index < 8; index += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let index = 0; index < 8; index += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const ready = readSession(repo);
   assert.equal(ready.status, 'READY_TO_COMPLETE');
   assert.equal(ready.taskLedger[0].integration.reason, 'no_changes');
   assert.equal(ready.taskLedger[0].integration.integrated, true);
   assert.equal(completeWorkflow(repo).status, 'COMPLETE');
+});
+
+test('PRD and TRD human review gates generate HTML artifacts and route feedback', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build a reviewed feature');
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['Reviewed feature'], acceptanceCriteria: ['Feature is approved'], questions: [], userConfirmed: true }) },
+    { stdout: result('PASS', { requirements: ['Reviewed feature v2'], acceptanceCriteria: ['Revised feature is approved'], questions: [], userConfirmed: true }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement revised plan', specialistId: 'python', acceptanceCriteria: ['Works after revision'], dependencies: [], blackBoxTestPlan: [{ name: 'revised runtime behavior', action: 'Run the revised feature through the public interface.', expected: 'The revised expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
+    { stdout: result('PASS', { findings: [] }) }
+  ]);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  let session = readSession(repo);
+  assert.equal(session.currentStage, 'prd-review');
+  assert.equal(session.pendingUserInput.kind, 'prd-review');
+  assert.match(session.pendingUserInput.artifact.url, /\/artifacts\/prd\.html$/);
+  const prdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
+  assert.match(prdHtml, /Product Requirements Document/);
+  assert.match(prdHtml, /Problem To Solve/);
+  assert.match(prdHtml, /PRD-R1/);
+  assert.match(prdHtml, /Open Questions/);
+
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please add a clearer approval criterion.' } });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'intake');
+  assert.equal(session.pendingUserInput.kind, 'prd-review');
+  assert.match(session.pendingUserInput.response, /clearer approval/);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'trd-review');
+  assert.equal(session.pendingUserInput.kind, 'trd-review');
+  assert.match(session.pendingUserInput.artifact.url, /\/artifacts\/trd\.html$/);
+  const trdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
+  assert.match(trdHtml, /Testing Plan/);
+  assert.match(trdHtml, /System Boundary And Runtime Flows/);
+  assert.match(trdHtml, /Data, Interfaces, And Dependencies/);
+  assert.match(trdHtml, /Security, Privacy, And Operations/);
+  assert.match(trdHtml, /Requirements-To-Work Traceability/);
+
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please revise the testing plan.' } });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'planning');
+  assert.equal(session.taskLedger.length, 0);
+  assert.equal(session.pendingUserInput.kind, 'trd-review');
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  assert.equal(readSession(repo).currentStage, 'critical-review');
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'trd-review');
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
+  assert.equal(readSession(repo).currentStage, 'implementation');
 });
 
 test('review failure routes the same task back to implementation', async () => {
@@ -146,7 +259,7 @@ test('review failure routes the same task back to implementation', async () => {
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', location: 'app.py', impact: 'Wrong value', recommendation: 'Fix it' }] }) }
   ]);
-  for (let i = 0; i < 6; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let i = 0; i < 6; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const session = readSession(repo);
   assert.equal(session.currentStage, 'implementation');
   assert.equal(session.currentTaskId, 'feature-task');
@@ -162,10 +275,10 @@ test('architecture capability gaps must pass through Recruiter provenance before
     { stdout: result('PASS', { design: ['Phaser architecture'], hasUserInterface: false, specialistNeeds: [{ capability: 'Phaser', reason: 'No built-in web specialist', suggestedId: 'phaser-programmer' }] }) },
     { stdout: result('PASS', { specialist: { id: 'phaser-programmer', role: 'Phaser Programmer', sandbox: 'workspace-write', triggers: ['phaser'], capabilities: ['TypeScript', 'Phaser'], contract } }) }
   ]);
-  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
+  await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'recruiting');
-  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const session = readSession(repo);
   assert.equal(session.currentStage, 'planning');
   assert.equal(getAgent('phaser-programmer', repo).provenance, undefined, 'normalized public registry omits storage metadata');
@@ -186,7 +299,7 @@ test('post-QA path changes invalidate approval and route back to implementation'
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { checks: [{ name: 'check', status: 'PASS', expected: 'Feature behavior works.', actual: 'Feature behavior was observed working.', evidence: 'observed' }], automationAttempts: [], manualChecks: [] }) }
   ]);
-  for (let i = 0; i < 7; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let i = 0; i < 7; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'integration');
   fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 2\n');
   await assert.rejects(advanceWorkflow({ repo, runner, timeoutSeconds: 300 }), /changed after QA approval/);
@@ -207,7 +320,7 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Headless runtime checks passed; subjective visual polish remains'], checks: [{ name: 'browser', status: 'PASS', expected: 'The browser page loads and exposes the expected canvas.', actual: 'Playwright opened the page and confirmed the canvas exists.', evidence: 'Playwright opened the page and confirmed the canvas exists' }], automationAttempts: [{ command: 'playwright --version && node browser-smoke.mjs', result: 'Headless browser loaded the page and found canvas element', covers: ['Looks correct'], fallbackReason: 'Final visual aesthetics still require human judgment' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
   ]);
-  for (let i = 0; i < 7; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let i = 0; i < 7; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   let session = readSession(repo);
   assert.equal(session.currentStage, 'qa');
   assert.equal(session.taskLedger[0].status, 'qa-awaiting-manual');
@@ -292,8 +405,8 @@ test('implementation cannot pass when reported files are absent from the server 
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['missing.py'], validations: [{ command: 'test -f missing.py', result: 'reported passed' }] }) }
   ]);
-  for (let i = 0; i < 4; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  await assert.rejects(advanceWorkflow({ repo, runner, timeoutSeconds: 300 }), /did not write files to disk/);
+  for (let i = 0; i < 4; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
+  await assert.rejects(advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 }), /did not write files to disk/);
   assert.equal(readSession(repo).currentStage, 'implementation');
 });
 
@@ -307,8 +420,8 @@ test('implementation FAIL routes to BLOCKED with retry instructions instead of s
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('FAIL', { summary: 'Cannot run the command due to insufficient sandbox permissions.' }) }
   ]);
-  for (let i = 0; i < 4; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  for (let i = 0; i < 4; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
+  await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const session = readSession(repo);
   assert.equal(session.status, 'BLOCKED');
   assert.match(session.blockedReason, /Implementation specialist returned FAIL/);
@@ -320,14 +433,29 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   const awaiting = parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need clarification', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['What platform should we target?'], userConfirmed: false }));
   assert.equal(awaiting.outcome, 'AWAITING_USER');
   assert.equal(awaiting.userConfirmed, false);
+  assert.throws(() => parseStageResult('intake', JSON.stringify({ outcome: 'PASS', summary: 'Incomplete intake', evidence: ['User asked for a feature'], requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [], userConfirmed: true })), /goals/);
+  const intake = parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [], userConfirmed: true }));
+  assert.equal(intake.goals[0], 'Deliver the requested user-visible outcome.');
+  assert.equal(intake.successMetrics[0], 'Acceptance criteria pass through observable behavior.');
   assert.throws(() => parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: ['Still unclear'], userConfirmed: false })), /cannot PASS/i);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [] })), /non-empty array/);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] })), /blackBoxTestPlan/);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'source check', action: 'grep src/audio.js line 49', expected: 'Function should call toggleMute.', evidenceMethod: 'Source inspection.' }] }] })), /black-box test plan only/);
   const planned = parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }));
   assert.equal(planned.tasks[0].blackBoxTestPlan[0].action, 'Run the feature through the public interface.');
+  assert.throws(() => parseStageResult('architecture', JSON.stringify({ outcome: 'PASS', summary: 'Old architecture', evidence: ['Observed repository evidence'], design: ['Module'], hasUserInterface: false, specialistNeeds: [] })), /context/);
   assert.throws(() => parseStageResult('architecture', result('PASS', { design: ['Module'], specialistNeeds: [] })), /hasUserInterface/);
+  const architecture = parseStageResult('architecture', result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }));
+  assert.equal(architecture.qualityAttributes[0].name, 'Usability');
+  assert.equal(architecture.buildingBlocks[0].interfaces[0], 'Public user-facing or runtime interface.');
+  assert.throws(() => parseStageResult('ui-design', JSON.stringify({ outcome: 'PASS', summary: 'Old UI design', evidence: ['Observed repository evidence'], theme: { palette: ['black'], typography: ['body'], spacing: ['8px'] }, screens: [{ name: 'Main', layout: 'One column', components: ['Button'], interactionStates: ['focused'] }], designTokens: ['color: black'] })), /userFlows/);
   assert.throws(() => parseStageResult('ui-design', result('PASS', { theme: { palette: [], typography: [], spacing: [] }, screens: [], designTokens: [] })), /must not be empty|non-empty array/);
+  const uiDesign = parseStageResult('ui-design', result('PASS', { theme: { palette: ['black'], typography: ['body'], spacing: ['8px'] }, screens: [{ name: 'Main', layout: 'One column', components: ['Button'], interactionStates: ['focused'] }], designTokens: ['color: black'] }));
+  assert.equal(uiDesign.userFlows[0].actor, 'Target user');
+  assert.equal(uiDesign.validationHypotheses[0].successSignal, 'The expected UI result is observable without confusion.');
+  assert.throws(() => parseStageResult('recruiting', JSON.stringify({ outcome: 'PASS', summary: 'Old recruiter', evidence: ['Observed repository evidence'], specialist: { id: 'x-programmer', role: 'X Programmer', sandbox: 'workspace-write', triggers: ['x'], capabilities: ['X'], contract: 'Implement X with enough detail to pass the minimum contract length and validation requirements.' } })), /gapJustification/);
+  const recruited = parseStageResult('recruiting', result('PASS', { specialist: { id: 'x-programmer', role: 'X Programmer', sandbox: 'workspace-write', triggers: ['x'], capabilities: ['X'], contract: 'Implement X with enough detail to pass the minimum contract length and validation requirements.' } }));
+  assert.match(recruited.evaluationCriteria[0], /specialist/);
   assert.throws(() => parseStageResult('implementation', result('PASS', { filesChanged: ['app.py'], validations: [] })), /validations must be a non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
   const qa = parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] }));
@@ -360,8 +488,11 @@ test('Analyst Intake pauses for user answers and blocks Architecture until confi
   }), /Server-owned session fields/);
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Yes, make it browser-based.' } });
   const intake = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  assert.equal(intake.session.currentStage, 'architecture');
-  assert.equal(intake.session.pendingUserInput, null);
+  assert.equal(intake.session.currentStage, 'prd-review');
+  assert.equal(intake.session.pendingUserInput.kind, 'prd-review');
+  assert.match(intake.session.pendingUserInput.artifact.url, /\/artifacts\/prd\.html$/);
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
+  assert.equal(readSession(repo).currentStage, 'architecture');
   const architecture = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(architecture.session.currentStage, 'planning');
 });
@@ -399,6 +530,9 @@ test('implementation specialist prompt contains chunked-write instructions (here
   assert.ok(prompt.includes('AITEAM_EOF'), 'prompt must reference AITEAM_EOF heredoc marker');
   assert.ok(prompt.includes('>>'), 'prompt must include append (>>) mode for subsequent chunks');
   assert.ok(prompt.includes('wc -l'), 'prompt must instruct verification with wc -l after chunked write');
+  assert.match(prompt, /reviewArtifacts\.prd/);
+  assert.match(prompt, /reviewArtifacts\.trd/);
+  assert.match(prompt, /source-of-truth/);
 
   // Must not allow single-heredoc writes for large files
   assert.ok(

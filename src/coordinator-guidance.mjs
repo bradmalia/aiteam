@@ -53,19 +53,23 @@ export function coordinatorDirective(session = null) {
 
   if (session.pendingUserInput?.questions?.length && session.pendingUserInput.response == null) {
     const qaManual = session.pendingUserInput.kind === 'qa-manual';
-    const intakeQuestions = !qaManual && session.pendingUserInput.questions;
+    const humanReview = ['prd-review', 'trd-review'].includes(session.pendingUserInput.kind);
+    const intakeQuestions = !qaManual && !humanReview && session.pendingUserInput.questions;
     return {
       autonomous: false,
       userProgressReporting: { required: true },
       requiredNextAction: {
         tool: 'aiteam_update_session',
-        recommendedAgentId: qaManual ? null : 'analyst',
-        instruction: qaManual
+        recommendedAgentId: qaManual || humanReview ? null : 'analyst',
+        instruction: humanReview
+          ? `STOP. You MUST paste this human review request into chat, including the document URL. Do NOT approve it yourself, do NOT infer approval from the document, and do NOT call aiteam_update_session until the real user replies. The review request is: ${JSON.stringify(session.pendingUserInput?.questions)}.`
+          : qaManual
           ? `STOP. You MUST paste these exact QA manual checks into chat for the real user to perform physically. Do NOT mark them as passed yourself, do NOT fabricate results, do NOT infer they pass from the code. Wait for the user to actually run the checks and reply with their findings. Only after the user confirms in chat may you call aiteam_update_session with their exact response. The checks are: ${JSON.stringify(session.pendingUserInput?.questions)}.`
           : `STOP. You must show these questions to the USER in chat and wait for their reply. DO NOT answer the questions yourself, guess, or invent answers. The questions are: ${JSON.stringify(intakeQuestions)}. Only after the real user has responded may you call aiteam_update_session with their actual answers.`
       },
       prohibitedActions: [
         'advance_without_user_response',
+        'self_approve_prd_or_trd',
         'auto_confirm_manual_qa',
         'fabricate_user_qa_confirmation',
         'implement_specialist_work_in_the_coordinator',
