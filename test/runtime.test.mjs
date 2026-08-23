@@ -161,7 +161,9 @@ test('child Codex invocation uses launcher-selected version, provider, model, an
   assert.ok(invocation.args.includes('model_providers.v100_ollama.base_url="http://192.168.122.50:11434/v1"'));
   assert.ok(invocation.args.includes('model_providers.v100_ollama.requires_openai_auth=false'));
   assert.ok(invocation.args.includes('v100-qwen3.6-codex-256k'));
-  assert.equal(invocation.args.at(-1), 'Analyze requirements');
+  assert.equal(invocation.args.at(-1), '-');
+  assert.equal(invocation.stdinText, 'Analyze requirements');
+  assert.ok(!invocation.args.includes('Analyze requirements'));
   assert.equal(invocation.childEnv.CODEX_HOME, childHome);
   assert.ok(fs.existsSync(childHome));
 });
@@ -213,7 +215,9 @@ test('workspace-write specialists receive an explicit repository write scope and
   ]);
   assert.ok(invocation.args.includes('--output-schema'));
   assert.ok(invocation.args.includes('/tmp/example-repo/.aiteam/runs/agent.schema.json'));
-  assert.equal(invocation.args.at(-1), 'Implement the assigned task');
+  assert.equal(invocation.args.at(-1), '-');
+  assert.equal(invocation.stdinText, 'Implement the assigned task');
+  assert.ok(!invocation.args.includes('Implement the assigned task'));
 });
 
 test('implementation retries can enforce structured output after tool-using work', () => {
@@ -239,6 +243,24 @@ test('implementation retries can enforce structured output after tool-using work
   assert.ok(!initial.args.includes('--output-schema'));
   assert.ok(reportingRetry.args.includes('--output-schema'));
   assert.ok(reportingRetry.args.includes('/tmp/result.schema.json'));
+  assert.equal(initial.args.at(-1), '-');
+  assert.equal(initial.stdinText, 'Implement the assigned task');
+  assert.equal(reportingRetry.args.at(-1), '-');
+  assert.equal(reportingRetry.stdinText, 'Report the implemented task');
+});
+
+test('Codex invocations send prompt over stdin to avoid argv E2BIG', () => {
+  const prompt = 'x'.repeat(300000);
+  const invocation = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'read-only' },
+    prompt,
+    env: { AITEAM_CODEX_PREFIX_ARGS_JSON: '[]' }
+  });
+
+  assert.equal(invocation.args.at(-1), '-');
+  assert.equal(invocation.stdinText, prompt);
+  assert.ok(!invocation.args.includes(prompt));
 });
 
 test('timeout terminates the full specialist process group', async () => {

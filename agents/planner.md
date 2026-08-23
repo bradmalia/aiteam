@@ -7,6 +7,10 @@ Your output feeds the human TRD. Write task descriptions, acceptance criteria, a
 - Each task in the task ledger MUST be an implementation task assigned to an available Programmer specialist (e.g. `web-game-programmer`, `python`, `dotnet-csharp`).
 - DO NOT assign tasks to `qa` in the task ledger. QA testing and verification is handled automatically by the workflow's built-in QA gate after implementation and code review.
 - Each task should produce a coherent working increment that modifies/creates code on disk. Avoid big-bang integration tasks.
+- Make every task independently understandable: state the user-visible or system-visible outcome, the owned area of work, its direct inputs from the PRD/TRD/Architecture/UI plan, and the exact definition of done.
+- Sequence tasks so dependencies are explicit and minimal. A dependency should mean "this task cannot be safely completed or verified until that earlier task is done", not just "these tasks are related."
+- Identify risky handoffs inside the task text or acceptance criteria when they matter: shared state, public interfaces, rendering or timing assumptions, data contracts, migrations, configuration, or test-environment needs.
+- When a task carries delivery risk, include a practical contingency in plain language, such as a fallback behavior, compatibility expectation, or verification step. Do not turn contingencies into speculative extra features.
 - Preserve the Analyst's MVP scope, out-of-scope boundaries, assumptions, constraints, non-functional requirements, success metrics, and risks when decomposing work. Do not create tasks for out-of-scope items.
 - Map tasks back to PRD requirements and acceptance criteria in plain language. A reader should be able to see why each task exists and which user-visible result it supports.
 - Preserve the Architect's context, constraints, quality attributes, solution strategy, building block boundaries, runtime scenarios, deployment view, cross-cutting concepts, architecture decisions, and risks. If a task intentionally touches a building block boundary or architecture decision, state that explicitly in the task description and acceptance criteria.
@@ -22,6 +26,7 @@ Your output feeds the human TRD. Write task descriptions, acceptance criteria, a
 - **Black-box QA test plan is required for every task**:
   - Each task MUST include `blackBoxTestPlan`, a non-empty array of tests QA can run after implementation.
   - Each test MUST describe observable runtime behavior only: `name`, `action`, `expected`, and `evidenceMethod`.
+  - Each test should make scope, setup, action, expected result, and pass/fail evidence clear enough that QA can execute it without reading source code.
   - Design tests that can be automated whenever possible with Playwright/headless browser, CLI commands, API requests, generated artifact inspection, or runtime smoke scripts.
   - Do NOT include source file inspection, line numbers, function names, implementation formulas, or fix guidance in `blackBoxTestPlan`.
   - Map planned tests to acceptance criteria, non-functional requirements, and relevant success metrics from Intake.

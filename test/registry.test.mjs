@@ -39,6 +39,56 @@ test('read-only prompts forbid temporary JSON file validation', () => {
   assert.match(prompt, /Return the final structured JSON object directly/);
 });
 
+test('planner prompt requires implementation-ready task planning discipline', () => {
+  const agent = getAgent('planner');
+  const prompt = buildAgentPrompt(agent, 'Create implementation task ledger', '{}', 'planning');
+  assert.match(prompt, /exact definition of done/);
+  assert.match(prompt, /dependencies are explicit and minimal/);
+  assert.match(prompt, /risky handoffs/);
+  assert.match(prompt, /practical contingency/);
+  assert.match(prompt, /scope, setup, action, expected result, and pass\/fail evidence/);
+});
+
+test('shared and coordinator contracts preserve orchestration discipline', () => {
+  const base = fs.readFileSync(path.join(process.cwd(), 'agents', 'base.md'), 'utf8');
+  const coordinator = fs.readFileSync(path.join(process.cwd(), 'agents', 'coordinator.md'), 'utf8');
+  assert.match(base, /smallest repository slice needed/);
+  assert.match(base, /Preserve auditability/);
+  assert.match(base, /security, data integrity, accessibility, and destructive operations/);
+  assert.match(coordinator, /Coordinate the workflow; do not manage the work/);
+  assert.match(coordinator, /Do not diagnose specialist failures from memory or speculation/);
+  assert.match(coordinator, /Report only what AITEAM returned/);
+});
+
+test('code reviewer contract requires source review checklist without replacing QA', () => {
+  const agent = getAgent('code-reviewer');
+  const prompt = buildAgentPrompt(agent, 'Review task', '{}', 'code-review');
+  assert.match(prompt, /Correctness: logic satisfies/);
+  assert.match(prompt, /Security and data safety/);
+  assert.match(prompt, /Performance and reliability/);
+  assert.match(prompt, /must not claim black-box user behavior passes/);
+  assert.match(prompt, /Prefer fewer, higher-confidence findings/);
+});
+
+test('programmer specialist contracts include language-specific validation expectations', () => {
+  const expectations = [
+    ['python', /Python-specific expectations/, /standard-library solutions/, /targeted unit tests/],
+    ['java', /Java-specific expectations/, /public method signatures/, /concurrency/],
+    ['dotnet-csharp', /\.NET\/C#-specific expectations/, /nullable-reference-type policy/, /async\/await/],
+    ['godot-gdscript', /Godot\/GDScript-specific expectations/, /scene tree/, /_physics_process/],
+    ['oracle-plsql', /Oracle PL\/SQL-specific expectations/, /package specs/, /commits\/rollbacks/],
+    ['sqlserver-tsql', /SQL Server\/T-SQL-specific expectations/, /XACT_ABORT/, /sargability/]
+  ];
+  for (const [id, heading, first, second] of expectations) {
+    const agent = getAgent(id);
+    const prompt = buildAgentPrompt(agent, 'Implement assigned task', '{}', 'implementation');
+    assert.match(prompt, heading);
+    assert.match(prompt, first);
+    assert.match(prompt, second);
+    assert.match(prompt, /Run relevant tests\/toolchain checks/);
+  }
+});
+
 test('workflow-scoped specialists can be registered, resolved, and prompted', () => {
   const repo = repository();
   const specialist = registerScopedSpecialist(repo, {

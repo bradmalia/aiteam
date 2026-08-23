@@ -311,7 +311,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   const base = `${stamp}-${safeName(agentId)}`;
   const schemaPath = outputSchemaPath(repo, base, stage);
   const invocation = buildAgentInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema });
-  const { command, args, childEnv } = invocation;
+  const { command, args, childEnv, stdinText = null } = invocation;
   const stdoutPath = path.join(dir, 'runs', `${base}.stdout.txt`);
   const stderrPath = path.join(dir, 'runs', `${base}.stderr.txt`);
   const metaPath = path.join(dir, 'runs', `${base}.json`);
@@ -322,9 +322,10 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     const child = spawn(command, args, {
       cwd: repo,
       env: childEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdinText == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       detached: process.platform !== 'win32'
     });
+    if (stdinText != null) child.stdin.end(stdinText);
 
     activeProcesses.set(repo, child);
 
@@ -503,11 +504,13 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   // result that parseJson extracts from the final free-form message.
   const effectiveSchema = stage === 'implementation' && !enforceSchema ? null : schemaPath;
   if (effectiveSchema) args.push('--output-schema', effectiveSchema);
-  args.push(prompt);
+  // Large AITEAM contexts can exceed OS argv limits when passed as the final
+  // prompt argument. `codex exec -` reads the prompt from stdin instead.
+  args.push('-');
 
   const childEnv = { ...env };
   const codexHome = env.AITEAM_CODEX_HOME || path.join(os.homedir(), '.aiteam-codex-home');
   fs.mkdirSync(codexHome, { recursive: true });
   childEnv.CODEX_HOME = codexHome;
-  return { command, args, childEnv };
+  return { command, args, childEnv, stdinText: prompt };
 }
