@@ -123,6 +123,16 @@ test('recruiting output schema requires gap evaluation fields', () => {
   assert.ok(recruiting.required.includes('specialist'));
 });
 
+test('critical-review output schema requires simple repairStage enum for model compatibility', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-critical-schema-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const schema = JSON.parse(fs.readFileSync(outputSchemaPath(repo, 'critical-review', 'critical-review'), 'utf8'));
+  assert.ok(schema.required.includes('findings'));
+  assert.ok(schema.required.includes('repairStage'));
+  assert.equal(schema.properties.repairStage.type, 'string');
+  assert.deepEqual(schema.properties.repairStage.enum, ['architecture', 'planning', 'none']);
+});
+
 test('child Codex invocation uses launcher-selected version, provider, model, and isolated home', () => {
   const childHome = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-child-')), 'codex-home');
   const invocation = buildCodexInvocation({

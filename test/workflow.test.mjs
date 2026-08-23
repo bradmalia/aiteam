@@ -466,6 +466,11 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.match(recruited.evaluationCriteria[0], /specialist/);
   assert.throws(() => parseStageResult('implementation', result('PASS', { filesChanged: ['app.py'], validations: [] })), /validations must be a non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
+  const failedCritical = parseStageResult('critical-review', result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }], repairStage: 'planning' }));
+  assert.equal(failedCritical.repairStage, 'planning');
+  const passedCritical = parseStageResult('critical-review', result('PASS', { findings: [], repairStage: 'none' }));
+  assert.equal(passedCritical.repairStage, 'none');
+  assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [], repairStage: 'planning' })), /repairStage to none/);
   const qa = parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] }));
   assert.equal(qa.checks[0].expected, 'The app starts.');
   assert.throws(() => parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] })), /expected/);

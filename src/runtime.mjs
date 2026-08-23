@@ -234,7 +234,8 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
-    baseProperties.repairStage = { type: ['string', 'null'] };
+    baseProperties.repairStage = { type: 'string', enum: ['architecture', 'planning', 'none'] };
+    required.push('findings', 'repairStage');
   } else if (stage === 'code-review') {
     baseProperties.findings = {
       type: 'array',
@@ -251,7 +252,7 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
-    baseProperties.repairStage = { type: ['string', 'null'] };
+    required.push('findings');
   } else if (stage === 'qa') {
     baseProperties.checks = {
       type: 'array',

@@ -56,7 +56,7 @@ Also return "gapJustification", "existingSpecialistAssessment", and "evaluationC
   planning: `${COMMON_SCHEMA}
 Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies","blackBoxTestPlan"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. blackBoxTestPlan must be a non-empty array of {"name","action","expected","evidenceMethod"} that designs QA's observable runtime tests ahead of implementation; it must not use source inspection, line numbers, implementation formulas, or fix guidance.`,
   'critical-review': `${COMMON_SCHEMA}
-Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR remains, outcome must be FAIL and "repairStage" must be "architecture" or "planning".`,
+Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. Always return "repairStage". If any BLOCKER or MAJOR remains, outcome must be FAIL and repairStage must be "architecture" or "planning". If outcome is PASS, repairStage must be "none".`,
   implementation: `${COMMON_SCHEMA}
 For Implementation, you MUST return outcome "PASS" with a NON-EMPTY "filesChanged" array. Never return outcome "FAIL" for your own implementation task.
 
@@ -325,8 +325,12 @@ export function parseStageResult(stage, stdout) {
     });
     const material = result.findings.some((finding) => ['BLOCKER', 'MAJOR'].includes(finding?.severity));
     if (material && result.outcome === 'PASS') throw new Error('A review with BLOCKER or MAJOR findings cannot PASS.');
+    if (stage === 'critical-review' && result.outcome !== 'FAIL' && !result.repairStage) result.repairStage = 'none';
     if (stage === 'critical-review' && result.outcome === 'FAIL' && !['architecture', 'planning'].includes(result.repairStage)) {
       throw new Error('Failed critical review must set repairStage to architecture or planning.');
+    }
+    if (stage === 'critical-review' && result.outcome !== 'FAIL' && result.repairStage !== 'none') {
+      throw new Error('Passing critical review must set repairStage to none.');
     }
   } else if (stage === 'implementation') {
     result.filesChanged = stringArray(result.filesChanged || [], 'filesChanged', { nonEmpty: result.outcome === 'PASS' });
