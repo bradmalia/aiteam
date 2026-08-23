@@ -522,6 +522,46 @@ test('missing implemented files reported by validation route directly back to im
   assert.match(session.taskLedger[0]['code-reviewFailure'].summary, /required implemented files are missing/);
 });
 
+test('implementation prose success can be recovered when declared files exist', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Repair feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: {
+      ...session.stageEvidence,
+      intake: { result: { userConfirmed: true } }
+    },
+    taskLedger: [{
+      id: 'feature-task',
+      title: 'Feature',
+      description: 'Implement feature',
+      specialistId: 'python',
+      acceptanceCriteria: ['Works'],
+      dependencies: [],
+      status: 'needs-rework',
+      filesChanged: ['app.py'],
+      validations: [],
+      qaFailure: { outcome: 'FAIL', summary: 'app.py was missing' }
+    }]
+  });
+  const runner = queuedRunner(repo, [
+    {
+      stdout: 'All validations pass. Acceptance criteria verified. File: app.py',
+      write: { path: 'app.py', content: 'VALUE = 1\n' }
+    }
+  ]);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'code-review');
+  assert.equal(next.taskLedger[0].status, 'implemented');
+  assert.equal(next.taskLedger[0].filesChanged[0], 'app.py');
+  assert.match(next.taskLedger[0].validations[0].result, /exists on disk/);
+});
+
 test('implementation FAIL routes to BLOCKED with retry instructions instead of staying stuck', async () => {
   const repo = createRepository();
   newSession(repo, 'Build feature');

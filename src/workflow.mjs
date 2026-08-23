@@ -1102,6 +1102,39 @@ function missingChangedFiles(repo, task) {
   return task.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
 }
 
+function recoverImplementationProseResult(repo, session, assignment, stdout) {
+  if (assignment.stage !== 'implementation') return null;
+  const task = currentTask(session);
+  const filesChanged = Array.isArray(task?.filesChanged) ? task.filesChanged : [];
+  if (!filesChanged.length) return null;
+
+  const text = String(stdout || '');
+  const reportsSuccess = /all validations pass|all acceptance criteria (?:verified|pass)|acceptance criteria verified/i.test(text);
+  if (!reportsSuccess) return null;
+
+  const missing = missingChangedFiles(repo, task);
+  if (missing.length) return null;
+
+  const validations = filesChanged.map((file) => {
+    const absolute = path.resolve(repo, file);
+    const stat = fs.statSync(absolute);
+    return {
+      command: `server verified ${file} exists after implementation prose result`,
+      result: `${file} exists on disk (${stat.size} bytes)`
+    };
+  });
+  return {
+    outcome: 'PASS',
+    summary: `Implementation result recovered from prose after verifying declared changed files on disk: ${filesChanged.join(', ')}.`,
+    evidence: [
+      'Implementation specialist emitted prose instead of JSON, but explicitly reported that validations or acceptance criteria passed.',
+      ...validations.map((validation) => `${validation.command}: ${validation.result}`)
+    ],
+    filesChanged,
+    validations
+  };
+}
+
 function applyResult(repo, session, assignment, result, run) {
   let next = { ...session, activeRun: null, stageEvidence: recordEvidence(session, assignment, result, run) };
   const stage = assignment.stage;
@@ -1483,7 +1516,15 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
       throw new Error(`${lastError.message} The workflow did not advance.`);
     }
     try {
-      const result = parseStageResult(assignment.stage, run.stdout);
+      let result;
+      try {
+        result = parseStageResult(assignment.stage, run.stdout);
+      } catch (error) {
+        const recovered = recoverImplementationProseResult(repo, readSession(repo), assignment, run.stdout);
+        if (!recovered) throw error;
+        result = recovered;
+        appendEvent(repo, { type: 'implementation_result_recovered', stage: assignment.stage, agentId: assignment.agentId, runId: run.runId });
+      }
       const session = applyResult(repo, readSession(repo), assignment, result, run);
       appendEvent(repo, {
         type: 'workflow_stage_result',
