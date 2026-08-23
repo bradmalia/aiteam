@@ -80,14 +80,28 @@ export function outputSchemaPath(repo, runBase, stage = null) {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'title', 'description', 'specialistId', 'acceptanceCriteria', 'dependencies'],
+        required: ['id', 'title', 'description', 'specialistId', 'acceptanceCriteria', 'dependencies', 'blackBoxTestPlan'],
         properties: {
           id: { type: 'string' },
           title: { type: 'string' },
           description: { type: 'string' },
           specialistId: { type: 'string' },
           acceptanceCriteria: { type: 'array', items: { type: 'string' } },
-          dependencies: { type: 'array', items: { type: 'string' } }
+          dependencies: { type: 'array', items: { type: 'string' } },
+          blackBoxTestPlan: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'action', 'expected', 'evidenceMethod'],
+              properties: {
+                name: { type: 'string' },
+                action: { type: 'string' },
+                expected: { type: 'string' },
+                evidenceMethod: { type: 'string' }
+              },
+              additionalProperties: false
+            }
+          }
         },
         additionalProperties: false
       }
@@ -142,13 +156,33 @@ export function outputSchemaPath(repo, runBase, stage = null) {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name', 'status', 'evidence'],
-        properties: { name: { type: 'string' }, status: { type: 'string' }, evidence: { type: 'string' } },
+        required: ['name', 'status', 'expected', 'actual', 'evidence'],
+        properties: {
+          name: { type: 'string' },
+          status: { type: 'string' },
+          expected: { type: 'string' },
+          actual: { type: 'string' },
+          evidence: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.automationAttempts = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['command', 'result', 'covers', 'fallbackReason'],
+        properties: {
+          command: { type: 'string' },
+          result: { type: 'string' },
+          covers: { type: 'array', items: { type: 'string' } },
+          fallbackReason: { type: 'string' }
+        },
         additionalProperties: false
       }
     };
     baseProperties.manualChecks = { type: 'array', items: { type: 'string' } };
-    required.push('checks', 'manualChecks');
+    required.push('checks', 'automationAttempts', 'manualChecks');
   } else if (stage === 'integration') {
     baseProperties.commitMessage = { type: 'string' };
     required.push('commitMessage');

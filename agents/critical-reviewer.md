@@ -12,6 +12,10 @@ Review the requirements, architecture, implementation plan, and QA strategy for 
 - **MATHEMATICAL & LOGICAL SANITY CHECK**:
   - Verify that proposed coordinate math, clamping ranges, or formulas are mathematically coherent and do not contradict visual or physical requirements (e.g., verifying that paddle top edges at `minY` do not clip past boundaries).
   - Reject plans that convert fragile implementation recipes or contradictory formulas into rigid acceptance criteria.
+- **BLACK-BOX QA PLAN CHECK**:
+  - Reject plans where any implementation task lacks a non-empty `blackBoxTestPlan`.
+  - Reject QA plans that rely on source inspection, source line numbers, function names, implementation formulas, or repair instructions.
+  - Verify each planned QA test states the runtime action, expected observable result, and evidence method that QA can use later.
 
 ## VERIFY_REPAIRS
 

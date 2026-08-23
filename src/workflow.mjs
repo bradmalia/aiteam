@@ -50,7 +50,7 @@ Also return "theme" ({"palette": string array, "typography": string array, "spac
   recruiting: `${COMMON_SCHEMA}
 Also return "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path.`,
   planning: `${COMMON_SCHEMA}
-Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow.`,
+Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies","blackBoxTestPlan"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. blackBoxTestPlan must be a non-empty array of {"name","action","expected","evidenceMethod"} that designs QA's observable runtime tests ahead of implementation; it must not use source inspection, line numbers, implementation formulas, or fix guidance.`,
   'critical-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR remains, outcome must be FAIL and "repairStage" must be "architecture" or "planning".`,
   implementation: `${COMMON_SCHEMA}
@@ -66,8 +66,8 @@ CRITICAL SCOPE BOUNDARY: Implement ONLY the exact acceptanceCriteria specified f
   'code-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
-Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","evidence"} and "manualChecks" as a string array.
-CRITICAL SCOPE BOUNDARY: Generate checks for the specific acceptanceCriteria of the current task AND regression checks for completedPriorTasks. Do NOT validate unbuilt future features or unassigned subsystems. FAIL means an implementation defect or failed check for this task or regression. Do not modify files.`,
+Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","expected","actual","evidence"}, "automationAttempts" as an array of {"command","result","covers","fallbackReason"}, and "manualChecks" as a string array.
+CRITICAL SCOPE BOUNDARY: Generate black-box functional checks for the specific acceptanceCriteria of the current task AND regression checks for completedPriorTasks. Do NOT validate unbuilt future features or unassigned subsystems. FAIL means observable behavior failed for this task or regression. Do not inspect source code, do not modify files, and do not tell the programmer how to fix defects.`,
   integration: `${COMMON_SCHEMA}
 Also return "commitMessage" as a concise non-empty string. Inspect the validated paths and repository state, but do not stage or commit; the AITEAM server owns Git integration.`
 };
@@ -225,7 +225,8 @@ export function parseStageResult(stage, stdout) {
         description: nonEmptyString(task?.description, `tasks[${index}].description`),
         specialistId: nonEmptyString(task?.specialistId, `tasks[${index}].specialistId`),
         acceptanceCriteria: stringArray(task?.acceptanceCriteria, `tasks[${index}].acceptanceCriteria`, { nonEmpty: true }),
-        dependencies: stringArray(task?.dependencies || [], `tasks[${index}].dependencies`)
+        dependencies: stringArray(task?.dependencies || [], `tasks[${index}].dependencies`),
+        blackBoxTestPlan: normalizeBlackBoxTestPlan(task?.blackBoxTestPlan, `tasks[${index}].blackBoxTestPlan`)
       };
     });
     for (const task of result.tasks) {
@@ -278,16 +279,63 @@ export function parseStageResult(stage, stdout) {
     result.checks = (result.checks || []).map((check, index) => ({
       name: nonEmptyString(check?.name, `checks[${index}].name`),
       status: nonEmptyString(check?.status, `checks[${index}].status`),
+      expected: nonEmptyString(check?.expected, `checks[${index}].expected`),
+      actual: nonEmptyString(check?.actual, `checks[${index}].actual`),
       evidence: nonEmptyString(check?.evidence, `checks[${index}].evidence`)
+    }));
+    if (!Array.isArray(result.automationAttempts || [])) throw new Error('automationAttempts must be an array.');
+    result.automationAttempts = (result.automationAttempts || []).map((attempt, index) => ({
+      command: nonEmptyString(attempt?.command, `automationAttempts[${index}].command`),
+      result: nonEmptyString(attempt?.result, `automationAttempts[${index}].result`),
+      covers: stringArray(attempt?.covers || [], `automationAttempts[${index}].covers`),
+      fallbackReason: typeof attempt?.fallbackReason === 'string' ? attempt.fallbackReason : ''
     }));
     result.manualChecks = stringArray(result.manualChecks || [], 'manualChecks');
     if (result.outcome === 'PASS_WITH_MANUAL_VALIDATION' && result.manualChecks.length === 0) {
       throw new Error('PASS_WITH_MANUAL_VALIDATION requires at least one manual check.');
     }
+    if (result.outcome === 'PASS_WITH_MANUAL_VALIDATION' && result.automationAttempts.length === 0) {
+      throw new Error('PASS_WITH_MANUAL_VALIDATION requires at least one documented automation attempt before asking the human.');
+    }
+    rejectQaImplementationGuidance(result);
   } else if (stage === 'integration' && result.outcome === 'PASS') {
     result.commitMessage = nonEmptyString(result.commitMessage, 'commitMessage');
   }
   return result;
+}
+
+function normalizeBlackBoxTestPlan(plan, name) {
+  if (!Array.isArray(plan) || plan.length === 0) throw new Error(`${name} must be a non-empty array.`);
+  return plan.map((test, index) => {
+    const normalized = {
+      name: nonEmptyString(test?.name, `${name}[${index}].name`),
+      action: nonEmptyString(test?.action, `${name}[${index}].action`),
+      expected: nonEmptyString(test?.expected, `${name}[${index}].expected`),
+      evidenceMethod: nonEmptyString(test?.evidenceMethod, `${name}[${index}].evidenceMethod`)
+    };
+    rejectBlackBoxTestPlanImplementationGuidance(normalized, `${name}[${index}]`);
+    return normalized;
+  });
+}
+
+function rejectBlackBoxTestPlanImplementationGuidance(test, name) {
+  const text = Object.values(test).join('\n');
+  const forbidden = /\b(?:src|lib|app|components|scripts)\/[^\s:]+:\d+|(?:^|\s)line\s+\d+\b|root cause|replacement lines?|code snippet|copy-paste|should\s+(?:call|use|create|set|replace|import|export)\b|must\s+(?:call|use|create|set|replace|import|export)\b|\b(?:grep|cat)\b/i;
+  if (forbidden.test(text)) {
+    throw new Error(`${name} must be a black-box test plan only: runtime action, expected observable result, and evidence method. Do not include source-line evidence, root-cause analysis, or fix instructions.`);
+  }
+}
+
+function rejectQaImplementationGuidance(result) {
+  const text = [
+    result.summary,
+    ...(result.evidence || []),
+    ...(result.checks || []).flatMap((check) => [check.name, check.expected, check.actual, check.evidence])
+  ].filter(Boolean).join('\n');
+  const forbidden = /\b(?:src|lib|app|components|scripts)\/[^\s:]+:\d+|(?:^|\s)line\s+\d+\b|root cause|replacement lines?|code snippet|copy-paste|should\s+(?:call|use|create|set|replace|import|export)\b|must\s+(?:call|use|create|set|replace|import|export)\b|\b(?:grep|cat)\b/i;
+  if (forbidden.test(text)) {
+    throw new Error('QA results must report black-box behavior only: test performed, expected result, actual result, and runtime evidence. Do not include source-line evidence, root-cause analysis, or fix instructions.');
+  }
 }
 
 function currentTask(session) {
@@ -354,6 +402,7 @@ function currentTaskPromptView(task) {
     description,
     specialistId,
     acceptanceCriteria,
+    blackBoxTestPlan,
     dependencies,
     status,
     filesChanged,
@@ -365,6 +414,7 @@ function currentTaskPromptView(task) {
     description,
     specialistId,
     acceptanceCriteria,
+    blackBoxTestPlan,
     dependencies,
     status,
     filesChanged: filesChanged || [],
@@ -457,12 +507,12 @@ function assignmentText(stage, session) {
       ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk.`
       : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.`,
     qa: task?.qaFailure
-      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed issue is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion.`
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and do NOT tell the programmer how to fix defects.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.`
       : `Validate the current task against its acceptance criteria: ${taskJson}.\n\n` +
         (session.taskLedger.some((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
           ? `CROSS-TASK REGRESSION: You must also verify that this task's changes did not break any previously passing completed tasks listed in your context (completedPriorTasks).\n\n`
           : '') +
-        `CRITICAL SCOPE BOUNDARY: Generate checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run syntax checks, smoke test scripts, or headless tests) on disk before returning your structured result.`,
+        `CRITICAL SCOPE BOUNDARY: Generate black-box functional checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run smoke test scripts, browser automation, API requests, CLI commands, or headless tests) on disk before returning your structured result. Do NOT inspect source code and do NOT tell the programmer how to fix defects. Each check must report test performed, expected result, actual result, and runtime evidence.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.`,
     integration: task
       ? `Inspect QA-approved work for task ${taskJson} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
@@ -712,6 +762,15 @@ function applyResult(repo, session, assignment, result, run) {
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'review-passed', review: result, 'code-reviewFailure': null } : task);
     next.currentStage = 'qa';
   } else if (stage === 'qa') {
+    const task = currentTask(next);
+    const runtimeTaskText = `${JSON.stringify(task?.acceptanceCriteria || [])} ${JSON.stringify(task?.description || '')}`;
+    const needsRuntimeValidation = /ui|canvas|browser|visual|layout|gameplay|game|audio|sound|controls?|render/i.test(runtimeTaskText);
+    if (needsRuntimeValidation) {
+      const attemptedRuntime = result.automationAttempts.some((attempt) => /playwright|puppeteer|chromium|chrome|firefox|browser|headless|page\.|locator\(/i.test(`${attempt.command} ${attempt.result}`));
+      if (!attemptedRuntime) {
+        throw new Error('QA for UI/game/browser/runtime criteria must document a Playwright/headless-browser/live runtime test attempt in automationAttempts.');
+      }
+    }
     const manual = result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,

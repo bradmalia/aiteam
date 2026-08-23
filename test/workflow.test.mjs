@@ -57,11 +57,11 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Add feature'], acceptanceCriteria: ['Feature is validated'], questions: [] }) },
     { stdout: result('PASS', { design: ['Use one Python module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement feature', specialistId: 'python', acceptanceCriteria: ['app.py exists'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement feature', specialistId: 'python', acceptanceCriteria: ['app.py exists'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'compile', status: 'PASS', evidence: 'py_compile passed' }], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'compile', status: 'PASS', expected: 'Python module compiles successfully.', actual: 'Python module compiled successfully.', evidence: 'py_compile passed' }], automationAttempts: [], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Implement validated feature' }) }
   ]);
 
@@ -91,11 +91,11 @@ test('UI projects run a validated UI-design stage and propagate its result to Pl
       screens: [{ name: 'Game', layout: 'Responsive single-column layout', components: ['Canvas', 'Score'], interactionStates: ['focused', 'paused'] }],
       designTokens: ['color-background: #111111']
     }) },
-    { stdout: result('PASS', { tasks: [{ id: 'ui-task', title: 'UI', description: 'Implement UI', specialistId: 'python', acceptanceCriteria: ['UI is responsive'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'ui-task', title: 'UI', description: 'Implement UI', specialistId: 'python', acceptanceCriteria: ['UI is responsive'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'responsive', status: 'PASS', evidence: 'validated' }], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'responsive', status: 'PASS', expected: 'The UI responds correctly in the tested viewport.', actual: 'The headless browser observed the responsive UI behavior.', evidence: 'validated' }], automationAttempts: [{ command: 'playwright --version && node visual-check.mjs', result: 'Headless browser validated responsive UI', covers: ['responsive UI'], fallbackReason: '' }], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Implement responsive UI' }) }
   ]);
   const runner = async (args) => {
@@ -119,11 +119,11 @@ test('already-implemented tasks complete successfully when Integration has no Gi
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['README exists'], acceptanceCriteria: ['README is valid'], questions: [], userConfirmed: true }) },
     { stdout: result('PASS', { design: ['Existing documentation'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'verify-readme', title: 'Verify README', description: 'Verify existing file', specialistId: 'python', acceptanceCriteria: ['README is valid'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'verify-readme', title: 'Verify README', description: 'Verify existing file', specialistId: 'python', acceptanceCriteria: ['README is valid'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['README.md'], validations: [{ command: 'test -s README.md', result: 'passed' }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'README', status: 'PASS', evidence: 'file is non-empty' }], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'README', status: 'PASS', expected: 'README is present and non-empty.', actual: 'README was present and non-empty.', evidence: 'file is non-empty' }], automationAttempts: [], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Verify existing README' }) }
   ]);
 
@@ -141,7 +141,7 @@ test('review failure routes the same task back to implementation', async () => {
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
     { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', location: 'app.py', impact: 'Wrong value', recommendation: 'Fix it' }] }) }
@@ -180,11 +180,11 @@ test('post-QA path changes invalidate approval and route back to implementation'
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
     { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'check', status: 'PASS', evidence: 'observed' }], manualChecks: [] }) }
+    { stdout: result('PASS', { checks: [{ name: 'check', status: 'PASS', expected: 'Feature behavior works.', actual: 'Feature behavior was observed working.', evidence: 'observed' }], automationAttempts: [], manualChecks: [] }) }
   ]);
   for (let i = 0; i < 7; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'integration');
@@ -201,11 +201,11 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Browser feature'], acceptanceCriteria: ['Looks correct'], questions: [] }) },
     { stdout: result('PASS', { design: ['Browser module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'browser-task', title: 'Browser feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Looks correct'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'browser-task', title: 'Browser feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Looks correct'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Static checks passed'], checks: [{ name: 'browser', status: 'PASS', evidence: 'Static checks passed' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
+    { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Headless runtime checks passed; subjective visual polish remains'], checks: [{ name: 'browser', status: 'PASS', expected: 'The browser page loads and exposes the expected canvas.', actual: 'Playwright opened the page and confirmed the canvas exists.', evidence: 'Playwright opened the page and confirmed the canvas exists' }], automationAttempts: [{ command: 'playwright --version && node browser-smoke.mjs', result: 'Headless browser loaded the page and found canvas element', covers: ['Looks correct'], fallbackReason: 'Final visual aesthetics still require human judgment' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
   ]);
   for (let i = 0; i < 7; i += 1) await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   let session = readSession(repo);
@@ -288,7 +288,7 @@ test('implementation cannot pass when reported files are absent from the server 
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
     { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['missing.py'], validations: [{ command: 'test -f missing.py', result: 'reported passed' }] }) }
   ]);
@@ -303,7 +303,7 @@ test('implementation FAIL routes to BLOCKED with retry instructions instead of s
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
     { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
-    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('FAIL', { summary: 'Cannot run the command due to insufficient sandbox permissions.' }) }
   ]);
@@ -322,10 +322,18 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.equal(awaiting.userConfirmed, false);
   assert.throws(() => parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: ['Still unclear'], userConfirmed: false })), /cannot PASS/i);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [] })), /non-empty array/);
+  assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] })), /blackBoxTestPlan/);
+  assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'source check', action: 'grep src/audio.js line 49', expected: 'Function should call toggleMute.', evidenceMethod: 'Source inspection.' }] }] })), /black-box test plan only/);
+  const planned = parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }));
+  assert.equal(planned.tasks[0].blackBoxTestPlan[0].action, 'Run the feature through the public interface.');
   assert.throws(() => parseStageResult('architecture', result('PASS', { design: ['Module'], specialistNeeds: [] })), /hasUserInterface/);
   assert.throws(() => parseStageResult('ui-design', result('PASS', { theme: { palette: [], typography: [], spacing: [] }, screens: [], designTokens: [] })), /must not be empty|non-empty array/);
   assert.throws(() => parseStageResult('implementation', result('PASS', { filesChanged: ['app.py'], validations: [] })), /validations must be a non-empty array/);
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
+  const qa = parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] }));
+  assert.equal(qa.checks[0].expected, 'The app starts.');
+  assert.throws(() => parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] })), /expected/);
+  assert.throws(() => parseStageResult('qa', result('FAIL', { evidence: ['Runtime assertion failed.'], checks: [{ name: 'audio toggle', status: 'FAIL', expected: 'Audio should mute after clicking the toggle.', actual: 'src/audio.js line 49 should call toggleMute().', evidence: 'Source inspection found missing call.' }], automationAttempts: [], manualChecks: [] })), /black-box behavior only/);
   assert.equal(normalizeTimeoutSeconds(1), 3600);
   assert.equal(normalizeTimeoutSeconds(300), 3600);
   assert.equal(normalizeTimeoutSeconds(9000), 3600);

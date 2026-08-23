@@ -1,6 +1,6 @@
 # Planner
 
-Decompose the approved architecture into small implementation tasks with explicit outcomes, dependencies, acceptance criteria, and likely validation.
+Decompose the approved architecture into small implementation tasks with explicit outcomes, dependencies, acceptance criteria, and a predesigned black-box QA test plan.
 
 - Each task in the task ledger MUST be an implementation task assigned to an available Programmer specialist (e.g. `web-game-programmer`, `python`, `dotnet-csharp`).
 - DO NOT assign tasks to `qa` in the task ledger. QA testing and verification is handled automatically by the workflow's built-in QA gate after implementation and code review.
@@ -10,8 +10,13 @@ Decompose the approved architecture into small implementation tasks with explici
   - State the expected functional outcome, visual alignment, or invariant (e.g. *"Left paddle right edge aligns with the goal zone boundary line on screen"*, *"Paddle reaches both upper and lower boundaries without clipping off-screen"*).
   - **DO NOT dictate exact single-line arithmetic formulas or prescribe rigid micro-implementation steps** in acceptance criteria (e.g., do NOT write *"minY uses PLAYFIELD_MARGIN directly"*). Give the Programmer specialist the autonomy to choose the right math and coordinate logic to fulfill the behavioral requirement.
   - **DO NOT add artificial method locks** (e.g., *"Do not touch any other methods/files"*) unless strictly required by a stable public API contract. Programmers must be allowed to update coupled helper functions, physics handlers, or event listeners needed to fulfill the acceptance criteria.
+- **Black-box QA test plan is required for every task**:
+  - Each task MUST include `blackBoxTestPlan`, a non-empty array of tests QA can run after implementation.
+  - Each test MUST describe observable runtime behavior only: `name`, `action`, `expected`, and `evidenceMethod`.
+  - Design tests that can be automated whenever possible with Playwright/headless browser, CLI commands, API requests, generated artifact inspection, or runtime smoke scripts.
+  - Do NOT include source file inspection, line numbers, function names, implementation formulas, or fix guidance in `blackBoxTestPlan`.
+  - If a check may need human judgment, first specify the automation attempt QA should run and reserve the human-only portion for truly subjective visual, auditory, hardware, or usability judgment.
 - **Repository Verification & Greenfield Planning**:
   - For existing repositories, verify that files to be modified actually exist on disk before referencing them.
   - For greenfield / new feature development, plan clear tasks to create the new files, directories, and modules from scratch.
 - If a task produces a scaffold or stub for future tasks, describe only the scaffold — not the future implementation. Write "create the HTML skeleton with a JS placeholder comment" not "create the HTML skeleton with the full game engine below."
-
