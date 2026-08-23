@@ -2,7 +2,7 @@
 
 Design a practical, repository-grounded software architecture for the confirmed Intake artifact.
 
-Your output feeds the human TRD. Write architecture decisions in clear, simple language. Avoid jargon and buzzwords when a plain explanation works. A high school graduate with a strong computer science background should be able to understand the TRD and use it as source of truth.
+Your output feeds the human TRD. Write architecture decisions in clear, simple language. Avoid jargon and buzzwords when a plain explanation works. The TRD should be understandable to a technically curious reader without making them feel talked down to, and precise enough for implementation, review, and QA agents to use as source of truth.
 
 When designing around modern third-party APIs, libraries, or unfamiliar tech stacks, use web search to verify current best practices and version-matched API signatures.
 

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { appendEvent, patchSession, readSession, writeSession } from './state.mjs';
 import { commitValidatedPaths, fingerprintPaths, gitSnapshot } from './git.mjs';
 import { getAgent, loadRegistry, registerScopedSpecialist } from './registry.mjs';
@@ -39,7 +40,8 @@ Common fields:
 - "outcome": "PASS", "FAIL", or "BLOCKED"
 - "summary": non-empty string
 - "evidence": REQUIRED non-empty array of concrete strings when outcome is PASS. You MUST list how you verified the changes. Do not leave this empty or omit it, or the server will reject your response!
-Do not claim commands, files, or tests that you did not actually observe.`;
+Do not claim commands, files, or tests that you did not actually observe.
+For stages that do not explicitly require file changes, do not write temporary files to validate your JSON. Return the JSON object directly; the AITEAM server validates it after you respond.`;
 
 const STAGE_SCHEMAS = {
   intake: `${COMMON_SCHEMA}
@@ -818,7 +820,7 @@ function writeReviewArtifact(repo, session, filename, html) {
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, filename);
   fs.writeFileSync(filePath, html);
-  return { path: filePath, url: artifactUrl(session, filename) };
+  return { path: filePath, url: artifactUrl(session, filename), fileUrl: pathToFileURL(filePath).href };
 }
 
 function generatePrd(repo, session) {
@@ -830,7 +832,7 @@ function generatePrd(repo, session) {
     title: 'Product Requirements Document',
     subtitle: `Session ${session.id} · ${new Date().toLocaleString()}`,
     body: `
-      <section class="card"><h2>How To Read This</h2><p>This PRD is the source of truth for what the product should do and why. It intentionally uses plain language. If a simpler word works, prefer it over jargon or buzzwords. A high school graduate with a strong computer science background should be able to understand it without guessing.</p></section>
+      <section class="card"><h2>How To Read This</h2><p>This PRD explains what the product should do, who it is for, and how we will know it is finished. Please review the goals, requirements, and acceptance criteria. If anything is missing or wrong, describe the change you want before approving.</p></section>
       <h2>Document Basics</h2><table><tbody>
         <tr><th>Status</th><td>Ready for human review</td></tr>
         <tr><th>Owner</th><td>Analyst</td></tr>
@@ -878,7 +880,7 @@ function generateTrd(repo, session) {
     title: 'Technical Requirements Document',
     subtitle: `Session ${session.id} · Implementation readiness review`,
     body: `
-      <section class="card"><h2>How To Read This</h2><p>This TRD is the source of truth for how the team plans to build and test the product. It should stay clear and practical. Use simple terms when possible, and explain technical terms only when they are necessary. Implementation, review, and QA agents should use this document before making assumptions.</p></section>
+      <section class="card"><h2>How To Read This</h2><p>This TRD explains how the team plans to build and test the approved product. Please review the architecture, implementation plan, and testing plan. If the plan does not match what you approved in the PRD, describe the change you want before approving.</p></section>
       <h2>Document Basics</h2><table><tbody>
         <tr><th>Status</th><td>Ready for human review</td></tr>
         <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, Critical Reviewer</td></tr>
@@ -990,6 +992,7 @@ function applyResult(repo, session, assignment, result, run) {
       stage: 'prd-review',
       questions: [
         `Open the Product Requirements Document: ${artifact.url}`,
+        `If the localhost link does not open, use the local file instead: ${artifact.fileUrl}`,
         'Reply "approved" to approve the PRD and continue to Architecture, or describe required PRD changes.'
       ],
       artifact,
@@ -1045,6 +1048,7 @@ function applyResult(repo, session, assignment, result, run) {
       stage: 'trd-review',
       questions: [
         `Open the Technical Requirements Document: ${artifact.url}`,
+        `If the localhost link does not open, use the local file instead: ${artifact.fileUrl}`,
         'Review the architecture, implementation plan, and testing plan. Reply "approved" to begin implementation, or describe required TRD/testing-plan changes.'
       ],
       artifact,

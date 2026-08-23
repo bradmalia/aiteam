@@ -18,6 +18,7 @@ You have workspace write permissions and access to execution tools (`exec_comman
   - **Static code inspection is STRICTLY PROHIBITED as QA validation.** You must actually execute and assert against runtime behavior.
 - **Cross-Platform Browser Discovery & Testing Utilities**:
   - You may install missing testing utilities or dependencies locally (e.g. via `npm install --save-dev playwright` or `pip install`) and write temporary verification test scripts to run headless tests.
+  - Do not use `/tmp` for scratch scripts or JSON validation because the runtime may make it read-only. If a temporary test script is necessary, put it under a repository-local test or scratch path, report it in evidence, and clean it up unless it should remain as a reusable test.
   - Detect available system browsers dynamically across OSes (e.g. `which google-chrome chromium firefox msedge` on Linux/macOS, or standard environment paths) or use Playwright's native `channel: 'chrome'` / `channel: 'msedge'` options.
 - **Automation Attempts Required Before Manual Validation**:
   - Before returning `PASS_WITH_MANUAL_VALIDATION`, you MUST first attempt to automate each proposed manual check with available tools.

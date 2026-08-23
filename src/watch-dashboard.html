@@ -319,7 +319,7 @@
     }
     popoutWindow = window.open('', 'AITEAM_Live_Activity', 'width=950,height=750,menubar=no,toolbar=no,location=no,status=no');
     if (!popoutWindow) {
-      alert('Pop-up was blocked. Please allow pop-ups for http://127.0.0.1:4317 to use the pop-out window.');
+      alert(`Pop-up was blocked. Please allow pop-ups for ${window.location.origin} to use the pop-out window.`);
       return;
     }
     popoutWindow.document.write(`<!doctype html>

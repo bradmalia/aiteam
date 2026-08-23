@@ -30,6 +30,15 @@ test('agent prompt combines base and role contract', () => {
   assert.match(prompt, /Validate T3/);
 });
 
+test('read-only prompts forbid temporary JSON file validation', () => {
+  const agent = getAgent('analyst');
+  const prompt = buildAgentPrompt(agent, 'Collect intake requirements', '{}', 'intake');
+  assert.match(prompt, /must not write files anywhere, including `\/tmp`/);
+  assert.match(prompt, /Do not create temporary JSON files/);
+  assert.match(prompt, /Return the required JSON object directly/);
+  assert.match(prompt, /Return the final structured JSON object directly/);
+});
+
 test('workflow-scoped specialists can be registered, resolved, and prompted', () => {
   const repo = repository();
   const specialist = registerScopedSpecialist(repo, {

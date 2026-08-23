@@ -205,11 +205,15 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.equal(session.currentStage, 'prd-review');
   assert.equal(session.pendingUserInput.kind, 'prd-review');
   assert.match(session.pendingUserInput.artifact.url, /\/artifacts\/prd\.html$/);
+  assert.match(session.pendingUserInput.artifact.fileUrl, /^file:\/\/.*\/prd\.html$/);
+  assert.match(session.pendingUserInput.questions.join('\n'), /local file instead: file:\/\//);
   const prdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
   assert.match(prdHtml, /Product Requirements Document/);
   assert.match(prdHtml, /Problem To Solve/);
   assert.match(prdHtml, /PRD-R1/);
   assert.match(prdHtml, /Open Questions/);
+  assert.match(prdHtml, /If anything is missing or wrong, describe the change you want before approving/);
+  assert.doesNotMatch(prdHtml, /high school/i);
 
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please add a clearer approval criterion.' } });
   session = readSession(repo);
@@ -226,12 +230,16 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.equal(session.currentStage, 'trd-review');
   assert.equal(session.pendingUserInput.kind, 'trd-review');
   assert.match(session.pendingUserInput.artifact.url, /\/artifacts\/trd\.html$/);
+  assert.match(session.pendingUserInput.artifact.fileUrl, /^file:\/\/.*\/trd\.html$/);
+  assert.match(session.pendingUserInput.questions.join('\n'), /local file instead: file:\/\//);
   const trdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
   assert.match(trdHtml, /Testing Plan/);
   assert.match(trdHtml, /System Boundary And Runtime Flows/);
   assert.match(trdHtml, /Data, Interfaces, And Dependencies/);
   assert.match(trdHtml, /Security, Privacy, And Operations/);
   assert.match(trdHtml, /Requirements-To-Work Traceability/);
+  assert.match(trdHtml, /If the plan does not match what you approved in the PRD/);
+  assert.doesNotMatch(trdHtml, /high school/i);
 
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please revise the testing plan.' } });
   session = readSession(repo);
@@ -491,6 +499,7 @@ test('Analyst Intake pauses for user answers and blocks Architecture until confi
   assert.equal(intake.session.currentStage, 'prd-review');
   assert.equal(intake.session.pendingUserInput.kind, 'prd-review');
   assert.match(intake.session.pendingUserInput.artifact.url, /\/artifacts\/prd\.html$/);
+  assert.match(intake.session.pendingUserInput.artifact.fileUrl, /^file:\/\/.*\/prd\.html$/);
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
   assert.equal(readSession(repo).currentStage, 'architecture');
   const architecture = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });

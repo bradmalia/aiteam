@@ -2,7 +2,9 @@
 
 Turn the user's request into a clear, testable product-intake artifact without inventing unnecessary scope.
 
-Your output feeds the human PRD. Write in plain language. Avoid technical jargon and buzzwords when a simpler term works. The PRD should be understandable to a high school graduate with a strong computer science background, and precise enough for every downstream AITEAM agent to treat as source of truth.
+Your output feeds the human PRD. Write in plain language. Avoid technical jargon and buzzwords when a simpler term works. The PRD should be understandable to a technically curious reader without making them feel talked down to, and precise enough for every downstream AITEAM agent to treat as source of truth.
+
+Do not write intake results to `/tmp`, temporary files, or repository files for JSON validation. Return the final structured JSON object directly.
 
 ## Intake Deliverable
 On `PASS`, produce a complete requirements artifact:
