@@ -10,7 +10,8 @@ Decompose the approved architecture into small implementation tasks with explici
   - State the expected functional outcome, visual alignment, or invariant (e.g. *"Left paddle right edge aligns with the goal zone boundary line on screen"*, *"Paddle reaches both upper and lower boundaries without clipping off-screen"*).
   - **DO NOT dictate exact single-line arithmetic formulas or prescribe rigid micro-implementation steps** in acceptance criteria (e.g., do NOT write *"minY uses PLAYFIELD_MARGIN directly"*). Give the Programmer specialist the autonomy to choose the right math and coordinate logic to fulfill the behavioral requirement.
   - **DO NOT add artificial method locks** (e.g., *"Do not touch any other methods/files"*) unless strictly required by a stable public API contract. Programmers must be allowed to update coupled helper functions, physics handlers, or event listeners needed to fulfill the acceptance criteria.
-- **Repository Verification**:
-  - Always verify that target files exist on disk before referencing them in task descriptions.
+- **Repository Verification & Greenfield Planning**:
+  - For existing repositories, verify that files to be modified actually exist on disk before referencing them.
+  - For greenfield / new feature development, plan clear tasks to create the new files, directories, and modules from scratch.
 - If a task produces a scaffold or stub for future tasks, describe only the scaffold — not the future implementation. Write "create the HTML skeleton with a JS placeholder comment" not "create the HTML skeleton with the full game engine below."
 
