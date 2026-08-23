@@ -69,10 +69,9 @@ function normalizeSpecialist(input) {
 }
 
 export function loadScopedSpecialists(repo) {
-  const dirs = [globalSpecialistDir()];
-  if (repo) {
-    dirs.push(protectedSpecialistDir(repo), scopedSpecialistDir(repo));
-  }
+  const dirs = repo
+    ? [protectedSpecialistDir(repo), scopedSpecialistDir(repo)]
+    : [globalSpecialistDir()];
   const records = new Map();
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
@@ -104,10 +103,9 @@ export function registerScopedSpecialist(repo, input, { provenance } = {}) {
   if (builtInRegistry().agents.some((agent) => agent.id === specialist.id)) {
     throw new Error(`Cannot replace built-in AITEAM agent: ${specialist.id}`);
   }
-  const dirs = [globalSpecialistDir()];
-  if (repo) {
-    dirs.push(scopedSpecialistDir(repo), protectedSpecialistDir(repo));
-  }
+  const dirs = repo
+    ? [scopedSpecialistDir(repo), protectedSpecialistDir(repo)]
+    : [globalSpecialistDir()];
   for (const dir of dirs) fs.mkdirSync(dir, { recursive: true });
   const record = { ...specialist, provenance, createdAt: new Date().toISOString() };
   const serialized = JSON.stringify(record, null, 2) + '\n';

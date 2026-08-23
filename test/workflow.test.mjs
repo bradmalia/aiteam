@@ -193,7 +193,15 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   const runner = queuedRunner(repo, [
     { stdout: result('PASS', { requirements: ['Reviewed feature'], acceptanceCriteria: ['Feature is approved'], questions: [], userConfirmed: true }) },
     { stdout: result('PASS', { requirements: ['Reviewed feature v2'], acceptanceCriteria: ['Revised feature is approved'], questions: [], userConfirmed: true }) },
-    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: true, specialistNeeds: [] }) },
+    { stdout: result('PASS', {
+      theme: { palette: ['green'], typography: ['mono'], spacing: ['8px'] },
+      screens: [
+        { name: 'Gameplay HUD', layout: 'Canvas court with player and AI paddles, score bar, ball tracer, and sound toggle.', components: ['Score bar', 'Player paddle', 'AI paddle', 'Ball tracer', 'Sound toggle'], interactionStates: ['mouse control', 'keyboard control'] },
+        { name: 'Victory Screen', layout: 'Centered overlay over dimmed game court.', components: ['Winner title', 'Final score', 'Play Again button', 'Change Difficulty button'], interactionStates: ['focused', 'hover'] }
+      ],
+      designTokens: ['color-accent: green']
+    }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement revised plan', specialistId: 'python', acceptanceCriteria: ['Works after revision'], dependencies: [], blackBoxTestPlan: [{ name: 'revised runtime behavior', action: 'Run the revised feature through the public interface.', expected: 'The revised expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
@@ -226,6 +234,7 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   session = readSession(repo);
   assert.equal(session.currentStage, 'trd-review');
   assert.equal(session.pendingUserInput.kind, 'trd-review');
@@ -238,6 +247,13 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.match(trdHtml, /Data, Interfaces, And Dependencies/);
   assert.match(trdHtml, /Security, Privacy, And Operations/);
   assert.match(trdHtml, /Requirements-To-Work Traceability/);
+  assert.match(trdHtml, /wireframe-gameplay/);
+  assert.match(trdHtml, /wireframe-victory/);
+  assert.match(trdHtml, /class="task-card"/);
+  assert.match(trdHtml, /class="test-group"/);
+  assert.match(trdHtml, /class="flow-card"/);
+  assert.doesNotMatch(trdHtml, /<h2>Implementation Plan<\/h2><table/);
+  assert.doesNotMatch(trdHtml, /<h2>Testing Plan<\/h2><table/);
   assert.match(trdHtml, /If the plan does not match what you approved in the PRD/);
   assert.doesNotMatch(trdHtml, /high school/i);
 
@@ -293,6 +309,73 @@ test('architecture capability gaps must pass through Recruiter provenance before
   const raw = JSON.parse(fs.readFileSync(path.join(repo, '.aiteam', 'specialists', 'phaser-programmer.json'), 'utf8'));
   assert.equal(raw.provenance.source, 'recruiter');
   assert.equal(raw.provenance.runId, 'run-3');
+});
+
+test('planning recovers unresolved architecture specialist gaps before retrying planner', () => {
+  const repo = createRepository();
+  newSession(repo, 'Build a canvas game');
+  const session = readSession(repo);
+  writeSession(repo, {
+    ...session,
+    currentStage: 'planning',
+    completedStages: ['intake', 'prd-review', 'architecture', 'ui-design', 'planning'],
+    stageEvidence: {
+      intake: { result: parseStageResult('intake', result('PASS', { requirements: ['Canvas game'], acceptanceCriteria: ['Runs'], questions: [], userConfirmed: true })) },
+      architecture: { result: parseStageResult('architecture', result('PASS', {
+        design: ['Use a browser canvas architecture'],
+        hasUserInterface: true,
+        specialistNeeds: [
+          { capability: 'Canvas rendering and game loop', reason: 'No built-in browser game specialist exists.', suggestedId: 'web-game-programmer' }
+        ]
+      })) }
+    },
+    recruiterQueue: [],
+    taskLedger: []
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  const recovered = readSession(repo);
+  assert.equal(assignment.stage, 'recruiting');
+  assert.equal(assignment.agentId, 'recruiter');
+  assert.equal(recovered.currentStage, 'recruiting');
+  assert.equal(recovered.resumeStage, 'planning');
+  assert.equal(recovered.recruiterQueue[0].suggestedId, 'web-game-programmer');
+  assert.ok(!recovered.completedStages.includes('planning'));
+  assert.match(recovered.lastFailure, /Recovered unresolved architecture specialist gaps/);
+});
+
+test('recruiter must register the specialist id requested by the current architecture gap', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build a canvas game');
+  const session = readSession(repo);
+  writeSession(repo, {
+    ...session,
+    currentStage: 'recruiting',
+    resumeStage: 'planning',
+    completedStages: ['intake', 'prd-review', 'architecture'],
+    stageEvidence: {
+      intake: { result: parseStageResult('intake', result('PASS', { requirements: ['Canvas game'], acceptanceCriteria: ['Runs'], questions: [], userConfirmed: true })) },
+      architecture: { result: parseStageResult('architecture', result('PASS', {
+        design: ['Use a browser canvas architecture'],
+        hasUserInterface: true,
+        specialistNeeds: [
+          { capability: 'Canvas rendering and game loop', reason: 'No built-in browser game specialist exists.', suggestedId: 'web-game-programmer' }
+        ]
+      })) }
+    },
+    recruiterQueue: [
+      { capability: 'Canvas rendering and game loop', reason: 'No built-in browser game specialist exists.', suggestedId: 'web-game-programmer' }
+    ]
+  });
+  const contract = 'Implement only audio work for this workflow. This intentionally mismatched specialist contract is long enough for schema validation.';
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { specialist: { id: 'web-audio-programmer', role: 'Web Audio Programmer', sandbox: 'workspace-write', triggers: ['audio'], capabilities: ['Web Audio API'], contract } }) }
+  ]);
+
+  await assert.rejects(
+    () => advanceWorkflow({ repo, runner, timeoutSeconds: 300 }),
+    /proposed web-audio-programmer but current architecture gap requires web-game-programmer/
+  );
 });
 
 test('post-QA path changes invalidate approval and route back to implementation', async () => {

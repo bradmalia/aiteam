@@ -108,6 +108,28 @@ test('workflow-scoped specialists can be registered, resolved, and prompted', ()
   assert.match(buildAgentPrompt(resolved, 'Build Pong'), /Build browser games with TypeScript and Phaser/);
 });
 
+test('repo-scoped specialists do not leak through the global specialist registry', () => {
+  const previousGlobalDir = process.env.AITEAM_GLOBAL_SPECIALIST_DIR;
+  const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-global-specialists-'));
+  process.env.AITEAM_GLOBAL_SPECIALIST_DIR = globalDir;
+  try {
+    registerScopedSpecialist(null, {
+      id: 'global-web-game-programmer',
+      role: 'Global Web Game Programmer',
+      sandbox: 'workspace-write',
+      triggers: ['legacy web game'],
+      capabilities: ['TypeScript', 'Phaser'],
+      contract: 'Build legacy Phaser games only when explicitly registered for the current workflow and never satisfy unrelated repository-scoped capability gaps.'
+    }, { provenance });
+    const repo = repository();
+    assert.equal(getAgent('global-web-game-programmer', null)?.role, 'Global Web Game Programmer');
+    assert.equal(getAgent('global-web-game-programmer', repo), null);
+  } finally {
+    if (previousGlobalDir === undefined) delete process.env.AITEAM_GLOBAL_SPECIALIST_DIR;
+    else process.env.AITEAM_GLOBAL_SPECIALIST_DIR = previousGlobalDir;
+  }
+});
+
 test('workflow-scoped specialists cannot replace built-in agents', () => {
   const repo = repository();
   assert.throws(() => registerScopedSpecialist(repo, {

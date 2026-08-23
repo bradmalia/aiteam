@@ -649,6 +649,26 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     session = writeSession(repo, { ...session, activeRun: null, lastFailure: recoveryReason });
     appendEvent(repo, { type: 'stale_active_run_recovered', reason: recoveryReason, previous: staleRun });
   }
+  if (['planning', 'critical-review'].includes(session.currentStage)) {
+    const missingGaps = unresolvedArchitectureGaps(session, repo);
+    if (missingGaps.length) {
+      const queuedIds = new Set((session.recruiterQueue || []).map((gap) => proposedSpecialistId(gap)));
+      const queue = [
+        ...(session.recruiterQueue || []),
+        ...missingGaps.filter((gap) => !queuedIds.has(proposedSpecialistId(gap)))
+      ];
+      const reason = `Recovered unresolved architecture specialist gaps before Planning: ${missingGaps.map((gap) => proposedSpecialistId(gap)).join(', ')}.`;
+      session = writeSession(repo, {
+        ...session,
+        currentStage: 'recruiting',
+        resumeStage: 'planning',
+        recruiterQueue: queue,
+        completedStages: (session.completedStages || []).filter((stage) => !['planning', 'critical-review'].includes(stage)),
+        lastFailure: reason
+      });
+      appendEvent(repo, { type: 'unresolved_specialist_gaps_recovered', reason, gaps: missingGaps });
+    }
+  }
   let task = currentTask(session);
   if (session.currentStage === 'implementation' && (!task || !['planned', 'needs-rework'].includes(task.status))) {
     task = nextRunnableTask(session);
@@ -733,6 +753,17 @@ function hasSpecialist(repo, id) {
   return Boolean(getAgent(id, repo));
 }
 
+function unresolvedArchitectureGaps(session, repo) {
+  const gaps = session.stageEvidence.architecture?.result?.specialistNeeds || [];
+  const seen = new Set();
+  return gaps.filter((gap) => {
+    const id = proposedSpecialistId(gap);
+    if (!id || seen.has(id) || hasSpecialist(repo, id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -769,15 +800,111 @@ function svgFlow(title, steps) {
 }
 
 function screenMockups(uiDesign) {
-  const screens = (uiDesign?.screens || []).slice(0, 3);
+  const screens = (uiDesign?.screens || []).slice(0, 4);
   if (!screens.length) return '<p class="muted">No UI mockups yet. UI/UX Design has not run or the product is headless.</p>';
-  return `<div class="mockups">${screens.map((screen) => `
-    <article class="mockup">
-      <div class="mockup-top">${escapeHtml(screen.name)}</div>
-      <div class="mockup-body">
-        ${(screen.components || []).slice(0, 5).map((component) => `<div class="component">${escapeHtml(component)}</div>`).join('')}
+  return `<div class="mockups">${screens.map((screen) => {
+    const name = String(screen.name || '').toLowerCase();
+    const kind = /game|hud|court|play/.test(name) ? 'gameplay'
+      : /victory|win|over|result/.test(name) ? 'victory'
+      : /menu|start|difficulty|select/.test(name) ? 'menu'
+      : 'generic';
+    return `
+      <article class="mockup">
+        <div class="mockup-top">${escapeHtml(screen.name)}</div>
+        <div class="wireframe wireframe-${kind}">
+          ${wireframeBody(kind, screen)}
+        </div>
+        <p class="mockup-layout">${escapeHtml(screen.layout)}</p>
+        ${screen.interactionStates?.length ? `<p class="mini-label">States</p>${tagList(screen.interactionStates.slice(0, 5))}` : ''}
+      </article>`;
+  }).join('')}</div>`;
+}
+
+function wireframeBody(kind, screen) {
+  if (kind === 'gameplay') {
+    return `
+      <div class="scorebar"><span>PLAYER 0</span><span>AI 0</span></div>
+      <div class="court">
+        <span class="center-line"></span>
+        <span class="paddle player"></span>
+        <span class="paddle ai"></span>
+        <span class="ball"></span>
+        <span class="trail t1"></span>
+        <span class="trail t2"></span>
+        <span class="hud-chip">MOUSE</span>
       </div>
-      <p>${escapeHtml(screen.layout)}</p>
+      <button class="sound-dot" aria-label="Sound toggle">♪</button>`;
+  }
+  if (kind === 'victory') {
+    return `
+      <div class="court dimmed"><span class="center-line"></span><span class="paddle player"></span><span class="paddle ai"></span></div>
+      <div class="modal">
+        <strong>Winner</strong>
+        <span>Final score</span>
+        <button>Play Again</button>
+        <button>Change Difficulty</button>
+      </div>`;
+  }
+  if (kind === 'menu') {
+    return `
+      <div class="screen-title">${escapeHtml(screen.name || 'Menu')}</div>
+      <div class="button-stack">
+        ${(screen.components || ['Easy', 'Medium', 'Hard']).filter(Boolean).slice(0, 4).map((component) => `<button>${escapeHtml(shortLabel(component))}</button>`).join('')}
+      </div>
+      <button class="sound-dot" aria-label="Sound toggle">♪</button>`;
+  }
+  return `
+    <div class="screen-title">${escapeHtml(screen.name || 'Screen')}</div>
+    <div class="wire-list">${(screen.components || []).filter(Boolean).slice(0, 6).map((component) => `<span>${escapeHtml(shortLabel(component))}</span>`).join('')}</div>`;
+}
+
+function shortLabel(value) {
+  return String(value || '').replace(/[—–].*$/, '').replace(/:.*/, '').trim().slice(0, 34) || 'Component';
+}
+
+function tagList(items) {
+  return `<div class="tags">${(items || []).map((item) => `<span>${escapeHtml(item)}</span>`).join('')}</div>`;
+}
+
+function runtimeScenarioCards(scenarios) {
+  const values = scenarios || [];
+  if (!values.length) return '<p class="muted">No runtime scenarios specified.</p>';
+  return `<div class="flow-cards">${values.map((scenario) => `
+    <article class="flow-card">
+      <h3>${escapeHtml(scenario.name)}</h3>
+      ${scenario.trigger ? `<p class="muted">${escapeHtml(scenario.trigger)}</p>` : ''}
+      <ol>${(scenario.flow || []).map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>
+    </article>`).join('')}</div>`;
+}
+
+function taskCards(tasks) {
+  if (!tasks.length) return '<p class="muted">No implementation tasks specified.</p>';
+  return `<div class="task-list">${tasks.map((task, index) => `
+    <article class="task-card">
+      <div class="task-head"><span class="step-badge">${index + 1}</span><div><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.id)} · ${escapeHtml(task.specialistId)}</p></div></div>
+      <p>${escapeHtml(task.description)}</p>
+      <div class="task-columns">
+        <section><h4>Done When</h4>${listItems(task.acceptanceCriteria)}</section>
+        <section><h4>Depends On</h4>${task.dependencies?.length ? tagList(task.dependencies) : '<p class="muted">No dependencies.</p>'}</section>
+      </div>
+    </article>`).join('')}</div>`;
+}
+
+function testingCards(tasks) {
+  if (!tasks.length) return '<p class="muted">No testing plan specified.</p>';
+  return `<div class="test-groups">${tasks.map((task) => `
+    <article class="test-group">
+      <h3>${escapeHtml(task.title)}</h3>
+      <p class="muted">${escapeHtml(task.id)}</p>
+      <div class="test-list">${(task.blackBoxTestPlan || []).map((test) => `
+        <section class="test-card">
+          <h4>${escapeHtml(test.name)}</h4>
+          <dl>
+            <dt>Action</dt><dd>${escapeHtml(test.action)}</dd>
+            <dt>Expected</dt><dd>${escapeHtml(test.expected)}</dd>
+            <dt>Evidence</dt><dd>${escapeHtml(test.evidenceMethod)}</dd>
+          </dl>
+        </section>`).join('')}</div>
     </article>`).join('')}</div>`;
 }
 
@@ -796,19 +923,57 @@ function documentShell({ title, subtitle, body }) {
     h1 { margin:0; font-size:clamp(36px,6vw,72px); letter-spacing:-.04em; line-height:.92; }
     h2 { margin-top:34px; padding-top:18px; border-top:1px solid var(--line); font-size:28px; }
     h3 { margin-bottom:8px; color:var(--accent); }
+    h4 { margin:14px 0 8px; color:var(--ink); }
     p, li { font-size:17px; line-height:1.55; }
+    p { max-width:78ch; }
     .subtitle, .muted { color:var(--muted); }
     .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; }
-    .card, table, .diagram, .mockup { background:rgba(255,255,255,.65); border:1px solid var(--line); border-radius:20px; padding:18px; }
+    .wide-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:18px; }
+    .card, table, .diagram, .mockup, .flow-card, .task-card, .test-group { background:rgba(255,255,255,.65); border:1px solid var(--line); border-radius:20px; padding:18px; }
     table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; }
     th, td { text-align:left; vertical-align:top; padding:12px; border-bottom:1px solid var(--line); }
     th { color:var(--accent); }
     figcaption { font-weight:700; margin-bottom:10px; color:var(--accent); }
-    .mockups { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:18px; }
+    .mockups { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:22px; align-items:start; }
     .mockup-top { background:var(--accent); color:white; border-radius:14px 14px 0 0; padding:10px 14px; font-weight:700; }
-    .mockup-body { min-height:170px; border:2px solid var(--accent); border-top:0; border-radius:0 0 14px 14px; padding:18px; background:var(--soft); }
-    .component { background:white; border:1px solid #9ac2bd; border-radius:999px; padding:10px 14px; margin:10px 0; }
+    .mockup-layout { font-size:14px; color:var(--muted); }
+    .wireframe { position:relative; min-height:260px; border:2px solid var(--accent); border-top:0; border-radius:0 0 14px 14px; padding:18px; background:#09131a; color:#eafff8; overflow:hidden; box-shadow:inset 0 0 50px rgba(0,255,136,.08); }
+    .wireframe::before { content:""; position:absolute; inset:0; background:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:28px 28px; opacity:.45; pointer-events:none; }
+    .screen-title { position:relative; z-index:1; margin:26px auto 22px; text-align:center; font-weight:900; letter-spacing:.16em; font-size:26px; text-shadow:0 0 12px rgba(0,255,136,.7); }
+    .button-stack { position:relative; z-index:1; display:grid; gap:12px; max-width:190px; margin:0 auto; }
+    .button-stack button, .modal button { border:1px solid #80ffd6; border-radius:999px; background:rgba(255,255,255,.08); color:#eafff8; padding:10px 14px; font-weight:700; }
+    .scorebar { position:relative; z-index:1; display:flex; justify-content:space-between; font-size:13px; letter-spacing:.08em; margin-bottom:12px; }
+    .court { position:relative; z-index:1; height:190px; border:1px solid rgba(234,255,248,.45); border-radius:10px; background:radial-gradient(circle at center,#142338,#080d16); }
+    .center-line { position:absolute; top:8%; bottom:8%; left:50%; border-left:2px dashed rgba(234,255,248,.45); }
+    .paddle { position:absolute; top:35%; width:8px; height:54px; border-radius:999px; box-shadow:0 0 16px currentColor; }
+    .paddle.player { left:18px; background:#00ff88; color:#00ff88; }
+    .paddle.ai { right:18px; background:#ff4466; color:#ff4466; }
+    .ball { position:absolute; left:58%; top:45%; width:14px; height:14px; border-radius:50%; background:white; box-shadow:0 0 14px white; }
+    .trail { position:absolute; border-radius:50%; background:#00ff88; opacity:.45; }
+    .trail.t1 { left:52%; top:47%; width:10px; height:10px; }
+    .trail.t2 { left:47%; top:49%; width:7px; height:7px; opacity:.25; }
+    .hud-chip { position:absolute; right:8px; bottom:8px; border:1px solid rgba(234,255,248,.4); border-radius:999px; padding:4px 8px; font-size:11px; }
+    .sound-dot { position:absolute; z-index:2; right:14px; top:14px; width:38px; height:38px; border-radius:50%; border:1px solid #80ffd6; background:rgba(255,255,255,.08); color:#eafff8; }
+    .dimmed { opacity:.45; }
+    .modal { position:absolute; z-index:2; inset:54px 42px auto; display:grid; gap:8px; justify-items:center; padding:18px; border:1px solid rgba(234,255,248,.55); border-radius:16px; background:rgba(5,9,15,.88); box-shadow:0 18px 50px rgba(0,0,0,.35); }
+    .wire-list { position:relative; z-index:1; display:grid; gap:10px; margin-top:20px; }
+    .wire-list span, .tags span { display:inline-block; border:1px solid #9ac2bd; border-radius:999px; padding:7px 10px; background:white; color:var(--ink); margin:4px 6px 4px 0; font-size:13px; }
+    .mini-label { margin:12px 0 4px; color:var(--accent); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.08em; }
+    .flow-cards, .task-list, .test-groups { display:grid; gap:18px; }
+    .flow-card ol { display:grid; gap:8px; padding-left:26px; }
+    .task-head { display:flex; gap:14px; align-items:center; }
+    .task-head h3 { margin:0; }
+    .task-head p { margin:2px 0 0; color:var(--muted); font-size:14px; }
+    .step-badge { display:grid; place-items:center; flex:0 0 38px; width:38px; height:38px; border-radius:50%; background:var(--accent); color:white; font-weight:800; }
+    .task-columns { display:grid; grid-template-columns:minmax(0,2fr) minmax(180px,1fr); gap:18px; }
+    .test-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+    .test-card { border:1px solid var(--line); border-radius:16px; padding:14px; background:rgba(255,250,240,.7); }
+    .test-card h4 { margin-top:0; }
+    dt { margin-top:8px; font-weight:800; color:var(--accent); }
+    dd { margin:2px 0 0; line-height:1.45; }
+    .table-wrap { overflow-x:auto; border-radius:20px; }
     code { background:#efe3c8; padding:2px 6px; border-radius:6px; }
+    @media (max-width:720px) { main { padding:28px 14px 48px; } .task-columns { grid-template-columns:1fr; } .mockups { grid-template-columns:1fr; } }
   </style>
 </head>
 <body><main><header><p class="subtitle">AITEAM Review Artifact</p><h1>${escapeHtml(title)}</h1><p class="subtitle">${escapeHtml(subtitle)}</p></header>${body}</main></body></html>`;
@@ -870,14 +1035,13 @@ function generatePrd(repo, session) {
   return writeReviewArtifact(repo, session, 'prd.html', html);
 }
 
-function generateTrd(repo, session) {
+export function generateTrd(repo, session) {
   const arch = architecturePromptView(session.stageEvidence.architecture?.result) || {};
   const ui = session.stageEvidence['ui-design']?.result || null;
   const plan = session.stageEvidence.planning?.result || {};
   const review = session.stageEvidence['critical-review']?.result || {};
   const intake = session.stageEvidence.intake?.result || {};
   const tasks = plan.tasks || [];
-  const testRows = tasks.flatMap((task) => (task.blackBoxTestPlan || []).map((test) => ({ task, test })));
   const reqs = intake.requirements || [];
   const traceRows = tasks.flatMap((task) => (task.acceptanceCriteria || []).map((criterion) => ({ task, criterion })));
   const html = documentShell({
@@ -885,27 +1049,27 @@ function generateTrd(repo, session) {
     subtitle: `Session ${session.id} · Implementation readiness review`,
     body: `
       <section class="card"><h2>How To Read This</h2><p>This TRD explains how the team plans to build and test the approved product. Please review the architecture, implementation plan, and testing plan. If the plan does not match what you approved in the PRD, describe the change you want before approving.</p></section>
-      <h2>Document Basics</h2><table><tbody>
+      <h2>Document Basics</h2><div class="table-wrap"><table><tbody>
         <tr><th>Status</th><td>Ready for human review</td></tr>
         <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, Critical Reviewer</td></tr>
         <tr><th>Last Updated</th><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
         <tr><th>Implementation Starts After</th><td>Human approval of this TRD</td></tr>
-      </tbody></table>
+      </tbody></table></div>
       ${svgFlow('Technical Delivery Flow', ['Architecture', 'UI/UX', 'Task plan', 'Black-box tests', 'Human TRD approval', 'Implementation'])}
-      <h2>Product Requirements Covered</h2><table><thead><tr><th>PRD ID</th><th>Requirement</th></tr></thead><tbody>${reqs.map((req, index) => `<tr><td>PRD-R${index + 1}</td><td>${escapeHtml(req)}</td></tr>`).join('')}</tbody></table>
+      <h2>Product Requirements Covered</h2><div class="table-wrap"><table><thead><tr><th>PRD ID</th><th>Requirement</th></tr></thead><tbody>${reqs.map((req, index) => `<tr><td>PRD-R${index + 1}</td><td>${escapeHtml(req)}</td></tr>`).join('')}</tbody></table></div>
       <h2>Architecture Overview</h2>${listItems(arch.design)}
-      <div class="grid">
+      <div class="wide-grid">
         <section class="card"><h3>Constraints</h3>${listItems(arch.constraints)}</section>
         <section class="card"><h3>Solution Strategy</h3>${listItems(arch.solutionStrategy)}</section>
         <section class="card"><h3>Deployment View</h3>${listItems(arch.deploymentView)}</section>
         <section class="card"><h3>Cross-Cutting Concepts</h3>${listItems(arch.crossCuttingConcepts)}</section>
       </div>
-      <h2>System Boundary And Runtime Flows</h2><div class="grid">
+      <h2>System Boundary And Runtime Flows</h2><div class="wide-grid">
         <section class="card"><h3>System Boundary</h3>${listItems(arch.context)}</section>
-        <section class="card"><h3>Runtime Scenarios</h3>${listItems((arch.runtimeScenarios || []).map((item) => `${item.name}: ${(item.flow || []).join(' -> ')}`))}</section>
+        <section><h3>Runtime Scenarios</h3>${runtimeScenarioCards(arch.runtimeScenarios || [])}</section>
       </div>
-      <h2>Building Blocks</h2><table><thead><tr><th>Name</th><th>Responsibility</th><th>Interfaces</th></tr></thead><tbody>${(arch.buildingBlocks || []).map((block) => `<tr><td>${escapeHtml(block.name)}</td><td>${escapeHtml(block.responsibility)}</td><td>${escapeHtml((block.interfaces || []).join(', '))}</td></tr>`).join('')}</tbody></table>
-      <h2>Quality Attributes</h2><table><thead><tr><th>Name</th><th>Scenario</th><th>Measure</th></tr></thead><tbody>${(arch.qualityAttributes || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.scenario)}</td><td>${escapeHtml(item.measure)}</td></tr>`).join('')}</tbody></table>
+      <h2>Building Blocks</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Responsibility</th><th>Interfaces</th></tr></thead><tbody>${(arch.buildingBlocks || []).map((block) => `<tr><td>${escapeHtml(block.name)}</td><td>${escapeHtml(block.responsibility)}</td><td>${escapeHtml((block.interfaces || []).join(', '))}</td></tr>`).join('')}</tbody></table></div>
+      <h2>Quality Attributes</h2><div class="table-wrap"><table><thead><tr><th>Name</th><th>Scenario</th><th>Measure</th></tr></thead><tbody>${(arch.qualityAttributes || []).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.scenario)}</td><td>${escapeHtml(item.measure)}</td></tr>`).join('')}</tbody></table></div>
       <h2>Data, Interfaces, And Dependencies</h2><div class="grid">
         <section class="card"><h3>Data Or State</h3>${listItems((arch.crossCuttingConcepts || []).filter((item) => /data|state|store|persist|config/i.test(item)))}</section>
         <section class="card"><h3>Interfaces</h3>${listItems((arch.buildingBlocks || []).flatMap((block) => block.interfaces || []))}</section>
@@ -916,9 +1080,9 @@ function generateTrd(repo, session) {
         <section class="card"><h3>Run, Deploy, And Back Out</h3>${listItems([...(arch.deploymentView || []), 'If implementation creates a serious problem, stop and route the task back to Implementation instead of shipping the change.'])}</section>
       </div>
       <h2>Screen Mockups</h2>${screenMockups(ui)}
-      <h2>Implementation Plan</h2><table><thead><tr><th>Task</th><th>Specialist</th><th>Acceptance Criteria</th><th>Dependencies</th></tr></thead><tbody>${tasks.map((task) => `<tr><td><strong>${escapeHtml(task.title)}</strong><br>${escapeHtml(task.description)}</td><td>${escapeHtml(task.specialistId)}</td><td>${escapeHtml((task.acceptanceCriteria || []).join(' · '))}</td><td>${escapeHtml((task.dependencies || []).join(', ') || 'none')}</td></tr>`).join('')}</tbody></table>
-      <h2>Requirements-To-Work Traceability</h2><table><thead><tr><th>Task</th><th>Acceptance Criterion</th><th>Likely PRD Link</th></tr></thead><tbody>${traceRows.map(({ task, criterion }, index) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(criterion)}</td><td>${escapeHtml(reqs[index % Math.max(reqs.length, 1)] ? `PRD-R${(index % reqs.length) + 1}` : 'PRD requirement not mapped')}</td></tr>`).join('')}</tbody></table>
-      <h2>Testing Plan</h2><table><thead><tr><th>Task</th><th>Test</th><th>Action</th><th>Expected</th><th>Evidence</th></tr></thead><tbody>${testRows.map(({ task, test }) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(test.name)}</td><td>${escapeHtml(test.action)}</td><td>${escapeHtml(test.expected)}</td><td>${escapeHtml(test.evidenceMethod)}</td></tr>`).join('')}</tbody></table>
+      <h2>Implementation Plan</h2>${taskCards(tasks)}
+      <h2>Requirements-To-Work Traceability</h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Acceptance Criterion</th><th>Likely PRD Link</th></tr></thead><tbody>${traceRows.map(({ task, criterion }, index) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(criterion)}</td><td>${escapeHtml(reqs[index % Math.max(reqs.length, 1)] ? `PRD-R${(index % reqs.length) + 1}` : 'PRD requirement not mapped')}</td></tr>`).join('')}</tbody></table></div>
+      <h2>Testing Plan</h2>${testingCards(tasks)}
       <h2>Critical Review</h2>${listItems((review.findings || []).map((finding) => `${finding.severity}: ${finding.description || finding.id}`))}
       <h2>Risks And Open Questions</h2><div class="grid">
         <section class="card"><h3>Technical Risks</h3>${listItems(arch.risks)}</section>
@@ -1020,6 +1184,10 @@ function applyResult(repo, session, assignment, result, run) {
     next.completedStages = [...new Set([...next.completedStages, 'ui-design'])];
     next.currentStage = 'planning';
   } else if (stage === 'recruiting') {
+    const expectedId = proposedSpecialistId(next.recruiterQueue[0] || {});
+    if (expectedId && result.specialist.id !== expectedId) {
+      throw new Error(`Recruiter proposed ${result.specialist.id} but current architecture gap requires ${expectedId}.`);
+    }
     const id = proposalId(run, result.specialist);
     const provenance = { source: 'recruiter', runId: run.runId, proposalId: id };
     const specialist = registerScopedSpecialist(repo, result.specialist, { provenance });
