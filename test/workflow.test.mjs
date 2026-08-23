@@ -75,6 +75,7 @@ function queuedRunner(repo, outputs) {
     const item = outputs[index++];
     if (!item) throw new Error(`Unexpected runner call ${index} for ${agentId}`);
     if (item.write) fs.writeFileSync(path.join(repo, item.write.path), item.write.content);
+    if (item.remove) fs.rmSync(path.join(repo, item.remove), { force: true, recursive: true });
     return {
       runId: `run-${index}`,
       agentId,
@@ -499,6 +500,26 @@ test('implementation cannot pass when reported files are absent from the server 
   for (let i = 0; i < 4; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   await assert.rejects(advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 }), /did not write files to disk/);
   assert.equal(readSession(repo).currentStage, 'implementation');
+});
+
+test('missing implemented files reported by validation route directly back to implementation', async () => {
+  const repo = createRepository();
+  newSession(repo, 'Build feature');
+  const runner = queuedRunner(repo, [
+    { stdout: result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [] }) },
+    { stdout: result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'test -f app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('BLOCKED', { summary: 'Cannot complete code review because app.py was not found on disk.' }), remove: 'app.py' }
+  ]);
+  for (let i = 0; i < 5; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
+  await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
+  const session = readSession(repo);
+  assert.equal(session.status, 'ACTIVE');
+  assert.equal(session.currentStage, 'implementation');
+  assert.equal(session.taskLedger[0].status, 'needs-rework');
+  assert.match(session.taskLedger[0]['code-reviewFailure'].summary, /required implemented files are missing/);
 });
 
 test('implementation FAIL routes to BLOCKED with retry instructions instead of staying stuck', async () => {

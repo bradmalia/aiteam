@@ -1097,6 +1097,11 @@ function proposalId(run, specialist) {
   return crypto.createHash('sha256').update(`${run.runId}\n${JSON.stringify(specialist)}`).digest('hex');
 }
 
+function missingChangedFiles(repo, task) {
+  if (!task || !Array.isArray(task.filesChanged) || task.filesChanged.length === 0) return [];
+  return task.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
+}
+
 function applyResult(repo, session, assignment, result, run) {
   let next = { ...session, activeRun: null, stageEvidence: recordEvidence(session, assignment, result, run) };
   const stage = assignment.stage;
@@ -1115,6 +1120,27 @@ function applyResult(repo, session, assignment, result, run) {
     };
     appendEvent(repo, { type: 'user_input_requested', stage, questions: result.questions, runId: run.runId });
     return writeSession(repo, { ...next, interviewHistory: nextHistory, pendingUserInput });
+  }
+
+  if (result.outcome === 'BLOCKED' && ['code-review', 'qa'].includes(stage)) {
+    const task = currentTask(next);
+    const missing = missingChangedFiles(repo, task);
+    if (missing.length) {
+      const failure = {
+        ...result,
+        outcome: 'FAIL',
+        summary: `${stage} blocked because required implemented files are missing from disk: ${missing.join(', ')}. Route back to Implementation.`
+      };
+      next.taskLedger = next.taskLedger.map((item) => item.id === next.currentTaskId
+        ? stage === 'code-review'
+          ? { ...item, status: 'needs-rework', review: null, 'code-reviewFailure': failure, qa: null, qaFailure: null, qaFingerprint: null, completedAt: null, integration: null }
+          : { ...item, status: 'needs-rework', qa: null, qaFailure: failure, qaFingerprint: null, completedAt: null, integration: null }
+        : item);
+      next.currentStage = 'implementation';
+      next.lastFailure = failure.summary;
+      appendEvent(repo, { type: 'validated_paths_missing', stage, taskId: task?.id, missing, runId: run.runId });
+      return writeSession(repo, next);
+    }
   }
 
   if (result.outcome === 'BLOCKED') {
