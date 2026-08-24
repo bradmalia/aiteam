@@ -23,6 +23,14 @@ function createRepository() {
 }
 
 function result(outcome, extra = {}) {
+  const hasStageEvidence = Object.hasOwn(extra, 'filesChanged') || Object.hasOwn(extra, 'findings') || Object.hasOwn(extra, 'checks') || Object.hasOwn(extra, 'commitMessage');
+  const sourceTruthEvidence = hasStageEvidence
+    ? ['Checked approved PRD and TRD source-of-truth material against this task.']
+    : [];
+  const providedEvidence = Object.hasOwn(extra, 'evidence') ? extra.evidence : undefined;
+  const evidence = providedEvidence
+    ? (outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION' ? [...sourceTruthEvidence, ...providedEvidence] : providedEvidence)
+    : (outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION' ? ['Observed repository evidence', ...sourceTruthEvidence] : []);
   const intakeDefaults = Object.hasOwn(extra, 'requirements') || Object.hasOwn(extra, 'acceptanceCriteria')
     ? {
         goals: ['Deliver the requested user-visible outcome.'],
@@ -66,7 +74,7 @@ function result(outcome, extra = {}) {
         evaluationCriteria: ['The specialist must preserve scope, use authoritative documentation, and run relevant validation.']
       }
     : {};
-  return JSON.stringify({ outcome, summary: `${outcome} result`, evidence: outcome === 'PASS' ? ['Observed repository evidence'] : [], ...intakeDefaults, ...architectureDefaults, ...uiDefaults, ...recruitingDefaults, ...extra });
+  return JSON.stringify({ outcome, summary: `${outcome} result`, ...intakeDefaults, ...architectureDefaults, ...uiDefaults, ...recruitingDefaults, ...extra, evidence });
 }
 
 function queuedRunner(repo, outputs) {
@@ -92,6 +100,16 @@ function queuedRunner(repo, outputs) {
   };
 }
 
+function readEvents(repo) {
+  const file = path.join(repo, '.aiteam', 'events.jsonl');
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function latestAdvisory(repo) {
+  return readEvents(repo).filter((event) => event.type === 'workflow_quality_advisory').at(-1);
+}
+
 async function advanceWithHumanApprovals(args) {
   const result = await advanceWorkflow(args);
   const session = readSession(args.repo);
@@ -114,7 +132,7 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'compile', status: 'PASS', expected: 'Python module compiles successfully.', actual: 'Python module compiled successfully.', evidence: 'py_compile passed' }], automationAttempts: [], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'black-box smoke', status: 'PASS', expected: 'Python module compiles successfully.', actual: 'Python module compiled successfully.', evidence: 'py_compile passed' }], automationAttempts: [], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Implement validated feature' }) }
   ]);
 
@@ -146,9 +164,9 @@ test('UI projects run a validated UI-design stage and propagate its result to Pl
     }) },
     { stdout: result('PASS', { tasks: [{ id: 'ui-task', title: 'UI', description: 'Implement UI', specialistId: 'python', acceptanceCriteria: ['UI is responsive'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }, { command: 'playwright browser-startup smoke', result: 'Headless browser opened the UI page; pageerror and console error listeners reported zero errors; startup verified and passed.' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'responsive', status: 'PASS', expected: 'The UI responds correctly in the tested viewport.', actual: 'The headless browser observed the responsive UI behavior.', evidence: 'validated' }], automationAttempts: [{ command: 'playwright --version && node visual-check.mjs', result: 'Headless browser validated responsive UI', covers: ['responsive UI'], fallbackReason: '' }], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'black-box smoke', status: 'PASS', expected: 'The UI responds correctly in the tested viewport.', actual: 'The headless browser observed the responsive UI behavior.', evidence: 'Playwright loaded the page with pageerror and console error listeners; zero errors; responsive UI validated' }], automationAttempts: [{ command: 'playwright --version && node visual-check.mjs', result: 'Headless browser loaded page; pageerror and console error listeners reported zero errors; validated responsive UI; all checks passed', covers: ['black-box smoke'], fallbackReason: '' }], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Implement responsive UI' }) }
   ]);
   const runner = async (args) => {
@@ -176,7 +194,7 @@ test('already-implemented tasks complete successfully when Integration has no Gi
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['README.md'], validations: [{ command: 'test -s README.md', result: 'passed' }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'README', status: 'PASS', expected: 'README is present and non-empty.', actual: 'README was present and non-empty.', evidence: 'file is non-empty' }], automationAttempts: [], manualChecks: [] }) },
+    { stdout: result('PASS', { checks: [{ name: 'black-box smoke', status: 'PASS', expected: 'README is present and non-empty.', actual: 'README was present and non-empty.', evidence: 'file is non-empty' }], automationAttempts: [], manualChecks: [] }) },
     { stdout: result('PASS', { commitMessage: 'Verify existing README' }) }
   ]);
 
@@ -206,6 +224,8 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement revised plan', specialistId: 'python', acceptanceCriteria: ['Works after revision'], dependencies: [], blackBoxTestPlan: [{ name: 'revised runtime behavior', action: 'Run the revised feature through the public interface.', expected: 'The revised expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
+    { stdout: result('PASS', { findings: [] }) },
+    { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement final revised plan', specialistId: 'python', acceptanceCriteria: ['Works after final revision'], dependencies: [], blackBoxTestPlan: [{ name: 'final revised runtime behavior', action: 'Run the final revised feature through the public interface.', expected: 'The final revised expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) }
   ]);
 
@@ -221,7 +241,7 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.match(prdHtml, /Problem To Solve/);
   assert.match(prdHtml, /PRD-R1/);
   assert.match(prdHtml, /Open Questions/);
-  assert.match(prdHtml, /If anything is missing or wrong, describe the change you want before approving/);
+  assert.match(prdHtml, /Reply with exactly <strong>approved<\/strong>/);
   assert.doesNotMatch(prdHtml, /high school/i);
 
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please add a clearer approval criterion.' } });
@@ -231,7 +251,7 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.match(session.pendingUserInput.response, /clearer approval/);
 
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
-  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Approved' } });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -239,11 +259,28 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   session = readSession(repo);
   assert.equal(session.currentStage, 'trd-review');
   assert.equal(session.pendingUserInput.kind, 'trd-review');
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'looks good' } });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'planning');
+  assert.equal(session.taskLedger.length, 0);
+  assert.equal(session.pendingUserInput.kind, 'trd-review');
+  assert.match(session.lastFailure, /TRD changes requested/);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  assert.equal(readSession(repo).currentStage, 'critical-review');
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'trd-review');
   assert.match(session.pendingUserInput.artifact.url, /\/artifacts\/trd\.html$/);
   assert.match(session.pendingUserInput.artifact.fileUrl, /^file:\/\/.*\/trd\.html$/);
   assert.match(session.pendingUserInput.questions.join('\n'), /local file instead: file:\/\//);
   const trdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
   assert.match(trdHtml, /Testing Plan/);
+  assert.match(trdHtml, /planned black-box QA test plan/);
+  assert.match(trdHtml, /revised runtime behavior/);
+  assert.match(trdHtml, /Run the revised feature through the public interface/);
+  assert.match(trdHtml, /The revised expected behavior is observable/);
+  assert.match(trdHtml, /Runtime test output/);
   assert.match(trdHtml, /System Boundary And Runtime Flows/);
   assert.match(trdHtml, /Data, Interfaces, And Dependencies/);
   assert.match(trdHtml, /Security, Privacy, And Operations/);
@@ -255,14 +292,15 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.match(trdHtml, /class="flow-card"/);
   assert.doesNotMatch(trdHtml, /<h2>Implementation Plan<\/h2><table/);
   assert.doesNotMatch(trdHtml, /<h2>Testing Plan<\/h2><table/);
-  assert.match(trdHtml, /If the plan does not match what you approved in the PRD/);
+  assert.match(trdHtml, /Reply with exactly <strong>approved<\/strong>/);
   assert.doesNotMatch(trdHtml, /high school/i);
 
-  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Please revise the testing plan.' } });
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved, but add another regression test.' } });
   session = readSession(repo);
   assert.equal(session.currentStage, 'planning');
   assert.equal(session.taskLedger.length, 0);
   assert.equal(session.pendingUserInput.kind, 'trd-review');
+  assert.match(session.lastFailure, /add another regression test/);
 
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'critical-review');
@@ -282,13 +320,80 @@ test('review failure routes the same task back to implementation', async () => {
     { stdout: result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
-    { stdout: result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', location: 'app.py', impact: 'Wrong value', recommendation: 'Fix it' }] }) }
+    { stdout: result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', location: 'app.py:1', impact: 'Acceptance criterion "Works" is violated: deterministic test command showed the wrong value is returned.', recommendation: 'Fix the current-task behavior so the acceptance criteria pass under the same test command.' }] }) }
   ]);
   for (let i = 0; i < 6; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   const session = readSession(repo);
   assert.equal(session.currentStage, 'implementation');
   assert.equal(session.currentTaskId, 'feature-task');
   assert.equal(session.taskLedger[0].status, 'needs-rework');
+});
+
+test('code review records advisory for unsupported material formula findings', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build pong physics');
+  fs.writeFileSync(path.join(repo, 'index.html'), '<script>const physics = true;</script>\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'code-review',
+    currentTaskId: 'physics-engine',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'physics-engine',
+      title: 'Physics engine',
+      description: 'Implement Pong deflection physics.',
+      specialistId: 'python',
+      acceptanceCriteria: ['Edge hits near +/-60 degrees from horizontal', 'Center hits reverse direction near 180 degrees'],
+      dependencies: [],
+      status: 'implemented',
+      filesChanged: ['index.html'],
+      validations: [{ command: 'playwright browser-startup smoke', result: 'Headless browser opened the page; pageerror and console error listeners reported zero errors; startup verified and passed.' }],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'Edge hit deflection', action: 'Hit the paddle edge.', expected: 'Ball deflects near 60 degrees.', evidenceMethod: 'Browser runtime observation.' }]
+    }]
+  });
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('FAIL', {
+        findings: [{
+          id: 'formula-divisor',
+          severity: 'MAJOR',
+          location: 'index.html:42',
+          impact: 'The formula is wrong because it uses paddle height instead of ball diameter.',
+          recommendation: 'Replace the divisor with two times the ball radius.'
+        }]
+      }) }
+    ])
+  });
+
+  const after = readSession(repo);
+  assert.equal(after.currentStage, 'implementation');
+  assert.equal(after.taskLedger[0].status, 'needs-rework');
+  assert.match(latestAdvisory(repo).warning, /material findings must cite concrete authority|speculative formula/);
+
+  const reworkAssignment = getCurrentAssignment(repo);
+  assert.match(reworkAssignment.task, /Treat each previous finding as a hypothesis/);
+  assert.match(reworkAssignment.task, /substitute representative boundary and midpoint inputs/);
+  assert.match(reworkAssignment.task, /preserve the working code/);
+  assert.match(reworkAssignment.task, /does not require a content change/);
+  assert.match(reworkAssignment.task, /Do NOT make a token\/no-op edit/);
+
+  writeSession(repo, {
+    ...after,
+    currentStage: 'code-review',
+    taskLedger: after.taskLedger.map((task) => task.id === 'physics-engine'
+      ? { ...task, status: 'implemented' }
+      : task)
+  });
+  const repairReviewAssignment = getCurrentAssignment(repo);
+  assert.match(repairReviewAssignment.task, /prior findings are hypotheses, not authoritative facts/);
+  assert.match(repairReviewAssignment.task, /representative boundary and midpoint inputs/);
+  assert.match(repairReviewAssignment.task, /Apply the same inputs to the proposed replacement/);
 });
 
 test('architecture capability gaps must pass through Recruiter provenance before use', async () => {
@@ -389,7 +494,7 @@ test('post-QA path changes invalidate approval and route back to implementation'
     { stdout: result('PASS', { findings: [] }) },
     { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { checks: [{ name: 'check', status: 'PASS', expected: 'Feature behavior works.', actual: 'Feature behavior was observed working.', evidence: 'observed' }], automationAttempts: [], manualChecks: [] }) }
+    { stdout: result('PASS', { checks: [{ name: 'black-box smoke', status: 'PASS', expected: 'Feature behavior works.', actual: 'Feature behavior was observed working.', evidence: 'observed' }], automationAttempts: [], manualChecks: [] }) }
   ]);
   for (let i = 0; i < 7; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'integration');
@@ -408,23 +513,480 @@ test('QA manual validation pauses the workflow until the user confirms it', asyn
     { stdout: result('PASS', { design: ['Browser module'], hasUserInterface: false, specialistNeeds: [] }) },
     { stdout: result('PASS', { tasks: [{ id: 'browser-task', title: 'Browser feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Looks correct'], dependencies: [], blackBoxTestPlan: [{ name: 'black-box smoke', action: 'Run the delivered behavior through its public interface.', expected: 'The planned acceptance criteria are observable as passing.', evidenceMethod: 'Runtime or public-interface test output.' }] }] }) },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
+    { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }, { command: 'playwright browser-startup smoke', result: 'Headless browser opened the browser feature; pageerror and console error listeners reported zero errors; startup verified and passed.' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } },
     { stdout: result('PASS', { findings: [] }) },
-    { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Headless runtime checks passed; subjective visual polish remains'], checks: [{ name: 'browser', status: 'PASS', expected: 'The browser page loads and exposes the expected canvas.', actual: 'Playwright opened the page and confirmed the canvas exists.', evidence: 'Playwright opened the page and confirmed the canvas exists' }], automationAttempts: [{ command: 'playwright --version && node browser-smoke.mjs', result: 'Headless browser loaded the page and found canvas element', covers: ['Looks correct'], fallbackReason: 'Final visual aesthetics still require human judgment' }], manualChecks: ['Open the browser game and verify the canvas renders.'] }) }
+    { stdout: result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Headless runtime checks passed; subjective visual polish remains'], checks: [{ name: 'black-box smoke', status: 'PASS', expected: 'The browser page loads and exposes the expected canvas.', actual: 'Playwright opened the page and confirmed the canvas exists.', evidence: 'Playwright opened the page with pageerror and console error listeners; zero errors; canvas exists' }], automationAttempts: [{ command: 'playwright --version && node browser-smoke.mjs', result: 'Headless browser loaded the page; pageerror and console error listeners reported zero errors; found canvas element; all checks passed', covers: ['black-box smoke'], fallbackReason: 'Final visual aesthetics still require human judgment' }], manualChecks: ['Human-only because final subjective visual confirmation remains: open the browser game and verify the canvas looks correct.'] }) }
   ]);
   for (let i = 0; i < 7; i += 1) await advanceWithHumanApprovals({ repo, runner, timeoutSeconds: 300 });
   let session = readSession(repo);
   assert.equal(session.currentStage, 'qa');
   assert.equal(session.taskLedger[0].status, 'qa-awaiting-manual');
   assert.equal(session.pendingUserInput.kind, 'qa-manual');
-  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Confirmed: the browser game renders correctly.' } });
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'PASS' } });
   session = readSession(repo);
   assert.equal(session.currentStage, 'integration');
   assert.equal(session.taskLedger[0].status, 'qa-passed');
-  assert.match(session.taskLedger[0].qa.manualValidationResponse, /renders correctly/);
+  assert.equal(session.taskLedger[0].qa.manualValidationResponse, 'PASS');
   assert.equal(session.pendingUserInput, null);
   assert.equal(session.manualQaHistory.length, 1);
-  assert.match(session.manualQaHistory[0].response, /renders correctly/);
+  assert.equal(session.manualQaHistory[0].response, 'PASS');
+});
+
+test('manual QA non-PASS responses are triaged before routing', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser feature');
+  const baseTask = {
+    id: 'game-loop',
+    title: 'Game loop',
+    description: 'Implement score tracking and victory flow.',
+    specialistId: 'python',
+    acceptanceCriteria: ['Score display updates live', 'Victory screen appears at 11 points'],
+    dependencies: [],
+    status: 'qa-awaiting-manual',
+    filesChanged: ['index.html'],
+    validations: [],
+    review: null,
+    qa: { outcome: 'PASS_WITH_MANUAL_VALIDATION', manualChecks: ['Check score and victory flow.'] },
+    blackBoxTestPlan: [{ name: 'Victory flow', action: 'Reach 11 points.', expected: 'Victory appears.', evidenceMethod: 'Browser observation.' }]
+  };
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'game-loop',
+    pendingUserInput: {
+      kind: 'qa-manual',
+      stage: 'qa',
+      taskId: 'game-loop',
+      questions: ['Check score and victory flow.'],
+      response: null,
+      requestedAt: new Date(Date.now() - 60_000).toISOString()
+    },
+    taskLedger: [
+      baseTask,
+      {
+        id: 'input-controls',
+        title: 'Full-window paddle input controls',
+        description: 'Implement mouse tracking across the full browser window and clamp paddle at top and bottom edges.',
+        specialistId: 'python',
+        acceptanceCriteria: ['Mouse anywhere in the browser window moves the paddle', 'Paddle clamps smoothly at top and bottom edges'],
+        dependencies: ['game-loop'],
+        status: 'planned',
+        filesChanged: [],
+        validations: [],
+        review: null,
+        qa: null,
+        blackBoxTestPlan: [{ name: 'Window paddle tracking', action: 'Move mouse around the browser window.', expected: 'Paddle follows and clamps.', evidenceMethod: 'Browser observation.' }]
+      }
+    ]
+  });
+
+  await callTool('aiteam_update_session', {
+    repository: repo,
+    patch: { pendingUserInput: 'PASS - full window paddle tracking and top/bottom edge behavior is for task 2, not task 1.' }
+  });
+  let next = readSession(repo);
+  assert.equal(next.currentStage, 'integration');
+  assert.equal(next.taskLedger[0].status, 'qa-passed');
+  assert.equal(next.deferredManualQaObservations.length, 1);
+  assert.equal(next.deferredManualQaObservations[0].observations[0].matchedTaskId, 'input-controls');
+
+  writeSession(repo, {
+    ...next,
+    currentStage: 'qa',
+    currentTaskId: 'game-loop',
+    pendingUserInput: {
+      kind: 'qa-manual',
+      stage: 'qa',
+      taskId: 'game-loop',
+      questions: ['Check score and victory flow.'],
+      response: null,
+      requestedAt: new Date(Date.now() - 60_000).toISOString()
+    },
+    taskLedger: next.taskLedger.map((task) => task.id === 'game-loop' ? { ...task, status: 'qa-awaiting-manual', completedAt: null } : task)
+  });
+  await callTool('aiteam_update_session', {
+    repository: repo,
+    patch: { pendingUserInput: 'current task failure: Victory screen does not appear at 11 points.' }
+  });
+  next = readSession(repo);
+  assert.equal(next.currentStage, 'implementation');
+  assert.equal(next.taskLedger[0].status, 'needs-rework');
+  assert.match(next.taskLedger[0].qaFailure.summary, /Victory screen/);
+});
+
+test('manual QA vague responses request clarification instead of approving', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'browser-task',
+    pendingUserInput: {
+      kind: 'qa-manual',
+      stage: 'qa',
+      taskId: 'browser-task',
+      questions: ['Check browser behavior.'],
+      response: null,
+      requestedAt: new Date(Date.now() - 60_000).toISOString()
+    },
+    taskLedger: [{
+      id: 'browser-task',
+      title: 'Browser task',
+      description: 'Implement browser behavior.',
+      specialistId: 'python',
+      acceptanceCriteria: ['Browser behavior works'],
+      dependencies: [],
+      status: 'qa-awaiting-manual',
+      filesChanged: ['index.html'],
+      validations: [],
+      review: null,
+      qa: { outcome: 'PASS_WITH_MANUAL_VALIDATION', manualChecks: ['Check browser behavior.'] },
+      blackBoxTestPlan: [{ name: 'Browser behavior', action: 'Use browser.', expected: 'Behavior works.', evidenceMethod: 'Browser observation.' }]
+    }]
+  });
+
+  await callTool('aiteam_update_session', {
+    repository: repo,
+    patch: { pendingUserInput: 'looks good' }
+  });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'qa');
+  assert.equal(next.taskLedger[0].status, 'qa-awaiting-manual');
+  assert.equal(next.pendingUserInput.kind, 'qa-manual-triage');
+  assert.match(next.pendingUserInput.questions.join('\n'), /Reply with "current task failure/);
+});
+
+test('QA manual validation automation coverage guidance is advisory, not structural', () => {
+  const advisoryOnlyQa = parseStageResult('qa', result('PASS_WITH_MANUAL_VALIDATION', {
+    evidence: ['Runtime smoke passed; visual check remains.'],
+    checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }],
+    automationAttempts: [{ command: 'playwright smoke', result: 'passed', covers: ['runtime smoke'], fallbackReason: '' }],
+    manualChecks: ['Open the app and verify the animation looks good.']
+  }));
+  assert.match(advisoryOnlyQa.manualChecks[0], /verify the animation/);
+
+  const qa = parseStageResult('qa', result('PASS_WITH_MANUAL_VALIDATION', {
+    evidence: ['Runtime smoke passed; visual check remains.'],
+    checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }],
+    automationAttempts: [{ command: 'playwright smoke', result: 'passed', covers: ['runtime smoke'], fallbackReason: '' }],
+    manualChecks: ['Human-only because animation smoothness is subjective: open the app and verify the animation looks good.']
+  }));
+  assert.match(qa.manualChecks[0], /Human-only because/);
+});
+
+test('QA manual validation cannot ask human to validate future task scope', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'game-loop',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [
+      {
+        id: 'game-loop',
+        title: 'Game loop',
+        description: 'Implement score tracking and victory flow.',
+        specialistId: 'python',
+        acceptanceCriteria: ['Score display updates live', 'Victory screen appears at 11 points'],
+        dependencies: [],
+        status: 'review-passed',
+        filesChanged: ['index.html'],
+        validations: [],
+        review: null,
+        qa: null,
+        blackBoxTestPlan: [{ name: 'Victory flow', action: 'Reach 11 points.', expected: 'Victory appears.', evidenceMethod: 'Browser observation.' }]
+      },
+      {
+        id: 'input-controls',
+        title: 'Full-window paddle input controls',
+        description: 'Implement mouse tracking across the full browser window and clamp paddle at top and bottom edges.',
+        specialistId: 'python',
+        acceptanceCriteria: ['Mouse anywhere in the browser window moves the paddle', 'Paddle clamps smoothly at top and bottom edges'],
+        dependencies: ['game-loop'],
+        status: 'planned',
+        filesChanged: [],
+        validations: [],
+        review: null,
+        qa: null,
+        blackBoxTestPlan: [{ name: 'Window paddle tracking', action: 'Move mouse around the browser window.', expected: 'Paddle follows and clamps.', evidenceMethod: 'Browser observation.' }]
+      }
+    ]
+  });
+
+  await assert.rejects(advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS_WITH_MANUAL_VALIDATION', {
+        evidence: ['Runtime tests passed; Human-only because playfeel requires human judgment.'],
+        checks: [{ name: 'Victory flow', status: 'PASS', expected: 'Victory appears.', actual: 'Victory appeared.', evidence: 'Runtime smoke passed.' }],
+        automationAttempts: [{ command: 'playwright victory smoke', result: 'Headless browser loaded the page; pageerror and console error listeners reported zero errors; startup verified and passed; victory flow passed.', covers: ['Victory flow'], fallbackReason: '' }],
+        manualChecks: ['Human-only because playfeel requires human judgment: verify full-window paddle tracking and top/bottom edge clamp behavior for task 2.']
+      }) }
+    ])
+  }), /manualChecks must not target future-task/);
+});
+
+test('browser implementation must include runtime startup evidence', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser UI');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'browser-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'browser-task',
+      title: 'Browser task',
+      description: 'Implement browser UI',
+      specialistId: 'python',
+      acceptanceCriteria: ['Browser UI renders'],
+      dependencies: [],
+      status: 'planned',
+      filesChanged: [],
+      validations: [],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'Browser startup smoke', action: 'Open the app in a browser.', expected: 'The app starts with no console errors.', evidenceMethod: 'Browser runtime output.' }]
+    }]
+  });
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } }
+    ])
+  });
+  let current = readSession(repo);
+  assert.equal(current.currentStage, 'code-review');
+  assert.equal(current.taskLedger[0].status, 'implemented');
+  assert.match(latestAdvisory(repo).warning, /Browser\/UI implementation PASS requires concrete runtime startup evidence/);
+
+  writeSession(repo, { ...current, currentStage: 'implementation', taskLedger: current.taskLedger.map((task) => ({ ...task, status: 'planned', filesChanged: [], validations: [] })) });
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', {
+        filesChanged: ['app.py'],
+        validations: [{ command: 'playwright chromium smoke', result: 'Playwright Chromium launch failed: sandbox host permission denied.' }]
+      }), write: { path: 'app.py', content: 'VALUE = 1\n' } }
+    ])
+  });
+  current = readSession(repo);
+  assert.equal(current.currentStage, 'code-review');
+  assert.match(latestAdvisory(repo).warning, /cannot rely only on failed browser launch evidence.*system browser/s);
+});
+
+test('code review records advisory when implementation lacks startup evidence', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser UI');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'code-review',
+    currentTaskId: 'browser-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'browser-task',
+      title: 'Browser task',
+      description: 'Implement browser UI',
+      specialistId: 'python',
+      acceptanceCriteria: ['Browser UI renders'],
+      dependencies: [],
+      status: 'implemented',
+      filesChanged: ['app.py'],
+      validations: [{ command: 'python -m py_compile app.py', result: 'passed' }],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'Browser startup smoke', action: 'Open the app in a browser.', expected: 'The app starts with no console errors.', evidenceMethod: 'Browser runtime output.' }]
+    }]
+  });
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { findings: [] }) }
+    ])
+  });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'qa');
+  assert.equal(next.taskLedger[0].status, 'review-passed');
+  assert.match(latestAdvisory(repo).warning, /Code Review cannot PASS browser\/UI work/);
+});
+
+test('QA must cover current planned tests and browser startup errors', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build browser UI');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+  const baseTask = {
+    id: 'browser-task',
+    title: 'Browser task',
+    description: 'Implement browser UI',
+    specialistId: 'python',
+    acceptanceCriteria: ['Browser UI renders'],
+    dependencies: [],
+    status: 'review-passed',
+    filesChanged: ['app.py'],
+    validations: [{ command: 'playwright browser-startup smoke', result: 'Headless browser opened the page; pageerror and console error listeners reported zero errors; startup verified and passed.' }],
+    review: null,
+    qa: null,
+    blackBoxTestPlan: [{ name: 'Browser startup smoke', action: 'Open the app in a browser.', expected: 'The app starts with no console errors.', evidenceMethod: 'Browser runtime output.' }]
+  };
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'browser-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [baseTask]
+  });
+
+  await assert.rejects(advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { checks: [{ name: 'Other check', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Playwright loaded page with zero errors.' }], automationAttempts: [{ command: 'playwright smoke', result: 'pageerror and console error listeners reported zero errors; all checks passed', covers: ['Other check'], fallbackReason: '' }], manualChecks: [] }) }
+    ])
+  }), /QA planned test coverage missing/);
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { checks: [{ name: 'Browser startup smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Playwright loaded page.' }], automationAttempts: [{ command: 'playwright smoke', result: 'loaded page; all checks passed', covers: ['Browser startup smoke'], fallbackReason: '' }], manualChecks: [] }) }
+    ])
+  });
+  let next = readSession(repo);
+  assert.equal(next.currentStage, 'integration');
+  assert.equal(next.taskLedger[0].status, 'qa-passed');
+  assert.match(latestAdvisory(repo).warning, /QA PASS for browser\/UI work requires concrete browser startup evidence/);
+
+  writeSession(repo, { ...next, currentStage: 'qa', taskLedger: [baseTask] });
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { checks: [{ name: 'Browser startup smoke', status: 'PASS', expected: 'The app starts.', actual: 'Browser automation failed to launch.', evidence: 'Playwright Chromium launch failed: sandbox host permission denied.' }], automationAttempts: [{ command: 'playwright smoke', result: 'Playwright Chromium launch failed: sandbox host permission denied.', covers: ['Browser startup smoke'], fallbackReason: '' }], manualChecks: [] }) }
+    ])
+  });
+  next = readSession(repo);
+  assert.equal(next.currentStage, 'integration');
+  assert.match(latestAdvisory(repo).warning, /cannot rely only on failed browser launch evidence.*system browser/s);
+});
+
+test('post-review PASS records advisory when PRD and TRD source-of-truth evidence is missing', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature');
+  const prdArtifact = { path: path.join(repo, '.aiteam/docs/prd.html'), fileUrl: 'file:///prd.html', url: 'http://127.0.0.1/artifacts/prd.html' };
+  const trdArtifact = { path: path.join(repo, '.aiteam/docs/trd.html'), fileUrl: 'file:///trd.html', url: 'http://127.0.0.1/artifacts/trd.html' };
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'prd-review', 'architecture', 'planning', 'critical-review', 'trd-review'],
+    humanReviewHistory: [
+      { kind: 'prd-review', approved: true, artifact: prdArtifact },
+      { kind: 'trd-review', approved: true, artifact: trdArtifact }
+    ],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'feature-task',
+      title: 'Feature task',
+      description: 'Implement a CLI feature',
+      specialistId: 'python',
+      acceptanceCriteria: ['CLI feature works'],
+      dependencies: [],
+      status: 'planned',
+      filesChanged: [],
+      validations: [],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run the CLI.', expected: 'The CLI exits successfully.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: JSON.stringify({ outcome: 'PASS', summary: 'Implemented feature', evidence: ['Implemented and tested the CLI.'], filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }), write: { path: 'app.py', content: 'VALUE = 1\n' } }
+    ])
+  });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'code-review');
+  assert.equal(next.taskLedger[0].status, 'implemented');
+  assert.match(latestAdvisory(repo).warning, /PASS requires evidence that approved PRD and TRD source-of-truth material was checked/);
+});
+
+test('QA must cover previous QA checks as regression obligations', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature in stages');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'second-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: {
+      ...session.stageEvidence,
+      intake: { result: { userConfirmed: true } }
+    },
+    taskLedger: [
+      {
+        id: 'first-task',
+        title: 'First task',
+        description: 'First completed task',
+        specialistId: 'python',
+        acceptanceCriteria: ['First behavior works'],
+        dependencies: [],
+        status: 'qa-passed',
+        filesChanged: ['app.py'],
+        qa: {
+          outcome: 'PASS',
+          checks: [{ name: 'First behavior smoke', status: 'PASS', expected: 'First behavior works.', actual: 'First behavior worked.', evidence: 'Runtime smoke passed.' }]
+        }
+      },
+      {
+        id: 'second-task',
+        title: 'Second task',
+        description: 'Second task',
+        specialistId: 'python',
+        acceptanceCriteria: ['Second behavior works'],
+        dependencies: ['first-task'],
+        status: 'review-passed',
+        filesChanged: ['app.py'],
+        validations: []
+      }
+    ]
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  assert.match(assignment.context, /first-task#first-behavior-smoke/);
+
+  await assert.rejects(advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { checks: [{ name: 'Second behavior', status: 'PASS', expected: 'Second behavior works.', actual: 'Second behavior worked.', evidence: 'Runtime smoke passed.' }], automationAttempts: [], manualChecks: [] }) }
+    ])
+  }), /QA regression coverage missing/);
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', { checks: [{ name: 'Regression first-task#first-behavior-smoke', status: 'PASS', expected: 'First behavior still works.', actual: 'First behavior still worked.', evidence: 'Runtime regression smoke passed.' }, { name: 'Second behavior', status: 'PASS', expected: 'Second behavior works.', actual: 'Second behavior worked.', evidence: 'Runtime smoke passed.' }], automationAttempts: [], manualChecks: [] }) }
+    ])
+  });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'integration');
+  assert.equal(next.taskLedger[1].status, 'qa-passed');
 });
 
 test('specialist prompts exclude stale downstream QA history after rework', () => {
@@ -578,6 +1140,206 @@ test('implementation FAIL routes to BLOCKED with retry instructions instead of s
   assert.equal(session.status, 'BLOCKED');
   assert.match(session.blockedReason, /Implementation specialist returned FAIL/);
   assert.match(session.blockedReason, /NOT a real sandbox restriction/);
+  assert.equal(session.taskLedger[0].attemptHistory.length, 1);
+  assert.equal(session.taskLedger[0].attemptHistory[0].outcome, 'FAIL');
+});
+
+test('implementation rejects inspect-only deferrals and sends attempt history in retry context', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'prd-review', 'architecture', 'planning', 'critical-review', 'trd-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'feature-task',
+      title: 'Feature task',
+      description: 'Implement CLI behavior.',
+      specialistId: 'python',
+      acceptanceCriteria: ['CLI behavior works'],
+      dependencies: [],
+      status: 'planned',
+      filesChanged: ['app.py'],
+      validations: [],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run CLI.', expected: 'CLI succeeds.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+  const seenContexts = [];
+  const runner = async ({ context }) => {
+    seenContexts.push(context);
+    if (seenContexts.length === 1) {
+      return {
+        runId: 'run-1',
+        agentId: 'python',
+        role: 'python',
+        exitCode: 0,
+        timedOut: false,
+        completedAt: new Date().toISOString(),
+        stdout: result('BLOCKED', { summary: 'Need to inspect current repo state before proceeding with implementation.' }),
+        stderr: '',
+        stdoutPath: '',
+        stderrPath: '',
+        metaPath: ''
+      };
+    }
+    return {
+      runId: 'run-2',
+      agentId: 'python',
+      role: 'python',
+      exitCode: 0,
+      timedOut: false,
+      completedAt: new Date().toISOString(),
+      stdout: result('PASS', { evidence: ['Checked approved PRD and TRD source-of-truth material against this task.'], filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }),
+      stderr: '',
+      stdoutPath: '',
+      stderrPath: '',
+      metaPath: ''
+    };
+  };
+  runner.maxAttempts = 2;
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'code-review');
+  assert.equal(next.taskLedger[0].status, 'implemented');
+  assert.match(seenContexts[1], /IMPLEMENTATION RETRY CHECKLIST/);
+  assert.match(seenContexts[1], /Implementation cannot return FAIL\/BLOCKED just to inspect/);
+  assert.match(seenContexts[1], /Recent task attempt history/);
+  assert.equal(next.taskLedger[0].attemptHistory.at(-1).outcome, 'PASS');
+});
+
+test('implementation rejects false write-access blockers and retries', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build CLI feature');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'feature-task',
+      title: 'Feature task',
+      description: 'Implement CLI behavior.',
+      specialistId: 'python',
+      acceptanceCriteria: ['CLI behavior works'],
+      dependencies: [],
+      status: 'planned',
+      filesChanged: ['app.py'],
+      validations: [],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run CLI.', expected: 'CLI succeeds.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+  const seenContexts = [];
+  const runner = async ({ context }) => {
+    seenContexts.push(context);
+    if (seenContexts.length === 1) {
+      return {
+        runId: 'run-1',
+        agentId: 'python',
+        role: 'python',
+        exitCode: 0,
+        timedOut: false,
+        completedAt: new Date().toISOString(),
+        stdout: result('FAIL', {
+          summary: 'Cannot implement because no write access is available and exec_command is unavailable.',
+          evidence: ['Tried to use exec_command but tool access was not available.']
+        }),
+        stderr: '',
+        stdoutPath: '',
+        stderrPath: '',
+        metaPath: ''
+      };
+    }
+    return {
+      runId: 'run-2',
+      agentId: 'python',
+      role: 'python',
+      exitCode: 0,
+      timedOut: false,
+      completedAt: new Date().toISOString(),
+      stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'python -m py_compile app.py', result: 'passed' }] }),
+      stderr: '',
+      stdoutPath: '',
+      stderrPath: '',
+      metaPath: ''
+    };
+  };
+  runner.maxAttempts = 2;
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.equal(next.currentStage, 'code-review');
+  assert.equal(next.taskLedger[0].status, 'implemented');
+  assert.match(seenContexts[1], /Do not return FAIL or BLOCKED claiming missing write\/tool access/);
+  assert.equal(next.taskLedger[0].attemptHistory[0].outcome, 'REJECTED');
+  assert.equal(next.taskLedger[0].attemptHistory.at(-1).outcome, 'PASS');
+});
+
+test('implementation context includes completed dependency files and rejects false empty-repo blockers', async () => {
+  const repo = createRepository();
+  fs.writeFileSync(path.join(repo, 'index.html'), '<!doctype html><canvas id="game"></canvas>\n');
+  const session = newSession(repo, 'Build game in stages');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'physics-task',
+    completedStages: ['intake', 'prd-review', 'architecture', 'planning', 'critical-review', 'trd-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [
+      {
+        id: 'game-loop-task',
+        title: 'Game loop',
+        description: 'Build the game loop.',
+        specialistId: 'python',
+        acceptanceCriteria: ['Game loop exists'],
+        dependencies: [],
+        status: 'qa-passed',
+        filesChanged: ['index.html'],
+        validations: [{ command: 'test -f index.html', result: 'passed' }],
+        review: { outcome: 'PASS' },
+        qa: { outcome: 'PASS', checks: [{ name: 'Game loop smoke', status: 'PASS', expected: 'Game loop exists.', actual: 'Game loop existed.', evidence: 'Runtime smoke passed.' }] },
+        blackBoxTestPlan: [{ name: 'Game loop smoke', action: 'Open app.', expected: 'Game loop runs.', evidenceMethod: 'Runtime output.' }],
+        implementationRunId: 'run-game-loop',
+        integration: { integrated: true }
+      },
+      {
+        id: 'physics-task',
+        title: 'Physics',
+        description: 'Implement ball physics.',
+        specialistId: 'python',
+        acceptanceCriteria: ['Physics works'],
+        dependencies: ['game-loop-task'],
+        status: 'planned',
+        filesChanged: [],
+        validations: [],
+        review: null,
+        qa: null,
+        blackBoxTestPlan: [{ name: 'Physics smoke', action: 'Run physics.', expected: 'Physics works.', evidenceMethod: 'Runtime output.' }]
+      }
+    ]
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  const context = JSON.parse(assignment.context);
+  assert.equal(context.completedDependencyTasks[0].id, 'game-loop-task');
+  assert.deepEqual(context.completedDependencyTasks[0].existingFiles, ['index.html']);
+
+  await assert.rejects(advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('BLOCKED', { summary: 'Repository is empty — no source code exists yet. The dependency has not been built.' }) }
+    ])
+  }), /completed dependency files on disk: index\.html/);
 });
 
 
@@ -618,6 +1380,10 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   const qa = parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] }));
   assert.equal(qa.checks[0].expected, 'The app starts.');
   assert.throws(() => parseStageResult('qa', result('PASS', { checks: [{ name: 'runtime smoke', status: 'PASS', evidence: 'Runtime command exited 0.' }], automationAttempts: [], manualChecks: [] })), /expected/);
+  const advisoryOnlyLocalhostQa = parseStageResult('qa', result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Runtime smoke passed; visual check remains.'], checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [{ command: 'playwright smoke', result: 'passed', covers: ['runtime smoke'], fallbackReason: '' }], manualChecks: ['Human-only because final visual inspection is subjective: open http://127.0.0.1:8765/ and inspect the game.'] }));
+  assert.match(advisoryOnlyLocalhostQa.manualChecks[0], /127\.0\.0\.1/);
+  const localhostQa = parseStageResult('qa', result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Runtime smoke passed; visual check remains.'], checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [{ command: 'start server with port 0, then playwright smoke', result: 'Server selected an available port; served page identity verified by title and content; server is still running and available for the human.', covers: ['runtime smoke'], fallbackReason: '' }], manualChecks: ['Human-only because final visual inspection is subjective: open http://127.0.0.1:43210/ and inspect the game.'] }));
+  assert.match(localhostQa.manualChecks[0], /127\.0\.0\.1/);
   assert.throws(() => parseStageResult('qa', result('FAIL', { evidence: ['Runtime assertion failed.'], checks: [{ name: 'audio toggle', status: 'FAIL', expected: 'Audio should mute after clicking the toggle.', actual: 'src/audio.js line 49 should call toggleMute().', evidence: 'Source inspection found missing call.' }], automationAttempts: [], manualChecks: [] })), /black-box behavior only/);
   assert.equal(normalizeTimeoutSeconds(1), 3600);
   assert.equal(normalizeTimeoutSeconds(300), 3600);

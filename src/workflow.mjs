@@ -405,6 +405,300 @@ function rejectQaImplementationGuidance(result) {
   }
 }
 
+function isBrowserRuntimeTask(task) {
+  const text = `${task?.id || ''} ${task?.title || ''} ${JSON.stringify(task?.acceptanceCriteria || [])} ${JSON.stringify(task?.description || '')} ${JSON.stringify(task?.blackBoxTestPlan || [])}`;
+  return /\b(?:ui|canvas|browser|visual|layout|gameplay|game|audio|sound|controls?|render|dom|html|css|screen|viewport)\b/i.test(text);
+}
+
+function hasBrowserStartupEvidenceText(text) {
+  return /(?:playwright|puppeteer|chromium|chrome|firefox|browser|headless|page\.|locator\()/i.test(text) &&
+    /(?:pageerror|page error)/i.test(text) &&
+    /console(?:\s+error)?/i.test(text) &&
+    /(?:zero errors|0 errors|no errors|reported zero errors|reported 0 errors|without errors|startup.*(?:passed|verified|succeeded)|passed.*startup)/i.test(text);
+}
+
+function browserRuntimeFallbackGuidance() {
+  return 'If Playwright is installed but bundled Chromium fails to launch because of sandbox, host permission, or missing browser dependencies, keep using Playwright with a system browser instead of improvised Puppeteer cache-path imports. Preferred fallback: Python Playwright sync_playwright().chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"]); if channel lookup fails, detect google-chrome/chromium/chromium-browser with which and pass it as executable_path. Minimal smoke recipe: create a short repo-local script such as aiteam-browser-smoke.py, attach page.on("pageerror", ...), page.on("console", lambda msg: collect msg.type == "error"), page.goto("file://" + resolved index.html path, wait_until="domcontentloaded"), assert the primary UI root exists, print "pageerror and console error listeners reported zero errors", then delete the script if it is not reusable evidence. Report the failed bundled-browser attempt separately from the successful system-browser startup check.';
+}
+
+function hasOnlyFailedBrowserStartupEvidence(text) {
+  return /(?:playwright|puppeteer|chromium|chrome|firefox|browser|headless)/i.test(text) &&
+    /\b(?:failed|cannot|can't|could not|unable|unavailable|error|exception|sandbox|permission denied|module not found|ERR_MODULE_NOT_FOUND)\b/i.test(text) &&
+    !hasBrowserStartupEvidenceText(text);
+}
+
+function validateImplementationBrowserRuntimeEvidence(task, result) {
+  if (result.outcome !== 'PASS' || !isBrowserRuntimeTask(task)) return;
+  const evidenceText = [
+    ...(result.evidence || []),
+    ...(result.validations || []).flatMap((validation) => [validation.command, validation.result])
+  ].filter(Boolean).join('\n');
+  if (hasOnlyFailedBrowserStartupEvidence(evidenceText)) {
+    throw new Error(`Browser/UI implementation PASS cannot rely only on failed browser launch evidence. ${browserRuntimeFallbackGuidance()}`);
+  }
+  if (!hasBrowserStartupEvidenceText(evidenceText)) {
+    throw new Error(`Browser/UI implementation PASS requires concrete runtime startup evidence: load the app in Playwright/Puppeteer/headless browser or an equivalent browser runner, monitor pageerror and console errors, and report the command/result in validations. ${browserRuntimeFallbackGuidance()}`);
+  }
+}
+
+function validateCodeReviewBrowserRuntimeEvidence(task, result) {
+  if (result.outcome !== 'PASS' || !isBrowserRuntimeTask(task)) return;
+  const implementationEvidence = [
+    ...(task?.validations || []).flatMap((validation) => [validation.command, validation.result]),
+    ...(task?.evidence || [])
+  ].filter(Boolean).join('\n');
+  if (!hasBrowserStartupEvidenceText(implementationEvidence)) {
+    throw new Error('Code Review cannot PASS browser/UI work when Implementation lacks concrete browser startup evidence with console/pageerror monitoring. Return a MAJOR finding requiring runtime startup validation.');
+  }
+}
+
+function materialFindingText(finding) {
+  return [
+    finding?.id,
+    finding?.location,
+    finding?.impact,
+    finding?.recommendation,
+    finding?.description
+  ].filter(Boolean).join('\n');
+}
+
+function hasMaterialFindingAuthority(text) {
+  return /\b(?:acceptance criterion|acceptance criteria|acceptanceCriteria|prd|product requirements document|trd|technical requirements document|source[- ]of[- ]truth|approved requirement|runtime|test|command|validation|pageerror|console error|syntax|crash|security|scope creep|regression)\b/i.test(text);
+}
+
+function isSpeculativeAlgorithmFinding(text) {
+  return /\b(?:formula|algorithm|calculation|normaliz(?:e|ed|ation)|divisor|multiplier|mapping|clamp|angle|velocity|speed|physics|collision)\b/i.test(text) &&
+    /\b(?:should|must|instead|replace|use|wrong|incorrect|inverted)\b/i.test(text);
+}
+
+function validateCodeReviewMaterialFindings(result) {
+  if (result.outcome !== 'FAIL') return;
+  for (const finding of result.findings || []) {
+    if (!['BLOCKER', 'MAJOR'].includes(finding?.severity)) continue;
+    const text = materialFindingText(finding);
+    if (!hasMaterialFindingAuthority(text)) {
+      throw new Error(
+        'Code Review material findings must cite concrete authority: exact acceptance criteria, approved PRD/TRD source-of-truth requirements, deterministic command/test/runtime evidence, or a directly observed syntax/security/scope defect.'
+      );
+    }
+    if (isSpeculativeAlgorithmFinding(text) && !/\b(?:acceptance criterion|acceptance criteria|acceptanceCriteria|prd|trd|source[- ]of[- ]truth|runtime|test|command|validation)\b/i.test(text)) {
+      throw new Error(
+        'Code Review cannot route implementation rework for speculative formula/algorithm preferences unless the finding proves a violation using acceptance criteria, approved PRD/TRD source-of-truth material, or deterministic test/runtime evidence.'
+      );
+    }
+  }
+}
+
+function recordWorkflowAdvisory(repo, stage, result, check) {
+  try {
+    check();
+  } catch (error) {
+    appendEvent(repo, {
+      type: 'workflow_quality_advisory',
+      stage,
+      outcome: result?.outcome,
+      warning: String(error?.message || error)
+    });
+  }
+}
+
+function recordPostReviewAdvisories(repo, session, stage, result) {
+  recordWorkflowAdvisory(repo, stage, result, () => validateSourceOfTruthEvidence(session, stage, result));
+  if (stage === 'implementation') {
+    recordWorkflowAdvisory(repo, stage, result, () => validateImplementationBrowserRuntimeEvidence(currentTask(session), result));
+  } else if (stage === 'code-review') {
+    recordWorkflowAdvisory(repo, stage, result, () => validateCodeReviewBrowserRuntimeEvidence(currentTask(session), result));
+  } else if (stage === 'qa') {
+    const task = currentTask(session);
+    recordWorkflowAdvisory(repo, stage, result, () => {
+      if (isBrowserRuntimeTask(task)) {
+        const attemptedRuntime = result.automationAttempts.some((attempt) => /playwright|puppeteer|chromium|chrome|firefox|browser|headless|page\.|locator\(/i.test(`${attempt.command} ${attempt.result}`));
+        if (!attemptedRuntime) {
+          throw new Error('QA for UI/game/browser/runtime criteria should document a Playwright/headless-browser/live runtime test attempt in automationAttempts.');
+        }
+      }
+    });
+    recordWorkflowAdvisory(repo, stage, result, () => validateQaBrowserRuntimeEvidence(task, result));
+    recordWorkflowAdvisory(repo, stage, result, () => validateQaManualCheckAutomation(result));
+  }
+}
+
+function validateQaBrowserRuntimeEvidence(task, result) {
+  if (!['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.outcome) || !isBrowserRuntimeTask(task)) return;
+  const automationText = (result.automationAttempts || []).flatMap((attempt) => [attempt.command, attempt.result, ...(attempt.covers || [])]).join('\n');
+  if (hasOnlyFailedBrowserStartupEvidence(automationText)) {
+    throw new Error(`QA PASS for browser/UI work cannot rely only on failed browser launch evidence. ${browserRuntimeFallbackGuidance()}`);
+  }
+  if (!hasBrowserStartupEvidenceText(automationText)) {
+    throw new Error(`QA PASS for browser/UI work requires concrete browser startup evidence: automation must load the page, monitor pageerror and console errors, and report that startup had no page or console errors. ${browserRuntimeFallbackGuidance()}`);
+  }
+}
+
+function hasReviewArtifacts(session) {
+  const artifacts = reviewArtifactsPromptView(session);
+  return Boolean(artifacts.prd || artifacts.trd);
+}
+
+function resultEvidenceText(result) {
+  return [
+    result.summary,
+    ...(result.evidence || []),
+    ...(result.validations || []).flatMap((validation) => [validation.command, validation.result]),
+    ...(result.findings || []).flatMap((finding) => [finding.id, finding.severity, finding.location, finding.impact, finding.recommendation, finding.description]),
+    ...(result.checks || []).flatMap((check) => [check.name, check.status, check.expected, check.actual, check.evidence]),
+    ...(result.automationAttempts || []).flatMap((attempt) => [attempt.command, attempt.result, ...(attempt.covers || [])]),
+    ...(result.manualChecks || []),
+    result.commitMessage
+  ].filter(Boolean).join('\n');
+}
+
+function validateSourceOfTruthEvidence(session, stage, result) {
+  if (!['implementation', 'code-review', 'qa', 'integration'].includes(stage)) return;
+  if (!['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.outcome)) return;
+  if (!hasReviewArtifacts(session)) return;
+  const text = resultEvidenceText(result);
+  const mentionsPrd = /\b(?:prd|product requirements document|reviewArtifacts\.prd|\.aiteam\/docs\/prd\.html|prd\.html)\b/i.test(text);
+  const mentionsTrd = /\b(?:trd|technical requirements document|reviewArtifacts\.trd|\.aiteam\/docs\/trd\.html|trd\.html)\b/i.test(text);
+  const mentionsSourceOfTruth = /\bsource[- ]of[- ]truth\b/i.test(text) || /\bapproved (?:prd|trd|product requirements|technical requirements)\b/i.test(text);
+  if (!(mentionsPrd && mentionsTrd && mentionsSourceOfTruth)) {
+    throw new Error(`${stage} PASS requires evidence that approved PRD and TRD source-of-truth material was checked for this task.`);
+  }
+}
+
+function slugForRegressionId(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'check';
+}
+
+function validateQaPlannedTestCoverage(session, result) {
+  if (!['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.outcome)) return;
+  const task = currentTask(session);
+  const obligations = (task?.blackBoxTestPlan || []).map((test) => test.name).filter(Boolean);
+  if (!obligations.length) return;
+
+  const resultText = [
+    result.summary,
+    ...(result.evidence || []),
+    ...(result.checks || []).flatMap((check) => [check.name, check.status, check.expected, check.actual, check.evidence]),
+    ...(result.automationAttempts || []).flatMap((attempt) => [attempt.command, attempt.result, ...(attempt.covers || [])]),
+    ...(result.manualChecks || [])
+  ].filter(Boolean).join('\n');
+
+  const missing = obligations.filter((name) => {
+    if (!resultText.includes(name)) return true;
+    const matchingCheck = (result.checks || []).find((check) => Object.values(check).some((value) => String(value || '').includes(name)));
+    if (!matchingCheck) return false;
+    if (/\b(?:obsolete|no longer valid|not valid anymore|superseded)\b/i.test(Object.values(matchingCheck).join('\n'))) {
+      return !/\b(?:because|reason|replaced by|superseded by|no longer applies)\b/i.test(Object.values(matchingCheck).join('\n'));
+    }
+    return false;
+  });
+  if (missing.length) {
+    throw new Error(`QA planned test coverage missing for current task tests: ${missing.join(', ')}. Run each planned black-box test or mark it obsolete/no longer valid with a reason.`);
+  }
+}
+
+function priorRegressionObligations(session, currentTaskId) {
+  return (session.taskLedger || [])
+    .filter((task) => task.id !== currentTaskId && ['qa-passed', 'integrated', 'completed'].includes(task.status))
+    .flatMap((task) => (task.qa?.checks || [])
+      .filter((check) => !/^fail$/i.test(check.status || ''))
+      .map((check, index) => ({
+        id: `${task.id}#${slugForRegressionId(check.name || `check-${index + 1}`)}`,
+        taskId: task.id,
+        taskTitle: task.title,
+        name: check.name,
+        expected: check.expected,
+        previousStatus: check.status
+      })));
+}
+
+function validateQaRegressionCoverage(session, result) {
+  if (!['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.outcome)) return;
+  const obligations = priorRegressionObligations(session, session.currentTaskId);
+  if (!obligations.length) return;
+
+  const resultText = [
+    result.summary,
+    ...(result.evidence || []),
+    ...(result.checks || []).flatMap((check) => [check.name, check.status, check.expected, check.actual, check.evidence]),
+    ...(result.automationAttempts || []).flatMap((attempt) => [attempt.command, attempt.result, ...(attempt.covers || [])]),
+    ...(result.manualChecks || [])
+  ].filter(Boolean).join('\n');
+
+  const missing = obligations.filter((obligation) => {
+    if (!resultText.includes(obligation.id)) return true;
+    const matchingCheck = (result.checks || []).find((check) => Object.values(check).some((value) => String(value || '').includes(obligation.id)));
+    if (!matchingCheck) return false;
+    if (/\b(?:obsolete|no longer valid|not valid anymore|superseded)\b/i.test(Object.values(matchingCheck).join('\n'))) {
+      return !/\b(?:because|reason|replaced by|superseded by|no longer applies)\b/i.test(Object.values(matchingCheck).join('\n'));
+    }
+    return false;
+  });
+  if (missing.length) {
+    throw new Error(`QA regression coverage missing for previous test IDs: ${missing.map((item) => item.id).join(', ')}. Re-run each prior QA test or mark it obsolete/no longer valid with a reason.`);
+  }
+}
+
+function normalizeCoverageText(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function hasHumanOnlyManualReason(check) {
+  return /\bhuman[- ]only\b/i.test(check) &&
+    /\b(?:because|requires|needs|subjective|visual|judgment|feel|perception|aesthetic|smoothness|playfeel|audio quality)\b/i.test(check);
+}
+
+function validateQaManualCheckAutomation(result) {
+  if (result.outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
+  const covers = (result.automationAttempts || [])
+    .flatMap((attempt) => attempt.covers || [])
+    .map(normalizeCoverageText)
+    .filter(Boolean);
+  const missing = (result.manualChecks || []).filter((check) => {
+    if (hasHumanOnlyManualReason(check)) return false;
+    const normalizedCheck = normalizeCoverageText(check);
+    return !covers.some((cover) => normalizedCheck.includes(cover) || cover.includes(normalizedCheck));
+  });
+  if (missing.length) {
+    throw new Error(`PASS_WITH_MANUAL_VALIDATION manual checks must be covered by automationAttempts[].covers or explicitly marked human-only with a reason: ${missing.join(' | ')}`);
+  }
+}
+
+function validateQaManualCheckScope(session, result) {
+  if (result.outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
+  const task = currentTask(session);
+  const taskIndex = session.taskLedger.findIndex((item) => item.id === task?.id);
+  if (!task || taskIndex < 0) return;
+  const currentTaskNumber = taskIndex + 1;
+  const currentWords = wordsForScope(taskScopeText(task));
+  const futureTasks = session.taskLedger
+    .map((item, index) => ({ ...item, taskNumber: index + 1, scopeWords: wordsForScope(taskScopeText(item)) }))
+    .filter((item, index) => index > taskIndex && !['qa-passed', 'integrated', 'completed'].includes(item.status));
+  const futureScoped = (result.manualChecks || []).map((check) => {
+    const fragmentWords = wordsForScope(check);
+    const referencedNumber = taskNumberReferenced(check);
+    const explicitFuture = /\bfuture task\b|\bfuture-task\b|\blater task\b|\blater\b|\bout(?:side)? of scope\b|\bnot (?:for )?(?:this|current) task\b/i.test(check)
+      || (referencedNumber != null && referencedNumber !== currentTaskNumber);
+    const futureScores = futureTasks
+      .map((futureTask) => ({ taskId: futureTask.id, taskTitle: futureTask.title, taskNumber: futureTask.taskNumber, score: overlapCount(fragmentWords, futureTask.scopeWords) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+    const bestFuture = futureScores[0] || null;
+    const currentScore = overlapCount(fragmentWords, currentWords);
+    if (explicitFuture || (bestFuture && bestFuture.score > currentScore + 1)) {
+      return { check, matchedTask: bestFuture };
+    }
+    return null;
+  }).filter(Boolean);
+  if (futureScoped.length) {
+    throw new Error(`QA manualChecks must not target future-task or out-of-scope behavior: ${futureScoped.map((item) => item.check).join(' | ')}`);
+  }
+}
+
 function currentTask(session) {
   return session.taskLedger.find((task) => task.id === session.currentTaskId) || null;
 }
@@ -489,6 +783,49 @@ function currentTaskPromptView(task) {
   };
 }
 
+function completedDependencyTasksPromptView(session, task, repo) {
+  if (!task?.dependencies?.length) return [];
+  const dependencyIds = new Set(task.dependencies);
+  return (session.taskLedger || [])
+    .filter((item) => dependencyIds.has(item.id) && ['qa-passed', 'integrated', 'completed'].includes(item.status))
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      status: item.status,
+      acceptanceCriteria: item.acceptanceCriteria || [],
+      filesChanged: item.filesChanged || [],
+      existingFiles: (item.filesChanged || []).filter((file) => fs.existsSync(path.resolve(repo, file))),
+      implementationRunId: item.implementationRunId || null,
+      integration: item.integration || null
+    }));
+}
+
+function currentTaskAttemptHistoryPromptView(task) {
+  return (task?.attemptHistory || []).slice(-8).map((entry) => ({
+    at: entry.at,
+    stage: entry.stage,
+    agentId: entry.agentId,
+    runId: entry.runId,
+    outcome: entry.outcome,
+    summary: entry.summary,
+    rejection: entry.rejection,
+    filesChanged: entry.filesChanged || [],
+    validationCount: entry.validationCount || 0
+  }));
+}
+
+function appendTaskAttemptHistory(session, taskId, entry) {
+  if (!taskId || !['implementation', 'code-review', 'qa'].includes(entry.stage)) return session;
+  return {
+    ...session,
+    taskLedger: (session.taskLedger || []).map((task) => {
+      if (task.id !== taskId) return task;
+      const attemptHistory = [...(task.attemptHistory || []), entry].slice(-12);
+      return { ...task, attemptHistory };
+    })
+  };
+}
+
 function architecturePromptView(arch) {
   if (!arch) return null;
   return {
@@ -530,12 +867,27 @@ function stageContext(session, repo) {
     const completedPriorTasks = stage === 'qa'
       ? session.taskLedger
           .filter((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
-          .map((t) => ({ id: t.id, title: t.title, acceptanceCriteria: t.acceptanceCriteria, filesChanged: t.filesChanged || [] }))
+          .map((t) => ({
+            id: t.id,
+            title: t.title,
+            acceptanceCriteria: t.acceptanceCriteria,
+            filesChanged: t.filesChanged || [],
+            regressionTests: (t.qa?.checks || [])
+              .filter((check) => !/^fail$/i.test(check.status || ''))
+              .map((check, index) => ({
+                id: `${t.id}#${slugForRegressionId(check.name || `check-${index + 1}`)}`,
+                name: check.name,
+                expected: check.expected,
+                previousStatus: check.status
+              }))
+          }))
       : undefined;
 
     return JSON.stringify({
       currentStage: stage,
       currentTask: currentTaskPromptView(task),
+      currentTaskAttemptHistory: currentTaskAttemptHistoryPromptView(task),
+      completedDependencyTasks: stage === 'implementation' ? completedDependencyTasksPromptView(session, task, repo) : undefined,
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
       architectureOverview: architecturePromptView(arch),
@@ -587,6 +939,19 @@ function stageContext(session, repo) {
 function assignmentText(stage, session) {
   const task = currentTask(session);
   const taskJson = JSON.stringify(currentTaskPromptView(task));
+  const qaRuntimeSafety =
+    'When serving browser apps for automation, do not use hard-coded ports; bind to a free ephemeral port or prove the selected port is free, and verify the page identity before assertions. Do not put localhost URLs in manualChecks unless automationAttempts document that QA owns a persistent server, chose/proved a free port, verified the served page identity, and expects the server to remain available for the human.';
+  const browserFallbackRule = browserRuntimeFallbackGuidance();
+  const qaRegressionRule =
+    'If completedPriorTasks includes regressionTests, every regressionTests[].id is mandatory. Include each exact ID in checks or automationAttempts[].covers. Re-run that prior test unless it is no longer valid; if obsolete, include a check with that exact ID, status INFO, and a clear reason it is obsolete/no-longer-applicable.';
+  const qaPlannedTestRule =
+    'Every currentTask.blackBoxTestPlan[].name is mandatory. Include each exact planned test name in checks or automationAttempts[].covers. Re-run that planned black-box test unless it is no longer valid; if obsolete, include a check with that exact name, status INFO, and a clear reason it is obsolete/no-longer-applicable.';
+  const qaStartupRule =
+    'For browser/UI/game/canvas work, attach pageerror and console-error listeners before navigation/startup. Any page error, JavaScript console error, failed navigation, or missing primary UI root is a FAIL. PASS requires concrete automation evidence that startup had no page or console errors.';
+  const qaManualValidationRule =
+    'Before returning PASS_WITH_MANUAL_VALIDATION, every manualChecks[] item must either be listed exactly or by a clear short label in automationAttempts[].covers, or be explicitly marked "Human-only because ..." with the reason it cannot be automated. Manual checks must target only the current task or completed-prior-task regression scope; never ask the human to validate future planned tasks.';
+  const codeReviewProofRule =
+    'For any proposed BLOCKER or MAJOR finding involving formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into the ACTUAL current code and show intermediate/final values. Apply the same inputs to the proposed replacement. Do not emit a material finding unless this proves that current behavior violates an exact acceptance criterion or approved PRD/TRD requirement and that the correction direction satisfies it. An alternative implementation preference is not a defect.';
   const details = {
     intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
     architecture: 'Produce a structured implementation architecture: context, constraints, quality attribute scenarios, solution strategy, building blocks, runtime scenarios, deployment view, cross-cutting concepts, decisions/tradeoffs, risks, UI routing, and only genuine specialist capability gaps.',
@@ -597,7 +962,7 @@ function assignmentText(stage, session) {
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, UI/UX design (if present), plan, and QA feasibility.',
     implementation: task?.['code-reviewFailure']
-      ? `This is a REWORK assignment for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
+      ? `This is a REWORK assignment for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nTreat each previous finding as a hypothesis, not an instruction that must be applied blindly. Use execution tools to inspect the ACTUAL current files and verify every finding against the current task acceptanceCriteria and approved PRD/TRD source-of-truth material. For formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into both the current logic and the proposed replacement.\n\nFix only findings that this verification confirms. If a finding is stale, contradicted by the current code, or would make compliant behavior worse, preserve the working code and provide deterministic evidence explaining why the finding is invalid. A rework PASS does not require a content change when all material findings are disproven: list the existing implementation paths in filesChanged and provide non-empty validations proving the acceptance criteria. Do NOT make a token/no-op edit solely to satisfy rework. Do NOT return FAIL.`
       : task?.qaFailure
       ? `This is a REWORK assignment for task ${taskJson}.\nQA validation failed with the following issue:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW to fix the reported bugs. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
       : `Implement or verify task ${taskJson}.\n\n` +
@@ -606,15 +971,15 @@ function assignmentText(stage, session) {
         `CRITICAL SCOPE BOUNDARY:\nImplement ONLY the acceptanceCriteria of THIS task.\nDo NOT implement features or subsystems belonging to other tasks. Focus strictly on fulfilling the criteria of THIS task.\n\n` +
         `Return outcome "PASS" with "filesChanged" containing the non-empty repository-relative paths containing the implementation. Do not commit.`,
     'code-review': task?.['code-reviewFailure']
-      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk.`
-      : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.`,
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk. Re-derive each prior finding from the current code; prior findings are hypotheses, not authoritative facts. If deterministic implementation evidence disproves a prior finding, do not repeat it.\n\n${codeReviewProofRule}`
+      : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.\n\n${codeReviewProofRule}`,
     qa: task?.qaFailure
-      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and do NOT tell the programmer how to fix defects.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.`
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and DO NOT tell the programmer how to fix defects.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`
       : `Validate the current task against its acceptance criteria: ${taskJson}.\n\n` +
         (session.taskLedger.some((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
           ? `CROSS-TASK REGRESSION: You must also verify that this task's changes did not break any previously passing completed tasks listed in your context (completedPriorTasks).\n\n`
           : '') +
-        `CRITICAL SCOPE BOUNDARY: Generate black-box functional checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run smoke test scripts, browser automation, API requests, CLI commands, or headless tests) on disk before returning your structured result. Do NOT inspect source code and do NOT tell the programmer how to fix defects. Each check must report test performed, expected result, actual result, and runtime evidence.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.`,
+        `CRITICAL SCOPE BOUNDARY: Generate black-box functional checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run smoke test scripts, browser automation, API requests, CLI commands, or headless tests) on disk before returning your structured result. Do NOT inspect source code and DO NOT tell the programmer how to fix defects. Each check must report test performed, expected result, actual result, and runtime evidence.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`,
     integration: task
       ? `Inspect QA-approved work for task ${taskJson} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
@@ -1030,7 +1395,7 @@ function generatePrd(repo, session) {
       <h2>Risks</h2>${listItems(intake.risks)}
       <h2>Open Questions</h2>${listItems(intake.questions)}
       <h2>Change Notes</h2><p>This PRD should be updated if the user changes product intent, scope, acceptance criteria, or success metrics.</p>
-      <h2>Approval</h2><p>Reply in chat with <strong>approved</strong> to continue to Architecture, or describe required PRD changes.</p>`
+      <h2>Approval</h2><p>Reply with exactly <strong>approved</strong> to continue to Architecture. Any other response is treated as requested PRD feedback.</p>`
   });
   return writeReviewArtifact(repo, session, 'prd.html', html);
 }
@@ -1048,7 +1413,7 @@ export function generateTrd(repo, session) {
     title: 'Technical Requirements Document',
     subtitle: `Session ${session.id} · Implementation readiness review`,
     body: `
-      <section class="card"><h2>How To Read This</h2><p>This TRD explains how the team plans to build and test the approved product. Please review the architecture, implementation plan, and testing plan. If the plan does not match what you approved in the PRD, describe the change you want before approving.</p></section>
+      <section class="card"><h2>How To Read This</h2><p>This TRD explains how the team plans to build and test the approved product. Please review the architecture, implementation plan, and testing plan. If the plan does not match what you approved in the PRD, describe the change you want instead of approving.</p></section>
       <h2>Document Basics</h2><div class="table-wrap"><table><tbody>
         <tr><th>Status</th><td>Ready for human review</td></tr>
         <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, Critical Reviewer</td></tr>
@@ -1082,13 +1447,13 @@ export function generateTrd(repo, session) {
       <h2>Screen Mockups</h2>${screenMockups(ui)}
       <h2>Implementation Plan</h2>${taskCards(tasks)}
       <h2>Requirements-To-Work Traceability</h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Acceptance Criterion</th><th>Likely PRD Link</th></tr></thead><tbody>${traceRows.map(({ task, criterion }, index) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(criterion)}</td><td>${escapeHtml(reqs[index % Math.max(reqs.length, 1)] ? `PRD-R${(index % reqs.length) + 1}` : 'PRD requirement not mapped')}</td></tr>`).join('')}</tbody></table></div>
-      <h2>Testing Plan</h2>${testingCards(tasks)}
+      <h2>Testing Plan</h2><p>This section is the planned black-box QA test plan. QA must use these task-level tests as the starting point for validation after implementation.</p>${testingCards(tasks)}
       <h2>Critical Review</h2>${listItems((review.findings || []).map((finding) => `${finding.severity}: ${finding.description || finding.id}`))}
       <h2>Risks And Open Questions</h2><div class="grid">
         <section class="card"><h3>Technical Risks</h3>${listItems(arch.risks)}</section>
         <section class="card"><h3>Open Questions</h3>${listItems((review.findings || []).filter((finding) => finding.severity === 'INFO').map((finding) => finding.description || finding.id))}</section>
       </div>
-      <h2>Approval</h2><p>Reply in chat with <strong>approved</strong> to begin implementation, or describe required TRD/testing-plan changes.</p>`
+      <h2>Approval</h2><p>Reply with exactly <strong>approved</strong> to begin implementation. Any other response is treated as requested TRD/testing-plan feedback and returns the work to Planning.</p>`
   });
   return writeReviewArtifact(repo, session, 'trd.html', html);
 }
@@ -1135,10 +1500,52 @@ function recoverImplementationProseResult(repo, session, assignment, stdout) {
   };
 }
 
+function dependencyExistingFiles(session, task, repo) {
+  return completedDependencyTasksPromptView(session, task, repo)
+    .flatMap((dependency) => dependency.existingFiles || [])
+    .filter(Boolean);
+}
+
+function rejectFalseImplementationBlocked(repo, session, result) {
+  const task = currentTask(session);
+  if (!task || result.outcome !== 'BLOCKED') return;
+  const dependencyFiles = [...new Set(dependencyExistingFiles(session, task, repo))];
+  if (!dependencyFiles.length) return;
+  const text = `${result.summary}\n${(result.evidence || []).join('\n')}`;
+  const claimsMissingCode = /\b(?:repo(?:sitory)? is empty|no source files?|no implementation files?|source code (?:does not|doesn't) exist|dependency .* (?:does not|doesn't) exist|hasn't been built|has not been built)\b/i.test(text);
+  if (claimsMissingCode) {
+    throw new Error(`Implementation BLOCKED is inconsistent with completed dependency files on disk: ${dependencyFiles.join(', ')}. Inspect these dependency files and either implement/verify the current task or return a concrete blocker that is not a false repository-empty/dependency-missing claim.`);
+  }
+}
+
+function rejectImplementationInspectionDeferral(result) {
+  const text = `${result.summary}\n${(result.evidence || []).join('\n')}`;
+  if (/\bneed to inspect\b|\bmust inspect\b|\binspect (?:the )?(?:repo|repository|codebase|files?)\b|\bbefore (?:proceeding|determining|deciding)\b/i.test(text)) {
+    throw new Error('Implementation cannot return FAIL/BLOCKED just to inspect repository state. It has workspace-write tool access and must inspect files during the run, then return PASS with filesChanged/validations or a concrete external blocker.');
+  }
+}
+
+function rejectImplementationFalseAccessDeferral(result) {
+  const text = `${result.summary}\n${(result.evidence || []).join('\n')}`;
+  if (/\b(?:no|without|missing|lack(?:ing)?|unavailable|not available)\s+(?:write access|workspace-write|tool access|exec_command|bash|shell|execution tools?)\b|\b(?:cannot|can't|could not|unable to)\s+(?:write|edit|modify|create files?|use exec_command|use bash|access tools?)\b|\bsandbox restrictions?\b/i.test(text)) {
+    throw new Error('Implementation cannot return FAIL/BLOCKED claiming missing write/tool access. Implementation specialists run with workspace-write and execution tools; they must use available shell/node/python commands to inspect, write, and validate files, or report a concrete external blocker with command evidence.');
+  }
+}
+
 function applyResult(repo, session, assignment, result, run) {
   let next = { ...session, activeRun: null, stageEvidence: recordEvidence(session, assignment, result, run) };
   const stage = assignment.stage;
   const passed = result.outcome === 'PASS' || result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
+  next = appendTaskAttemptHistory(next, assignment.session.currentTaskId, {
+    at: run.completedAt || new Date().toISOString(),
+    stage,
+    agentId: assignment.agentId,
+    runId: run.runId,
+    outcome: result.outcome,
+    summary: result.summary,
+    filesChanged: result.filesChanged || [],
+    validationCount: (result.validations || result.checks || []).length
+  });
 
   if (stage === 'intake' && result.outcome === 'AWAITING_USER') {
     const nextHistory = session.pendingUserInput?.response != null
@@ -1176,6 +1583,12 @@ function applyResult(repo, session, assignment, result, run) {
     }
   }
 
+  if (stage === 'implementation' && result.outcome === 'BLOCKED') {
+    rejectImplementationInspectionDeferral(result);
+    rejectImplementationFalseAccessDeferral(result);
+    rejectFalseImplementationBlocked(repo, next, result);
+  }
+
   if (result.outcome === 'BLOCKED') {
     return writeSession(repo, { ...next, status: 'BLOCKED', blockedReason: result.summary });
   }
@@ -1184,6 +1597,9 @@ function applyResult(repo, session, assignment, result, run) {
       next.lockedCriticalFindings = result.findings;
       next.currentStage = result.repairStage;
     } else if (stage === 'code-review' || stage === 'qa') {
+      if (stage === 'code-review') {
+        recordWorkflowAdvisory(repo, stage, result, () => validateCodeReviewMaterialFindings(result));
+      }
       next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId
         ? stage === 'code-review'
           ? { ...task, status: 'needs-rework', review: null, 'code-reviewFailure': result, qa: null, qaFailure: null, qaFingerprint: null, completedAt: null, integration: null }
@@ -1191,6 +1607,8 @@ function applyResult(repo, session, assignment, result, run) {
         : task);
       next.currentStage = 'implementation';
     } else if (stage === 'implementation') {
+      rejectImplementationInspectionDeferral(result);
+      rejectImplementationFalseAccessDeferral(result);
       // Implementation specialists are forbidden from returning FAIL — they must write files and return PASS.
       // A FAIL outcome here almost always means the specialist hallucinated a sandbox restriction
       // instead of calling exec_command/bash. Treat as a retry: set BLOCKED so the coordinator
@@ -1220,7 +1638,7 @@ function applyResult(repo, session, assignment, result, run) {
       questions: [
         `Open the Product Requirements Document: ${artifact.url}`,
         `If the localhost link does not open, use the local file instead: ${artifact.fileUrl}`,
-        'Reply "approved" to approve the PRD and continue to Architecture, or describe required PRD changes.'
+        'Reply exactly "approved" to approve the PRD and continue to Architecture. Any other response will be treated as required PRD feedback.'
       ],
       artifact,
       response: null,
@@ -1280,7 +1698,7 @@ function applyResult(repo, session, assignment, result, run) {
       questions: [
         `Open the Technical Requirements Document: ${artifact.url}`,
         `If the localhost link does not open, use the local file instead: ${artifact.fileUrl}`,
-        'Review the architecture, implementation plan, and testing plan. Reply "approved" to begin implementation, or describe required TRD/testing-plan changes.'
+        'Review the architecture, implementation plan, and testing plan. Reply exactly "approved" to begin implementation. Any other response will be treated as required TRD/testing-plan feedback.'
       ],
       artifact,
       response: null,
@@ -1298,6 +1716,7 @@ function applyResult(repo, session, assignment, result, run) {
         `Call aiteam_advance to retry so the specialist writes the files.`
       );
     }
+    recordPostReviewAdvisories(repo, next, stage, result);
     const implementationFingerprint = fingerprintPaths(repo, result.filesChanged);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
@@ -1317,18 +1736,15 @@ function applyResult(repo, session, assignment, result, run) {
     } : task);
     next.currentStage = 'code-review';
   } else if (stage === 'code-review') {
+    recordPostReviewAdvisories(repo, next, stage, result);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? { ...task, status: 'review-passed', review: result, 'code-reviewFailure': null } : task);
     next.currentStage = 'qa';
   } else if (stage === 'qa') {
     const task = currentTask(next);
-    const runtimeTaskText = `${JSON.stringify(task?.acceptanceCriteria || [])} ${JSON.stringify(task?.description || '')}`;
-    const needsRuntimeValidation = /ui|canvas|browser|visual|layout|gameplay|game|audio|sound|controls?|render/i.test(runtimeTaskText);
-    if (needsRuntimeValidation) {
-      const attemptedRuntime = result.automationAttempts.some((attempt) => /playwright|puppeteer|chromium|chrome|firefox|browser|headless|page\.|locator\(/i.test(`${attempt.command} ${attempt.result}`));
-      if (!attemptedRuntime) {
-        throw new Error('QA for UI/game/browser/runtime criteria must document a Playwright/headless-browser/live runtime test attempt in automationAttempts.');
-      }
-    }
+    validateQaPlannedTestCoverage(next, result);
+    validateQaRegressionCoverage(next, result);
+    recordPostReviewAdvisories(repo, next, stage, result);
+    validateQaManualCheckScope(next, result);
     const manual = result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
@@ -1352,6 +1768,7 @@ function applyResult(repo, session, assignment, result, run) {
       next.currentStage = 'integration';
     }
   } else if (stage === 'integration') {
+    validateSourceOfTruthEvidence(next, stage, result);
     const task = currentTask(session) || next.taskLedger.find((t) => t.id === next.currentTaskId);
     const paths = task ? task.filesChanged : [...new Set(next.taskLedger.flatMap((t) => t.filesChanged))];
     if (task && task.qaFingerprint && fingerprintPaths(repo, task.filesChanged) !== task.qaFingerprint) {
@@ -1375,32 +1792,198 @@ function applyResult(repo, session, assignment, result, run) {
   return writeSession(repo, next);
 }
 
+const TRIAGE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'has', 'have',
+  'i', 'if', 'in', 'is', 'it', 'its', 'of', 'on', 'or', 'out', 'pass', 'that', 'the',
+  'this', 'to', 'with', 'task', 'tasks', 'test', 'tests', 'two', 'four', 'only', 'feel',
+  'resolved', 'should', 'would', 'could', 'current', 'future'
+]);
+
+function wordsForScope(value) {
+  return [...new Set(String(value || '').toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) || [])]
+    .filter((word) => !TRIAGE_STOP_WORDS.has(word));
+}
+
+function taskScopeText(task) {
+  return [
+    task?.id,
+    task?.title,
+    task?.description,
+    ...(task?.acceptanceCriteria || []),
+    ...(task?.blackBoxTestPlan || []).flatMap((test) => [test.name, test.action, test.expected])
+  ].filter(Boolean).join(' ');
+}
+
+function overlapCount(aWords, bWords) {
+  const b = new Set(bWords);
+  return aWords.filter((word) => b.has(word)).length;
+}
+
+function manualQaFragments(response) {
+  return String(response || '')
+    .split(/\n|[.;]|\bbut\b|\bhowever\b/i)
+    .map((fragment) => fragment.trim().replace(/^[-*\d.)\s]+/, '').trim())
+    .filter(Boolean)
+    .filter((fragment) => !/^pass$/i.test(fragment));
+}
+
+function taskNumberReferenced(fragment) {
+  const match = String(fragment || '').match(/\btask\s*#?\s*(\d+)\b/i);
+  return match ? Number(match[1]) : null;
+}
+
+function hasManualQaFailureIntent(response) {
+  return /\b(fail|failed|broken|bug|error|issue|problem|fix|incorrect|not working|does not|doesn't|cannot|can't|unresolved|remaining|only\s+\w+\s+out\s+of)\b/i.test(response);
+}
+
+function triageManualQaResponse(session, task, response) {
+  const taskIndex = session.taskLedger.findIndex((item) => item.id === task.id);
+  const currentTaskNumber = taskIndex >= 0 ? taskIndex + 1 : null;
+  const futureTasks = session.taskLedger
+    .map((item, index) => ({ ...item, taskNumber: index + 1, scopeWords: wordsForScope(taskScopeText(item)) }))
+    .filter((item, index) => index > taskIndex && !['qa-passed', 'integrated', 'completed'].includes(item.status));
+  const currentWords = wordsForScope(taskScopeText(task));
+  const fragments = manualQaFragments(response);
+  const currentFailures = [];
+  const futureObservations = [];
+  const ambiguous = [];
+
+  for (const fragment of fragments) {
+    const fragmentWords = wordsForScope(fragment);
+    if (!fragmentWords.length && !hasManualQaFailureIntent(fragment)) continue;
+
+    const referencedNumber = taskNumberReferenced(fragment);
+    const explicitFuture = /\bfuture task\b|\bfuture-task\b|\blater task\b|\blater\b|\bout(?:side)? of scope\b|\bnot (?:for )?(?:this|current) task\b/i.test(fragment)
+      || (referencedNumber != null && referencedNumber !== currentTaskNumber);
+    const explicitCurrent = /\bcurrent task\b|\bthis task\b|\bin scope\b/i.test(fragment)
+      || (referencedNumber != null && referencedNumber === currentTaskNumber);
+    const futureScores = futureTasks
+      .map((futureTask) => ({ taskId: futureTask.id, taskTitle: futureTask.title, taskNumber: futureTask.taskNumber, score: overlapCount(fragmentWords, futureTask.scopeWords) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+    const bestFuture = futureScores[0] || null;
+    const currentScore = overlapCount(fragmentWords, currentWords);
+
+    if (explicitFuture && !explicitCurrent) {
+      futureObservations.push({ text: fragment, matchedTaskId: bestFuture?.taskId || null, matchedTaskTitle: bestFuture?.taskTitle || null, reason: bestFuture ? `Matched future task ${bestFuture.taskNumber}` : 'User identified this as future or out-of-scope work.' });
+    } else if (explicitCurrent || currentScore > (bestFuture?.score || 0) + 1) {
+      currentFailures.push({ text: fragment, reason: explicitCurrent ? 'User identified this as current-task feedback.' : 'Matched current task acceptance criteria more strongly than future tasks.' });
+    } else if (bestFuture && bestFuture.score > currentScore + 1) {
+      futureObservations.push({ text: fragment, matchedTaskId: bestFuture.taskId, matchedTaskTitle: bestFuture.taskTitle, reason: `Matched future task ${bestFuture.taskNumber} more strongly than current task.` });
+    } else if (hasManualQaFailureIntent(fragment)) {
+      ambiguous.push({ text: fragment, reason: 'Could not confidently match this feedback to current or future task scope.' });
+    }
+  }
+
+  if (!currentFailures.length && !futureObservations.length && !ambiguous.length && hasManualQaFailureIntent(response)) {
+    ambiguous.push({ text: response.trim(), reason: 'Manual QA response indicates a problem but no scope match was found.' });
+  }
+
+  const decision = ambiguous.length
+    ? 'clarify'
+    : currentFailures.length
+    ? 'rework'
+    : futureObservations.length
+    ? 'defer'
+    : 'clarify';
+  return { decision, currentFailures, futureObservations, ambiguous };
+}
+
 export function confirmManualQa(repo, response) {
   const session = readSession(repo);
   const pending = session?.pendingUserInput;
-  if (!session || pending?.kind !== 'qa-manual' || pending.response != null) {
+  if (!session || !['qa-manual', 'qa-manual-triage'].includes(pending?.kind) || pending.response != null) {
     throw new Error('No QA manual validation is awaiting user confirmation.');
   }
   const task = session.taskLedger.find((item) => item.id === pending.taskId);
   if (!task || task.status !== 'qa-awaiting-manual') throw new Error('The QA manual validation task is no longer active.');
 
   const trimmedResponse = response.trim();
-  const isFailed = /\b(fail|failed|broken|bug|error|issue|problem|fix|incorrect|not working)\b/i.test(trimmedResponse);
   const answeredAt = new Date().toISOString();
   const answeredManualQa = { ...pending, response: trimmedResponse, answeredAt };
+  const manualQaHistory = [...(session.manualQaHistory || []), answeredManualQa];
+
+  if (/^pass$/i.test(trimmedResponse)) {
+    const next = {
+      ...session,
+      pendingUserInput: null,
+      manualQaHistory,
+      currentStage: 'integration',
+      taskLedger: session.taskLedger.map((item) => item.id === task.id
+        ? {
+          ...item,
+          status: 'qa-passed',
+          qa: { ...item.qa, manualValidationResponse: trimmedResponse },
+          qaFailure: null,
+          completedAt: new Date().toISOString()
+        }
+        : item)
+    };
+    return writeSession(repo, next);
+  }
+
+  const triageInput = pending.kind === 'qa-manual-triage'
+    ? `${pending.originalResponse || ''}\nClarification: ${trimmedResponse}`
+    : trimmedResponse;
+  const triage = triageManualQaResponse(session, task, triageInput);
+
+  if (triage.decision === 'clarify') {
+    return writeSession(repo, {
+      ...session,
+      manualQaHistory,
+      pendingUserInput: {
+        kind: 'qa-manual-triage',
+        stage: 'qa',
+        taskId: task.id,
+        questions: [
+          `I could not determine whether your manual QA feedback is a current-task failure or future-task observation.`,
+          `Current task: ${task.title}. Current acceptance criteria: ${(task.acceptanceCriteria || []).join('; ')}`,
+          `Reply with "current task failure: <issue>" to send it back to implementation, "future task observation: <issue>" to defer it, or exact "PASS" if the current task is acceptable.`
+        ],
+        response: null,
+        requestedAt: new Date().toISOString(),
+        originalResponse: triageInput,
+        triage
+      },
+      currentStage: 'qa'
+    });
+  }
+
+  const deferredObservations = triage.futureObservations.length
+    ? [...(session.deferredManualQaObservations || []), {
+      taskId: task.id,
+      response: triageInput,
+      observations: triage.futureObservations,
+      createdAt: answeredAt
+    }]
+    : (session.deferredManualQaObservations || []);
+
+  const hasCurrentFailures = triage.currentFailures.length > 0;
+  const qaFailure = hasCurrentFailures
+    ? {
+      outcome: 'FAIL',
+      summary: `Manual QA failed for current task: ${triage.currentFailures.map((item) => item.text).join(' | ')}`,
+      deferredObservations: triage.futureObservations
+    }
+    : null;
 
   const next = {
     ...session,
     pendingUserInput: null,
-    manualQaHistory: [...(session.manualQaHistory || []), answeredManualQa],
-    currentStage: isFailed ? 'implementation' : 'integration',
+    manualQaHistory,
+    deferredManualQaObservations: deferredObservations,
+    currentStage: hasCurrentFailures ? 'implementation' : 'integration',
     taskLedger: session.taskLedger.map((item) => item.id === task.id
       ? {
         ...item,
-        status: isFailed ? 'needs-rework' : 'qa-passed',
-        qa: { ...item.qa, manualValidationResponse: trimmedResponse },
-        qaFailure: isFailed ? { outcome: 'FAIL', summary: `Manual QA failed by user: ${trimmedResponse}` } : null,
-        completedAt: isFailed ? null : new Date().toISOString()
+        status: hasCurrentFailures ? 'needs-rework' : 'qa-passed',
+        qa: {
+          ...item.qa,
+          manualValidationResponse: trimmedResponse,
+          manualValidationTriage: triage
+        },
+        qaFailure,
+        completedAt: hasCurrentFailures ? null : new Date().toISOString()
       }
       : item)
   };
@@ -1414,8 +1997,7 @@ export function confirmHumanReview(repo, response) {
     throw new Error('No PRD/TRD human review is awaiting user confirmation.');
   }
   const trimmedResponse = response.trim();
-  const approved = /\b(approved|approve|accepted|accept|yes|looks good|lgtm)\b/i.test(trimmedResponse) &&
-    !/\b(not approved|do not approve|reject|rejected|changes?|fix|revise|missing|incorrect|wrong|no)\b/i.test(trimmedResponse);
+  const approved = /^approved$/i.test(trimmedResponse);
   const answeredAt = new Date().toISOString();
   const answeredReview = { ...pending, response: trimmedResponse, answeredAt, approved };
   const reviewHistory = [...(session.humanReviewHistory || []), answeredReview];
@@ -1452,6 +2034,36 @@ export function normalizeTimeoutSeconds(value) {
   return SPECIALIST_TIMEOUT_SECONDS;
 }
 
+function implementationRetryContext(repo, session, assignment, errorMessage) {
+  const task = currentTask(session);
+  const dependencyFiles = [...new Set(dependencyExistingFiles(session, task, repo))];
+  const knownFiles = [...new Set([...(task?.filesChanged || []), ...dependencyFiles])].filter(Boolean);
+  const knownFilesText = knownFiles.length ? knownFiles.join(', ') : '(none recorded yet)';
+  const history = currentTaskAttemptHistoryPromptView(task)
+    .map((entry, index) => `${index + 1}. ${entry.stage}/${entry.agentId} ${entry.outcome || 'REJECTED'}: ${entry.rejection || entry.summary || 'no summary'}`)
+    .join('\n') || 'No prior task attempts recorded.';
+  return [
+    'IMPLEMENTATION RETRY CHECKLIST - FOLLOW EXACTLY',
+    `Previous response was rejected: ${errorMessage}`,
+    `Known implementation/dependency files to inspect first: ${knownFilesText}`,
+    'Do not return FAIL or BLOCKED just to inspect files. Inspect them with tools during this run.',
+    'Do not return FAIL or BLOCKED claiming missing write/tool access. You have workspace-write access; use shell/node/python commands to inspect, write, and validate files.',
+    'If the task is already implemented, verify it and return PASS with the existing file path in filesChanged.',
+    'Required PASS gates:',
+    '- Return exactly one JSON object, no Markdown, no prose.',
+    '- outcome must be "PASS".',
+    `- filesChanged must include the implementation file(s), usually: ${knownFilesText}`,
+    '- validations must be a non-empty array.',
+    '- evidence must explicitly say approved PRD and TRD source-of-truth material was checked.',
+    '- For browser/UI/canvas/gameplay work, validations must include a browser startup smoke test using Playwright/Puppeteer/Chrome/Firefox/headless browser, with pageerror and console-error monitoring and zero/no errors reported.',
+    `- Browser fallback rule: ${browserRuntimeFallbackGuidance()}`,
+    'Recent task attempt history:',
+    history,
+    'Minimal JSON shape:',
+    '{"outcome":"PASS","summary":"...","evidence":["Checked approved PRD and TRD source-of-truth material against this task.","..."],"filesChanged":["index.html"],"validations":[{"command":"...","result":"... pageerror and console error listeners reported zero errors ..."}]}'
+  ].join('\n');
+}
+
 export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
   const currentSession = readSession(repo);
   if (currentSession && currentSession.pendingUserInput && currentSession.pendingUserInput.response == null) {
@@ -1462,7 +2074,7 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
     throw new Error(`Workflow gate rejected ${expectedAgentId}. Phase ${assignment.phase} requires ${assignment.agentId}.`);
   }
   const timeout = normalizeTimeoutSeconds(timeoutSeconds);
-  const maxAttempts = runner === runAgent ? 2 : 1;
+  const maxAttempts = Number.isInteger(runner.maxAttempts) ? runner.maxAttempts : runner === runAgent ? 2 : 1;
   let retryContext = coordinatorContext;
   let lastError = null;
   let enforceImplementationSchema = false;
@@ -1540,13 +2152,35 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
     } catch (error) {
       lastError = error;
       if (attempt < maxAttempts) {
-        patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+        let retrySession = readSession(repo);
+        retrySession = appendTaskAttemptHistory(retrySession, assignment.session.currentTaskId, {
+          at: new Date().toISOString(),
+          stage: assignment.stage,
+          agentId: assignment.agentId,
+          runId: run.runId,
+          outcome: 'REJECTED',
+          summary: '',
+          rejection: String(error?.message || error)
+        });
+        writeSession(repo, { ...retrySession, activeRun: null, lastFailure: String(error?.message || error) });
         appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: String(error?.message || error), runId: run.runId });
         if (assignment.stage === 'implementation') enforceImplementationSchema = true;
-        retryContext = `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\n${assignment.stage === 'implementation' ? 'The previous attempt may already have changed the assigned files. Inspect the current files, run the required validations, and report the existing implementation without redoing unrelated work. This retry enforces the result schema.\n' : ''}Return ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
+        retryContext = assignment.stage === 'implementation'
+          ? `${coordinatorContext}\n\n${implementationRetryContext(repo, retrySession, assignment, error.message)}`
+          : `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\nReturn ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
         continue;
       }
-      patchSession(repo, { activeRun: null, lastFailure: String(error?.message || error) });
+      let rejectedSession = readSession(repo);
+      rejectedSession = appendTaskAttemptHistory(rejectedSession, assignment.session.currentTaskId, {
+        at: new Date().toISOString(),
+        stage: assignment.stage,
+        agentId: assignment.agentId,
+        runId: run.runId,
+        outcome: 'REJECTED',
+        summary: '',
+        rejection: String(error?.message || error)
+      });
+      writeSession(repo, { ...rejectedSession, activeRun: null, lastFailure: String(error?.message || error) });
       appendEvent(repo, { type: 'workflow_stage_rejected', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error), runId: run.runId, attempt });
       throw new Error(`Structured ${assignment.stage} result rejected: ${error.message}. The workflow did not advance.`);
     }

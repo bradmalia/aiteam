@@ -10,6 +10,8 @@ Check release readiness when relevant: documentation/changelog impact, dependenc
 
 Use approved `reviewArtifacts.prd` and `reviewArtifacts.trd` as source-of-truth references when present. Do not pass integration if the QA-approved paths obviously contradict the PRD or TRD.
 
+On PASS, include evidence that explicitly says the approved PRD and TRD source-of-truth material was checked against the QA-approved paths and proposed commit.
+
 If a conflict cannot be resolved confidently, return it to the appropriate Programmer.
 
 If integration requires code changes or conflict resolution, return FAIL with evidence so the task can re-enter implementation and repeat Code Review and QA.

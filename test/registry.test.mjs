@@ -55,6 +55,10 @@ test('shared and coordinator contracts preserve orchestration discipline', () =>
   assert.match(base, /smallest repository slice needed/);
   assert.match(base, /Preserve auditability/);
   assert.match(base, /security, data integrity, accessibility, and destructive operations/);
+  assert.match(base, /If task wording contains an internal conflict/);
+  assert.match(base, /prioritize the user-visible acceptance criteria/);
+  assert.match(base, /short repo-local smoke script/);
+  assert.match(base, /pageerror` and console-error listeners/);
   assert.match(coordinator, /Coordinate the workflow; do not manage the work/);
   assert.match(coordinator, /Do not diagnose specialist failures from memory or speculation/);
   assert.match(coordinator, /Report only what AITEAM returned/);
@@ -68,6 +72,24 @@ test('code reviewer contract requires source review checklist without replacing 
   assert.match(prompt, /Performance and reliability/);
   assert.match(prompt, /must not claim black-box user behavior passes/);
   assert.match(prompt, /Prefer fewer, higher-confidence findings/);
+  assert.match(prompt, /must be anchored to at least one concrete authority/);
+  assert.match(prompt, /Do NOT invent replacement formulas/);
+  assert.match(prompt, /prioritize the acceptance criteria/);
+  assert.match(prompt, /representative boundary and midpoint inputs/);
+  assert.match(prompt, /Apply the same inputs to any proposed replacement/);
+  assert.match(prompt, /prior findings as hypotheses/);
+});
+
+test('QA contract requires owned local test ports in manual checks', () => {
+  const agent = getAgent('qa');
+  const prompt = buildAgentPrompt(agent, 'Validate browser task', '{}', 'qa');
+  assert.match(prompt, /do not use a hard-coded port/i);
+  assert.match(prompt, /system browser instead of switching to fragile Puppeteer cache-path imports/i);
+  assert.match(prompt, /Do not write ad hoc browser tests that import `puppeteer-core` from `.npm\/_npx`/);
+  assert.match(prompt, /Do not put temporary localhost URLs in `manualChecks`/);
+  assert.match(prompt, /server is expected to remain available for the human/);
+  assert.match(prompt, /Prior Test Reuse Is Mandatory/);
+  assert.match(prompt, /every listed `regressionTests\[\]\.id` is a required regression obligation/);
 });
 
 test('programmer specialist contracts include language-specific validation expectations', () => {
