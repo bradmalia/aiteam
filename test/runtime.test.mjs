@@ -249,6 +249,39 @@ test('implementation retries can enforce structured output after tool-using work
   assert.equal(reportingRetry.stdinText, 'Report the implemented task');
 });
 
+test('response-only repair is read-only and receives a minimal formatter prompt', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-response-only-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const previousRunner = process.env.AITEAM_RUNNER;
+  const previousBin = process.env.AITEAM_CODEX_BIN;
+  process.env.AITEAM_RUNNER = 'codex';
+  process.env.AITEAM_CODEX_BIN = 'true';
+  try {
+    return runAgent({
+      repo,
+      agentId: 'python',
+      stage: 'implementation',
+      task: 'Repair formatting only.',
+      context: 'Original output.',
+      enforceSchema: true,
+      responseOnly: true
+    }).then((run) => {
+      assert.equal(run.responseOnly, true);
+      assert.equal(run.enforceSchema, true);
+      assert.deepEqual(run.args.slice(run.args.indexOf('--sandbox'), run.args.indexOf('--sandbox') + 2), ['--sandbox', 'read-only']);
+      assert.ok(run.args.includes('--output-schema'));
+      const meta = JSON.parse(fs.readFileSync(run.metaPath, 'utf8'));
+      assert.equal(meta.responseOnly, true);
+      assert.equal(meta.enforceSchema, true);
+    });
+  } finally {
+    if (previousRunner === undefined) delete process.env.AITEAM_RUNNER;
+    else process.env.AITEAM_RUNNER = previousRunner;
+    if (previousBin === undefined) delete process.env.AITEAM_CODEX_BIN;
+    else process.env.AITEAM_CODEX_BIN = previousBin;
+  }
+});
+
 test('Codex invocations send prompt over stdin to avoid argv E2BIG', () => {
   const prompt = 'x'.repeat(300000);
   const invocation = buildCodexInvocation({

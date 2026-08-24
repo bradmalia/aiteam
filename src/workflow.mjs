@@ -1500,6 +1500,102 @@ function recoverImplementationProseResult(repo, session, assignment, stdout) {
   };
 }
 
+const FORMAT_REPAIR_SOURCE_LIMIT = 96000;
+
+function boundedFormatRepairText(value) {
+  const text = String(value || '');
+  if (text.length <= FORMAT_REPAIR_SOURCE_LIMIT) return text;
+  return `[earlier output omitted]\n${text.slice(-FORMAT_REPAIR_SOURCE_LIMIT)}`;
+}
+
+function formatRepairSource(run) {
+  return [
+    '--- ORIGINAL STDOUT ---',
+    boundedFormatRepairText(run?.stdout),
+    '--- ORIGINAL STDERR / TOOL TRANSCRIPT ---',
+    boundedFormatRepairText(run?.stderr)
+  ].join('\n');
+}
+
+function isStructuredFormattingError(error) {
+  return /not valid JSON|no structured result|must be one JSON object/i.test(String(error?.message || error));
+}
+
+function collectRepairStrings(value, pathParts = [], output = []) {
+  if (typeof value === 'string') {
+    if (pathParts.at(-1) !== 'outcome') output.push({ path: pathParts.join('.'), value });
+    return output;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectRepairStrings(item, [...pathParts, String(index)], output));
+    return output;
+  }
+  if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([key, item]) => collectRepairStrings(item, [...pathParts, key], output));
+  }
+  return output;
+}
+
+function validateFormatRepairGrounding(result, source) {
+  if (result.outcome === 'BLOCKED') return;
+  const unsupported = collectRepairStrings(result)
+    .filter(({ value }) => value && !source.includes(value));
+  if (unsupported.length) {
+    const fields = unsupported.slice(0, 5).map(({ path }) => path).join(', ');
+    throw new Error(`Format-only repair added or paraphrased claims not present verbatim in the original run: ${fields}.`);
+  }
+}
+
+async function tryFormatOnlyRepair({ repo, assignment, run, runner, timeoutMs, model }) {
+  const source = formatRepairSource(run);
+  const repairTask = [
+    `Repair only the final structured response for the completed ${assignment.stage} run.`,
+    'Do not redo implementation or validation.',
+    'Every summary, evidence, file path, finding, check, command, and result string must be copied verbatim from the source output.',
+    'Choose PASS only when the source explicitly reports completed successful work and contains every required field. Otherwise choose BLOCKED.'
+  ].join(' ');
+  let repairRun;
+  try {
+    repairRun = await runner({
+      repo,
+      agentId: assignment.agentId,
+      stage: assignment.stage,
+      task: repairTask,
+      context: source,
+      timeoutMs: Math.min(timeoutMs, 180000),
+      model,
+      enforceSchema: true,
+      responseOnly: true
+    });
+    if (repairRun.exitCode !== 0 || repairRun.timedOut) {
+      throw new Error(`format-only repair exited with code ${repairRun.exitCode}${repairRun.timedOut ? ' after timeout' : ''}`);
+    }
+    const result = parseStageResult(assignment.stage, repairRun.stdout);
+    if (result.outcome === 'BLOCKED') {
+      throw new Error('format-only repair reported that required source information was missing');
+    }
+    validateFormatRepairGrounding(result, source);
+    appendEvent(repo, {
+      type: 'workflow_stage_format_repaired',
+      stage: assignment.stage,
+      agentId: assignment.agentId,
+      originalRunId: run.runId,
+      repairRunId: repairRun.runId
+    });
+    return { result, repairRun };
+  } catch (error) {
+    appendEvent(repo, {
+      type: 'workflow_stage_format_repair_failed',
+      stage: assignment.stage,
+      agentId: assignment.agentId,
+      originalRunId: run.runId,
+      repairRunId: repairRun?.runId || null,
+      error: String(error?.message || error)
+    });
+    return null;
+  }
+}
+
 function dependencyExistingFiles(session, task, repo) {
   return completedDependencyTasksPromptView(session, task, repo)
     .flatMap((dependency) => dependency.existingFiles || [])
@@ -2133,9 +2229,23 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
         result = parseStageResult(assignment.stage, run.stdout);
       } catch (error) {
         const recovered = recoverImplementationProseResult(repo, readSession(repo), assignment, run.stdout);
-        if (!recovered) throw error;
-        result = recovered;
-        appendEvent(repo, { type: 'implementation_result_recovered', stage: assignment.stage, agentId: assignment.agentId, runId: run.runId });
+        if (recovered) {
+          result = recovered;
+          appendEvent(repo, { type: 'implementation_result_recovered', stage: assignment.stage, agentId: assignment.agentId, runId: run.runId });
+        } else if (isStructuredFormattingError(error)) {
+          const repaired = await tryFormatOnlyRepair({
+            repo,
+            assignment,
+            run,
+            runner,
+            timeoutMs: timeout * 1000,
+            model
+          });
+          if (!repaired) throw error;
+          result = repaired.result;
+        } else {
+          throw error;
+        }
       }
       const session = applyResult(repo, readSession(repo), assignment, result, run);
       appendEvent(repo, {

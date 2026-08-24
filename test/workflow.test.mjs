@@ -1124,6 +1124,113 @@ test('implementation prose success can be recovered when declared files exist', 
   assert.match(next.taskLedger[0].validations[0].result, /exists on disk/);
 });
 
+test('malformed implementation output uses grounded format-only repair without rerunning work', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Repair feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'feature-task',
+      title: 'Feature',
+      description: 'Implement feature',
+      specialistId: 'python',
+      acceptanceCriteria: ['Works'],
+      dependencies: [],
+      status: 'needs-rework',
+      filesChanged: [],
+      validations: [],
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run CLI.', expected: 'CLI succeeds.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+  const calls = [];
+  const source = [
+    'Implementation complete.',
+    'Checked approved PRD and TRD source-of-truth material against this task.',
+    'app.py',
+    'python -m py_compile app.py',
+    'passed'
+  ].join('\n');
+  const runner = async (args) => {
+    calls.push(args);
+    if (!args.responseOnly) {
+      fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+      return { runId: 'implementation-run', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stdout: source, stderr: '', stdoutPath: '', stderrPath: '', metaPath: '' };
+    }
+    return {
+      runId: 'format-repair-run',
+      agentId: args.agentId,
+      exitCode: 0,
+      timedOut: false,
+      completedAt: new Date().toISOString(),
+      stdout: JSON.stringify({
+        outcome: 'PASS',
+        summary: 'Implementation complete.',
+        evidence: ['Checked approved PRD and TRD source-of-truth material against this task.'],
+        filesChanged: ['app.py'],
+        validations: [{ command: 'python -m py_compile app.py', result: 'passed' }]
+      }),
+      stderr: '',
+      stdoutPath: '',
+      stderrPath: '',
+      metaPath: ''
+    };
+  };
+  runner.maxAttempts = 2;
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].responseOnly, undefined);
+  assert.equal(calls[1].responseOnly, true);
+  assert.equal(calls[1].enforceSchema, true);
+  assert.match(calls[1].task, /Do not redo implementation or validation/);
+  assert.equal(next.currentStage, 'code-review');
+  assert.equal(next.taskLedger[0].implementationRunId, 'implementation-run');
+  assert.equal(readEvents(repo).filter((event) => event.type === 'workflow_stage_format_repaired').length, 1);
+});
+
+test('format-only repair cannot add evidence absent from the completed run', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Repair feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'implementation',
+    currentTaskId: 'feature-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'feature-task', title: 'Feature', description: 'Implement feature', specialistId: 'python',
+      acceptanceCriteria: ['Works'], dependencies: [], status: 'needs-rework', filesChanged: [], validations: [],
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run CLI.', expected: 'CLI succeeds.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+  const calls = [];
+  const runner = async (args) => {
+    calls.push(args);
+    if (calls.length === 1) {
+      fs.writeFileSync(path.join(repo, 'app.py'), 'VALUE = 1\n');
+      return { runId: 'bad-json-run', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stdout: 'Implementation complete. app.py', stderr: '', stdoutPath: '', stderrPath: '', metaPath: '' };
+    }
+    if (args.responseOnly) {
+      return { runId: 'inventing-repair', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stdout: JSON.stringify({ outcome: 'PASS', summary: 'Implementation complete.', evidence: ['Invented validation passed.'], filesChanged: ['app.py'], validations: [{ command: 'invented command', result: 'invented result' }] }), stderr: '', stdoutPath: '', stderrPath: '', metaPath: '' };
+    }
+    return { runId: 'full-retry', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stdout: result('PASS', { filesChanged: ['app.py'], validations: [{ command: 'test -f app.py', result: 'passed' }] }), stderr: '', stdoutPath: '', stderrPath: '', metaPath: '' };
+  };
+  runner.maxAttempts = 2;
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].responseOnly, true);
+  assert.equal(calls[2].responseOnly, undefined);
+  assert.equal(next.taskLedger[0].implementationRunId, 'full-retry');
+  assert.match(readEvents(repo).find((event) => event.type === 'workflow_stage_format_repair_failed').error, /added or paraphrased claims/);
+});
+
 test('implementation FAIL routes to BLOCKED with retry instructions instead of staying stuck', async () => {
   const repo = createRepository();
   newSession(repo, 'Build feature');
