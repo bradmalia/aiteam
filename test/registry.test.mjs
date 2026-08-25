@@ -90,6 +90,10 @@ test('QA contract requires owned local test ports in manual checks', () => {
   assert.match(prompt, /server is expected to remain available for the human/);
   assert.match(prompt, /Prior Test Reuse Is Mandatory/);
   assert.match(prompt, /every listed `regressionTests\[\]\.id` is a required regression obligation/);
+  assert.match(prompt, /strongest available black-box method/);
+  assert.match(prompt, /No particular framework is mandatory/);
+  assert.match(prompt, /BLOCKED` is reserved for a concrete external limitation/);
+  assert.doesNotMatch(prompt, /first try Playwright/);
 });
 
 test('programmer specialist contracts include language-specific validation expectations', () => {

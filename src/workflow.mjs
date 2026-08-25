@@ -643,6 +643,45 @@ function validateQaRegressionCoverage(session, result) {
   }
 }
 
+function validateQaBlockedEvidence(session, result) {
+  if (result.outcome !== 'BLOCKED') return;
+  const attempts = result.automationAttempts || [];
+  if (!attempts.length) {
+    throw new Error('QA cannot return BLOCKED without concrete executed black-box attempts in automationAttempts. Choose a suitable runtime, browser, CLI, API, HTTP, public-interface harness, or other observable method and record the command and actual result.');
+  }
+
+  for (const [index, attempt] of attempts.entries()) {
+    if (!(attempt.covers || []).length) {
+      throw new Error(`QA BLOCKED automationAttempts[${index}].covers must identify the planned tests or regression obligations attempted.`);
+    }
+    if (!String(attempt.fallbackReason || '').trim()) {
+      throw new Error(`QA BLOCKED automationAttempts[${index}].fallbackReason must explain why that method could not complete the required black-box coverage or why another method was tried.`);
+    }
+    if (/^(?:attempted|try|tried|would|could|should|requires?|unable|cannot|can't)\b/i.test(attempt.command.trim())) {
+      throw new Error(`QA BLOCKED automationAttempts[${index}].command must be the concrete command actually executed, not a narrative or hypothetical attempt.`);
+    }
+    if (/\b(?:not attempted|not run|would require|needs? to be run|could not test without trying)\b/i.test(attempt.result)) {
+      throw new Error(`QA BLOCKED automationAttempts[${index}].result must contain actual command output or an observed execution failure, not a hypothetical limitation.`);
+    }
+  }
+
+  const task = currentTask(session);
+  const obligations = [
+    ...(task?.blackBoxTestPlan || []).map((test) => test.name).filter(Boolean),
+    ...priorRegressionObligations(session, session.currentTaskId).map((item) => item.id)
+  ];
+  const covered = new Set(attempts.flatMap((attempt) => attempt.covers || []));
+  const missing = obligations.filter((obligation) => !covered.has(obligation));
+  if (missing.length) {
+    throw new Error(`QA BLOCKED automation coverage missing for required planned tests or regressions: ${missing.join(', ')}. Record each exact obligation in automationAttempts[].covers; no specific testing framework is required.`);
+  }
+
+  const observedFailures = attempts.map((attempt) => `${attempt.result}\n${attempt.fallbackReason}`).join('\n');
+  if (!/\b(?:failed|failure|error|not found|unavailable|timed out|timeout|permission denied|connection refused|missing|unsupported|cannot|can't|unable|blocked)\b/i.test(observedFailures)) {
+    throw new Error('QA BLOCKED requires concrete observed external failure evidence in automationAttempts results/fallbackReason. If the executed black-box checks succeeded, return PASS, FAIL, or PASS_WITH_MANUAL_VALIDATION as appropriate.');
+  }
+}
+
 function normalizeCoverageText(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -950,6 +989,8 @@ function assignmentText(stage, session) {
     'For browser/UI/game/canvas work, attach pageerror and console-error listeners before navigation/startup. Any page error, JavaScript console error, failed navigation, or missing primary UI root is a FAIL. PASS requires concrete automation evidence that startup had no page or console errors.';
   const qaManualValidationRule =
     'Before returning PASS_WITH_MANUAL_VALIDATION, every manualChecks[] item must either be listed exactly or by a clear short label in automationAttempts[].covers, or be explicitly marked "Human-only because ..." with the reason it cannot be automated. Manual checks must target only the current task or completed-prior-task regression scope; never ask the human to validate future planned tasks.';
+  const qaMethodSelectionRule =
+    'Choose the strongest available black-box method for each observable interface. Browser automation, system browsers, CLI execution, HTTP/API requests, simulated user input, public-interface harnesses, and existing project test runners are examples; no specific framework or fixed tool order is mandatory. Every claimed command must be recorded in automationAttempts with its actual result and covered test names. BLOCKED requires at least one concrete executed attempt, non-empty covers/fallbackReason on every attempt, and exact coverage of all planned-test names and prior regression IDs.';
   const codeReviewProofRule =
     'For any proposed BLOCKER or MAJOR finding involving formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into the ACTUAL current code and show intermediate/final values. Apply the same inputs to the proposed replacement. Do not emit a material finding unless this proves that current behavior violates an exact acceptance criterion or approved PRD/TRD requirement and that the correction direction satisfies it. An alternative implementation preference is not a defect.';
   const details = {
@@ -974,12 +1015,12 @@ function assignmentText(stage, session) {
       ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk. Re-derive each prior finding from the current code; prior findings are hypotheses, not authoritative facts. If deterministic implementation evidence disproves a prior finding, do not repeat it.\n\n${codeReviewProofRule}`
       : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.\n\n${codeReviewProofRule}`,
     qa: task?.qaFailure
-      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and DO NOT tell the programmer how to fix defects.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and DO NOT tell the programmer how to fix defects.\n\n${qaMethodSelectionRule}\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`
       : `Validate the current task against its acceptance criteria: ${taskJson}.\n\n` +
         (session.taskLedger.some((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
           ? `CROSS-TASK REGRESSION: You must also verify that this task's changes did not break any previously passing completed tasks listed in your context (completedPriorTasks).\n\n`
           : '') +
-        `CRITICAL SCOPE BOUNDARY: Generate black-box functional checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run smoke test scripts, browser automation, API requests, CLI commands, or headless tests) on disk before returning your structured result. Do NOT inspect source code and DO NOT tell the programmer how to fix defects. Each check must report test performed, expected result, actual result, and runtime evidence.\n\nBefore returning PASS_WITH_MANUAL_VALIDATION, you MUST attempt to automate each proposed manual check using available tools. For browser/UI/game/canvas work, first try Playwright using \`command -v playwright\`, \`playwright --version\`, and a temporary headless test script or Playwright CLI. If Playwright is unavailable, try a system browser such as google-chrome/chromium/firefox in headless mode. Only leave a check manual if it requires subjective human judgment or all reasonable tool-based attempts failed. Report every attempt in automationAttempts.\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`,
+        `CRITICAL SCOPE BOUNDARY: Generate black-box functional checks strictly for the acceptance criteria of THIS current task and regression on completed prior tasks. Do NOT include manual verification steps for unbuilt future features or audio if not in this task's criteria.\n\nYou MUST execute real validation commands using your tools (e.g. bash/exec to run smoke test scripts, browser automation, API requests, CLI commands, or headless tests) on disk before returning your structured result. Do NOT inspect source code and DO NOT tell the programmer how to fix defects. Each check must report test performed, expected result, actual result, and runtime evidence.\n\n${qaMethodSelectionRule}\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`,
     integration: task
       ? `Inspect QA-approved work for task ${taskJson} and propose a conventional commit message. Do not stage or commit.`
       : 'Inspect all QA-approved work for safe integration and propose a commit message. Do not stage or commit.'
@@ -1679,6 +1720,10 @@ function applyResult(repo, session, assignment, result, run) {
     }
   }
 
+  if (stage === 'qa' && result.outcome === 'BLOCKED') {
+    validateQaBlockedEvidence(next, result);
+  }
+
   if (stage === 'implementation' && result.outcome === 'BLOCKED') {
     rejectImplementationInspectionDeferral(result);
     rejectImplementationFalseAccessDeferral(result);
@@ -2277,6 +2322,8 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
         if (assignment.stage === 'implementation') enforceImplementationSchema = true;
         retryContext = assignment.stage === 'implementation'
           ? `${coordinatorContext}\n\n${implementationRetryContext(repo, retrySession, assignment, error.message)}`
+          : assignment.stage === 'qa'
+          ? `${coordinatorContext}\n\nQA RESULT REJECTED: ${error.message}\nExecute suitable black-box commands now. You decide the tools based on the observable interface; no specific framework is mandatory. Record every executed command and actual result in automationAttempts. Do not claim attempts only in prose. Return ONLY one valid JSON object matching the assignment schema.`
           : `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\nReturn ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
         continue;
       }

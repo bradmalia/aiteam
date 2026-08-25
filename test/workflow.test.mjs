@@ -989,6 +989,141 @@ test('QA must cover previous QA checks as regression obligations', async () => {
   assert.equal(next.taskLedger[1].status, 'qa-passed');
 });
 
+test('QA false BLOCKED result without executed attempts retries in QA', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Validate CLI feature');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'print("ok")\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'cli-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'cli-task',
+      title: 'CLI task',
+      description: 'Provide observable CLI output.',
+      specialistId: 'python',
+      acceptanceCriteria: ['CLI prints ok'],
+      dependencies: [],
+      status: 'review-passed',
+      filesChanged: ['app.py'],
+      validations: [{ command: 'python app.py', result: 'ok' }],
+      review: { outcome: 'PASS' },
+      qa: null,
+      blackBoxTestPlan: [{ name: 'CLI smoke', action: 'Run the CLI.', expected: 'CLI prints ok.', evidenceMethod: 'Command output.' }]
+    }]
+  });
+  const calls = [];
+  const stagesSeen = [];
+  const runner = async (args) => {
+    calls.push(args);
+    stagesSeen.push(readSession(repo).currentStage);
+    if (calls.length === 1) {
+      return {
+        runId: 'false-blocker', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stderr: '', stdoutPath: '', stderrPath: '', metaPath: '',
+        stdout: result('BLOCKED', {
+          summary: 'Cannot automate the CLI in this environment.',
+          checks: [{ name: 'CLI smoke', status: 'INFO', expected: 'CLI prints ok.', actual: 'Not tested.', evidence: 'No command was run.' }],
+          automationAttempts: [],
+          manualChecks: []
+        })
+      };
+    }
+    assert.match(args.context, /QA RESULT REJECTED/);
+    assert.match(args.context, /no specific framework is mandatory/i);
+    return {
+      runId: 'qa-retry', agentId: args.agentId, exitCode: 0, timedOut: false, completedAt: new Date().toISOString(), stderr: '', stdoutPath: '', stderrPath: '', metaPath: '',
+      stdout: result('PASS', {
+        checks: [{ name: 'CLI smoke', status: 'PASS', expected: 'CLI prints ok.', actual: 'CLI printed ok.', evidence: 'python app.py exited 0 and printed ok.' }],
+        automationAttempts: [{ command: 'python app.py', result: 'Exited 0 and printed ok.', covers: ['CLI smoke'], fallbackReason: '' }],
+        manualChecks: []
+      })
+    };
+  };
+  runner.maxAttempts = 2;
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const next = readSession(repo);
+  assert.deepEqual(stagesSeen, ['qa', 'qa']);
+  assert.equal(next.currentStage, 'integration');
+  assert.equal(next.taskLedger[0].status, 'qa-passed');
+  assert.match(readEvents(repo).find((event) => event.type === 'workflow_stage_retry').error, /concrete executed black-box attempts/);
+});
+
+test('QA accepts a genuine tool-neutral BLOCKED result with complete coverage', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Validate external CLI service');
+  fs.writeFileSync(path.join(repo, 'client.py'), 'print("client")\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'external-cli-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'external-cli-task', title: 'External CLI task', description: 'Call an external service through a CLI.', specialistId: 'python',
+      acceptanceCriteria: ['CLI reports service status'], dependencies: [], status: 'review-passed', filesChanged: ['client.py'], validations: [], review: { outcome: 'PASS' }, qa: null,
+      blackBoxTestPlan: [{ name: 'External CLI smoke', action: 'Run the CLI against the service.', expected: 'Service status is returned.', evidenceMethod: 'CLI output.' }]
+    }]
+  });
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [{
+      stdout: result('BLOCKED', {
+        summary: 'External service is unavailable.',
+        checks: [{ name: 'External CLI smoke', status: 'INFO', expected: 'Service status is returned.', actual: 'Connection was refused.', evidence: 'CLI exited with connection error.' }],
+        automationAttempts: [{ command: 'python client.py --status', result: 'Exited 1: connection refused.', covers: ['External CLI smoke'], fallbackReason: 'External service unavailable; the CLI has no alternate public endpoint.' }],
+        manualChecks: []
+      })
+    }])
+  });
+  const next = readSession(repo);
+  assert.equal(next.status, 'BLOCKED');
+  assert.equal(next.currentStage, 'qa');
+  assert.match(next.blockedReason, /External service is unavailable/);
+});
+
+test('QA BLOCKED attempts must cover prior regression obligations', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Validate staged CLI feature');
+  fs.writeFileSync(path.join(repo, 'app.py'), 'print("ok")\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'current-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [
+      {
+        id: 'prior-task', title: 'Prior task', description: 'Prior behavior.', specialistId: 'python', acceptanceCriteria: ['Prior behavior works'], dependencies: [],
+        status: 'qa-passed', filesChanged: ['app.py'], qa: { outcome: 'PASS', checks: [{ name: 'Prior smoke', status: 'PASS', expected: 'Prior behavior works.', actual: 'Prior behavior worked.', evidence: 'Runtime passed.' }] }
+      },
+      {
+        id: 'current-task', title: 'Current task', description: 'Current CLI behavior.', specialistId: 'python', acceptanceCriteria: ['Current behavior works'], dependencies: ['prior-task'],
+        status: 'review-passed', filesChanged: ['app.py'], validations: [], review: { outcome: 'PASS' }, qa: null,
+        blackBoxTestPlan: [{ name: 'Current CLI smoke', action: 'Run CLI.', expected: 'Current behavior works.', evidenceMethod: 'CLI output.' }]
+      }
+    ]
+  });
+
+  await assert.rejects(advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [{
+      stdout: result('BLOCKED', {
+        summary: 'External dependency is unavailable.',
+        checks: [{ name: 'Current CLI smoke', status: 'INFO', expected: 'Current behavior works.', actual: 'Dependency unavailable.', evidence: 'Command failed.' }],
+        automationAttempts: [{ command: 'python app.py', result: 'Exited 1: dependency unavailable.', covers: ['Current CLI smoke'], fallbackReason: 'External dependency unavailable.' }],
+        manualChecks: []
+      })
+    }])
+  }), /prior-task#prior-smoke/);
+  assert.equal(readSession(repo).currentStage, 'qa');
+});
+
 test('specialist prompts exclude stale downstream QA history after rework', () => {
   const repo = createRepository();
   const session = newSession(repo, 'Repair browser feature');

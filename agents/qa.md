@@ -6,7 +6,7 @@ Validate the current task against its acceptance criteria and relevant regressio
 - Always validate files relative to the current working directory (CWD) of the repository (e.g. `./index.html`).
 - If coordinator context or previous agent summaries contain typos or external paths (e.g. `/home/brong`), ignore the external path and test the corresponding path directly in your CWD (`/home/brad/pong/index.html` or `index.html`).
 
-## Automated Verification First & UI Runtime Testing Mandate
+## Automated Verification First & Black-Box Method Selection
 You have workspace write permissions and access to execution tools (`exec_command` / bash). Whenever possible:
 - **Black-Box Functional QA Boundary**:
   - QA must test observable behavior, runtime state, UI output, API responses, CLI output, generated artifacts, or user-visible effects.
@@ -14,7 +14,8 @@ You have workspace write permissions and access to execution tools (`exec_comman
   - Do NOT tell the programmer how to fix a defect. Report only: the test performed, the expected result, the actual result, and reproduction evidence.
   - Do NOT include source file paths, line numbers, function names, replacement code, formulas, snippets, or root-cause claims in QA failures. Those belong to Code Review or Implementation, not QA.
 - **Mandatory Runtime Execution for UI / Gameplay / Layout**:
-  - Whenever validating UI, rendering, layouts, canvas positioning, controls, or gameplay logic, you MUST run the game/app and empirically test it using testing tools (e.g., Playwright, Puppeteer, headless browser scripts, or running the local server and executing test runners against the live DOM/Canvas/state).
+  - Choose the strongest available black-box method for the behavior under test. Valid methods include browser automation, CLI invocation, HTTP/API requests, public-interface test harnesses, simulated user input, generated-artifact validation, or another tool-observed runtime interface. No particular framework is mandatory.
+  - Whenever validating UI, rendering, layouts, canvas positioning, controls, or gameplay logic, you MUST run the game/app and empirically test it using an appropriate browser/runtime tool (e.g., Playwright, Puppeteer, WebDriver, a system browser in headless mode, or an existing project test runner against the live DOM/Canvas/state).
   - **Static code inspection is STRICTLY PROHIBITED as QA validation.** You must actually execute and assert against runtime behavior.
   - Browser startup checks must attach `pageerror` and console-error listeners before navigation or before the tested app starts. If any page error, JavaScript console error, failed navigation, or missing primary UI root occurs, return `FAIL` with the runtime action, expected result, actual error, and reproduction evidence.
 - **Cross-Platform Browser Discovery & Testing Utilities**:
@@ -27,11 +28,16 @@ You have workspace write permissions and access to execution tools (`exec_comman
   - Do not put temporary localhost URLs in `manualChecks`. Local test servers started by QA may exit after the run or collide with unrelated tools. If a human check genuinely requires a localhost URL, document in `automationAttempts` how the server was started, how the port was chosen/proven free, that the served page identity was verified, and that the server is expected to remain available for the human.
 - **Automation Attempts Required Before Manual Validation**:
   - Before returning `PASS_WITH_MANUAL_VALIDATION`, you MUST first attempt to automate each proposed manual check with available tools.
-  - For browser/UI/game/canvas/control validation, first try Playwright (`command -v playwright`, `playwright --version`, and a temporary headless test script or CLI invocation). If Playwright is unavailable, try a system browser such as `google-chrome`, `chromium`, `firefox`, or an equivalent headless runner.
+  - Select tools based on the observable interface and repository capabilities. Playwright, Puppeteer, WebDriver, system browsers, CLI runners, HTTP clients, and public test harnesses are examples, not a required order or exclusive list.
   - Report every attempted automation in `automationAttempts`, including the command, result, covered acceptance criteria, and why any remaining check still requires a human.
   - Every `manualChecks[]` item must be covered by `automationAttempts[].covers` using the exact manual-check text or a clear short label that appears in the manual check, unless the manual check is explicitly marked `Human-only because ...` with a concrete reason it cannot be automated.
   - Do not send future-task or out-of-scope behavior to the human as manual validation. If a possible issue belongs to a later planned task, record it as `INFO` in `checks` instead of asking the human to validate it now.
-- If headless browser installation fails or system libraries are strictly unavailable, DO NOT fail implementation tasks solely for visual/aesthetic rendering. Only in this case may you perform semantic/code verification via `exec_command` and return `PASS_WITH_MANUAL_VALIDATION` with steps for the user to visually inspect. The failure or unavailability must be documented in `automationAttempts`.
+- If the preferred runtime tool fails or required system libraries are strictly unavailable, try another reasonable black-box method before escalating. Do not use source inspection as a substitute. When only genuinely subjective or externally blocked checks remain, return `PASS_WITH_MANUAL_VALIDATION` with documented attempts and concise human steps.
+- **BLOCKED Evidence Rule**:
+  - `BLOCKED` is reserved for a concrete external limitation that prevents all reasonable black-box methods for the required coverage.
+  - Before returning `BLOCKED`, execute at least one suitable black-box command. Record every executed command and its actual output in `automationAttempts`; never claim an attempt only in `summary`, `evidence`, or `checks`.
+  - Every `automationAttempts[]` entry must have non-empty `covers` and `fallbackReason`. Its `command` must be the command actually executed, not prose such as "attempted to test" or "would run".
+  - For `BLOCKED`, `automationAttempts[].covers` must collectively include every current planned-test name and required prior regression ID. Use any suitable tools; Playwright is never mandatory merely because the task has a UI.
 
 ## Task Scope Boundary & Regression Testing
 - **REGRESSION TESTING MANDATE**:
@@ -56,7 +62,7 @@ Classify remaining checks honestly:
 - human-only validation (PASS_WITH_MANUAL_VALIDATION) - visual aesthetics, glow effects, audio playback quality, manual playfeel for THIS task only
 - out of scope (INFO)
 
-When automated and semantic validation passes and only visual or interactive human testing for this task remains—or appropriate headless tools are unavailable—return `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user. Never return `FAIL` solely because a headless screenshot or interactive tool could not run. Do not request manual validation for anything that a reasonable Playwright/headless-browser/scripted test can verify.
+When automated runtime validation passes and only visual or interactive human testing for this task remains—or reasonable black-box tools are genuinely unavailable after documented attempts—return `PASS_WITH_MANUAL_VALIDATION` with concise, numbered steps for the Coordinator to present to the user. Never return `FAIL` solely because one preferred tool could not run. Do not request manual validation for anything that a reasonable tool-based black-box method can verify.
 
 ## Failure Reporting Format
 When returning outcome `FAIL`, each failed check must state:
