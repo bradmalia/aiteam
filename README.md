@@ -49,6 +49,7 @@ env_vars = [
   "AITEAM_CODEX_BIN",
   "AITEAM_CODEX_PREFIX_ARGS_JSON",
   "AITEAM_CODEX_HOME",
+  "AITEAM_CODEX_WRITABLE_SANDBOX",
   "AITEAM_CODEX_MODEL",
   "AITEAM_CODEX_PROVIDER",
   "AITEAM_CODEX_PROVIDER_NAME",
@@ -65,6 +66,8 @@ tool_timeout_sec = 7200
 ```
 
 Restart Codex after changing MCP configuration.
+
+Writable Codex specialists default to `danger-full-access` so implementation and QA can launch browsers and other project tooling that the `workspace-write` process sandbox may block. Read-only planning and review agents remain sandboxed. Set `AITEAM_CODEX_WRITABLE_SANDBOX=workspace-write` in the MCP server environment to restore the stricter writable sandbox.
 
 For Agy, configure the same server with an explicit runner identity so host detection does not depend on stripped subprocess environment variables:
 

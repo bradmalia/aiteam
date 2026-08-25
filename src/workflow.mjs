@@ -14,6 +14,7 @@ const STAGE_LABELS = {
   'ui-design': 'UI/UX Design',
   recruiting: 'Architecture',
   planning: 'Planning',
+  'qa-planning': 'QA Test Planning',
   'critical-review': 'Critical Review',
   'trd-review': 'TRD Review',
   implementation: 'Implementation',
@@ -28,6 +29,7 @@ const FIXED_AGENTS = {
   'ui-design': 'ui-designer',
   recruiting: 'recruiter',
   planning: 'planner',
+  'qa-planning': 'qa-planner',
   'critical-review': 'critical-reviewer',
   'code-review': 'code-reviewer',
   qa: 'qa',
@@ -46,7 +48,7 @@ For stages that do not explicitly require file changes, do not write temporary f
 const STAGE_SCHEMAS = {
   intake: `${COMMON_SCHEMA}
 For Intake, "outcome" may also be "AWAITING_USER". Also return "goals", "targetUsers", "userStories", "requirements", "acceptanceCriteria", "mvpScope", "outOfScope", "assumptions", "constraints", "nonFunctionalRequirements", "successMetrics", "risks", and "questions" as string arrays, plus boolean "userConfirmed".
-Use AWAITING_USER when clarification is needed: include non-empty questions and set userConfirmed to false. Use PASS only when questions is empty, requirements are complete, and userConfirmed is true. On PASS, goals, targetUsers, userStories, requirements, acceptanceCriteria, mvpScope, and successMetrics must be non-empty. Capture unknowns as assumptions/risks instead of silently dropping them.`,
+Use AWAITING_USER only while a concrete material clarification remains unresolved: include non-empty questions and set userConfirmed to false. For compatibility, userConfirmed true means the requirements are grounded in the original request or direct user answers and no material question remains; it does not mean the user approved the complete document. After all pending questions are answered, incorporate the answers and use PASS unless an answer creates a new material ambiguity. Do not ask for generic final confirmation of the requirements; the subsequent PRD Review is the sole full-document approval gate. Use PASS only when questions is empty, requirements are complete, and userConfirmed is true. On PASS, goals, targetUsers, userStories, requirements, acceptanceCriteria, mvpScope, and successMetrics must be non-empty. Capture unknowns as assumptions/risks instead of silently dropping them.`,
   architecture: `${COMMON_SCHEMA}
 Also return "design", "context", "constraints", "solutionStrategy", "deploymentView", "crossCuttingConcepts", and "risks" as non-empty string arrays; "qualityAttributes" as non-empty array of {"name","scenario","measure"}; "buildingBlocks" as non-empty array of {"name","responsibility","interfaces"}; "runtimeScenarios" as non-empty array of {"name","trigger","flow"}; "architectureDecisions" as non-empty array of {"decision","optionsConsidered","rationale","consequences"}; "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI); and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work. Derive technology choices from Intake, repository reality, constraints, quality attributes, and tradeoffs; do not choose technology first and backfill rationale.`,
   'ui-design': `${COMMON_SCHEMA}
@@ -54,9 +56,11 @@ Also return "userFlows" (array of {"name","actor","goal","steps"}), "usabilityRi
   recruiting: `${COMMON_SCHEMA}
 Also return "gapJustification", "existingSpecialistAssessment", and "evaluationCriteria" as non-empty string arrays, plus "specialist": {"id","role","sandbox","triggers","capabilities","contract"}. The contract must be at least 80 characters of complete inline instructions, never a file path. Explain why existing specialists are insufficient and how the new specialist should be evaluated.`,
   planning: `${COMMON_SCHEMA}
-Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies","blackBoxTestPlan"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. blackBoxTestPlan must be a non-empty array of {"name","action","expected","evidenceMethod"} that designs QA's observable runtime tests ahead of implementation; it must not use source inspection, line numbers, implementation formulas, or fix guidance.`,
+Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. Do not create the test plan; the next QA Test Planning stage owns black-box and regression test design.`,
+  'qa-planning': `${COMMON_SCHEMA}
+For QA Test Planning, design tests only; do not execute tests, inspect implementation source, modify files, or provide fix guidance. Return "taskTestPlans", a non-empty array containing exactly one {"taskId","tests"} entry per planned implementation task. Each tests array must be non-empty and contain {"name","covers","action","expected","evidenceMethod"}; covers is a non-empty string array and must collectively include every exact acceptance criterion for that task. Also return non-empty string arrays "regressionStrategy" and "coverageNotes". Include relevant PRD requirements, architecture scenarios/quality measures, and UI/UX flows, accessibility rules, and validation hypotheses in covers when applicable.`,
   'critical-review': `${COMMON_SCHEMA}
-Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. Always return "repairStage". If any BLOCKER or MAJOR remains, outcome must be FAIL and repairStage must be "architecture" or "planning". If outcome is PASS, repairStage must be "none".`,
+Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. Always return "repairStage". If any BLOCKER or MAJOR remains, outcome must be FAIL and repairStage must be "architecture", "planning", or "qa-planning". Route test-plan-only repairs to "qa-planning". If outcome is PASS, repairStage must be "none".`,
   implementation: `${COMMON_SCHEMA}
 For Implementation, you MUST return outcome "PASS" with a NON-EMPTY "filesChanged" array. Never return outcome "FAIL" for your own implementation task.
 
@@ -157,6 +161,13 @@ function extractBalancedObjects(text) {
   return results;
 }
 
+function isRedundantIntakeApprovalQuestion(question) {
+  const asksForApproval = /\b(?:approve|confirm|sign[\s-]?off)\b/i.test(question);
+  const targetsWholeArtifact = /\b(?:prd|product requirements document|requirements artifact|final(?:ized)? requirements|complete requirements|all requirements|requirements and acceptance criteria|everything)\b/i.test(question);
+  const asksWhetherComplete = /\b(?:complete|correct|final(?:ized)?|entire|all)\b/i.test(question);
+  return asksForApproval && (targetsWholeArtifact || asksWhetherComplete && /\brequirements?\b/i.test(question));
+}
+
 
 export function parseStageResult(stage, stdout) {
   const result = parseJson(stdout);
@@ -193,6 +204,9 @@ export function parseStageResult(stage, stdout) {
     result.userConfirmed = result.userConfirmed === undefined ? result.questions.length === 0 : result.userConfirmed;
     if (typeof result.userConfirmed !== 'boolean') throw new Error('userConfirmed must be a boolean.');
     if (result.outcome === 'AWAITING_USER' && result.questions.length === 0) throw new Error('AWAITING_USER Intake results must include at least one question.');
+    if (result.outcome === 'AWAITING_USER' && result.questions.some(isRedundantIntakeApprovalQuestion)) {
+      throw new Error('Intake must not request generic final document approval; PRD Review owns explicit full-document approval. Ask only concrete unresolved material questions, or return PASS when none remain.');
+    }
     if (result.outcome === 'PASS' && (result.questions.length > 0 || !result.userConfirmed)) throw new Error('Intake cannot PASS while questions remain or userConfirmed is false.');
   } else if (stage === 'architecture') {
     result.design = stringArray(result.design || [], 'design', { nonEmpty: result.outcome === 'PASS' });
@@ -289,7 +303,9 @@ export function parseStageResult(stage, stdout) {
         specialistId: nonEmptyString(task?.specialistId, `tasks[${index}].specialistId`),
         acceptanceCriteria: stringArray(task?.acceptanceCriteria, `tasks[${index}].acceptanceCriteria`, { nonEmpty: true }),
         dependencies: stringArray(task?.dependencies || [], `tasks[${index}].dependencies`),
-        blackBoxTestPlan: normalizeBlackBoxTestPlan(task?.blackBoxTestPlan, `tasks[${index}].blackBoxTestPlan`)
+        blackBoxTestPlan: task?.blackBoxTestPlan
+          ? normalizeBlackBoxTestPlan(task.blackBoxTestPlan, `tasks[${index}].blackBoxTestPlan`)
+          : []
       };
     });
     for (const task of result.tasks) {
@@ -307,6 +323,37 @@ export function parseStageResult(stage, stdout) {
       visited.add(id);
     };
     for (const task of result.tasks) visit(task.id);
+  } else if (stage === 'qa-planning') {
+    if (!Array.isArray(result.taskTestPlans || []) || (result.outcome === 'PASS' && result.taskTestPlans.length === 0)) {
+      throw new Error('taskTestPlans must be a non-empty array on PASS.');
+    }
+    const taskIds = new Set();
+    result.taskTestPlans = (result.taskTestPlans || []).map((taskPlan, planIndex) => {
+      const taskId = nonEmptyString(taskPlan?.taskId, `taskTestPlans[${planIndex}].taskId`);
+      if (taskIds.has(taskId)) throw new Error(`Duplicate QA task test plan: ${taskId}`);
+      taskIds.add(taskId);
+      if (!Array.isArray(taskPlan?.tests) || taskPlan.tests.length === 0) {
+        throw new Error(`taskTestPlans[${planIndex}].tests must be a non-empty array.`);
+      }
+      const testNames = new Set();
+      const tests = taskPlan.tests.map((test, testIndex) => {
+        const name = `taskTestPlans[${planIndex}].tests[${testIndex}]`;
+        const normalized = {
+          name: nonEmptyString(test?.name, `${name}.name`),
+          covers: stringArray(test?.covers, `${name}.covers`, { nonEmpty: true }),
+          action: nonEmptyString(test?.action, `${name}.action`),
+          expected: nonEmptyString(test?.expected, `${name}.expected`),
+          evidenceMethod: nonEmptyString(test?.evidenceMethod, `${name}.evidenceMethod`)
+        };
+        if (testNames.has(normalized.name)) throw new Error(`Duplicate QA test name for ${taskId}: ${normalized.name}`);
+        testNames.add(normalized.name);
+        rejectBlackBoxTestPlanImplementationGuidance(normalized, name);
+        return normalized;
+      });
+      return { taskId, tests };
+    });
+    result.regressionStrategy = stringArray(result.regressionStrategy || [], 'regressionStrategy', { nonEmpty: result.outcome === 'PASS' });
+    result.coverageNotes = stringArray(result.coverageNotes || [], 'coverageNotes', { nonEmpty: result.outcome === 'PASS' });
   } else if (stage === 'critical-review' || stage === 'code-review') {
     if (!Array.isArray(result.findings || [])) throw new Error('findings must be an array.');
     result.findings = (result.findings || []).map((finding, index) => {
@@ -326,8 +373,8 @@ export function parseStageResult(stage, stdout) {
     const material = result.findings.some((finding) => ['BLOCKER', 'MAJOR'].includes(finding?.severity));
     if (material && result.outcome === 'PASS') throw new Error('A review with BLOCKER or MAJOR findings cannot PASS.');
     if (stage === 'critical-review' && result.outcome !== 'FAIL' && !result.repairStage) result.repairStage = 'none';
-    if (stage === 'critical-review' && result.outcome === 'FAIL' && !['architecture', 'planning'].includes(result.repairStage)) {
-      throw new Error('Failed critical review must set repairStage to architecture or planning.');
+    if (stage === 'critical-review' && result.outcome === 'FAIL' && !['architecture', 'planning', 'qa-planning'].includes(result.repairStage)) {
+      throw new Error('Failed critical review must set repairStage to architecture, planning, or qa-planning.');
     }
     if (stage === 'critical-review' && result.outcome !== 'FAIL' && result.repairStage !== 'none') {
       throw new Error('Passing critical review must set repairStage to none.');
@@ -376,6 +423,7 @@ function normalizeBlackBoxTestPlan(plan, name) {
   return plan.map((test, index) => {
     const normalized = {
       name: nonEmptyString(test?.name, `${name}[${index}].name`),
+      ...(Array.isArray(test?.covers) ? { covers: stringArray(test.covers, `${name}[${index}].covers`, { nonEmpty: true }) } : {}),
       action: nonEmptyString(test?.action, `${name}[${index}].action`),
       expected: nonEmptyString(test?.expected, `${name}[${index}].expected`),
       evidenceMethod: nonEmptyString(test?.evidenceMethod, `${name}[${index}].evidenceMethod`)
@@ -771,6 +819,13 @@ function phasePlanWithUiDesign(phasePlan, enabled) {
   return [...withoutUi.slice(0, architectureIndex + 1), 'ui-design', ...withoutUi.slice(architectureIndex + 1)];
 }
 
+function phasePlanWithQaPlanning(phasePlan) {
+  const withoutQaPlanning = (phasePlan || []).filter((stage) => stage !== 'qa-planning');
+  const planningIndex = withoutQaPlanning.indexOf('planning');
+  if (planningIndex < 0) return [...withoutQaPlanning, 'qa-planning'];
+  return [...withoutQaPlanning.slice(0, planningIndex + 1), 'qa-planning', ...withoutQaPlanning.slice(planningIndex + 1)];
+}
+
 export function workflowStatus(session, repo = null) {
   if (!session) return { active: false, message: 'No active AITEAM session exists.' };
   const stage = session.currentStage;
@@ -936,8 +991,8 @@ function stageContext(session, repo) {
     }, null, 2);
   }
 
-  // Planning and critical-review need the task ledger but not agent details.
-  if (['planning', 'critical-review'].includes(stage)) {
+  // Planning, QA test planning, and critical-review need the task ledger but not agent details.
+  if (['planning', 'qa-planning', 'critical-review'].includes(stage)) {
     const registry = loadRegistry(repo).agents.map(({ id, role, sandbox, capabilities = [] }) => ({ id, role, sandbox, capabilities }));
     return JSON.stringify({
       request: session.request,
@@ -945,6 +1000,7 @@ function stageContext(session, repo) {
       requirements: session.stageEvidence.intake?.result || null,
       architecture: architecturePromptView(session.stageEvidence.architecture?.result),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
+      qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
       reviewArtifacts: reviewArtifactsPromptView(session),
       plan: session.stageEvidence.planning?.result || null,
       lockedCriticalFindings: session.lockedCriticalFindings,
@@ -962,6 +1018,7 @@ function stageContext(session, repo) {
     requirements: session.stageEvidence.intake?.result || null,
     architecture: architecturePromptView(session.stageEvidence.architecture?.result),
     uiDesign: session.stageEvidence['ui-design']?.result || null,
+    qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
     reviewArtifacts: reviewArtifactsPromptView(session),
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
@@ -994,11 +1051,12 @@ function assignmentText(stage, session) {
   const codeReviewProofRule =
     'For any proposed BLOCKER or MAJOR finding involving formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into the ACTUAL current code and show intermediate/final values. Apply the same inputs to the proposed replacement. Do not emit a material finding unless this proves that current behavior violates an exact acceptance criterion or approved PRD/TRD requirement and that the correction direction satisfies it. An alternative implementation preference is not a defect.';
   const details = {
-    intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. You MUST return AWAITING_USER with precise questions if the initial prompt is vague or missing details. Do NOT hallucinate or invent user confirmations. Return PASS only after the user has EXPLICITLY confirmed complete requirements and acceptance criteria in the pending user response.',
+    intake: 'Act as the conversational Intake Analyst. Collect and clarify requirements directly from the user. Return AWAITING_USER only for concrete unresolved material questions. Once the user answers every pending question, incorporate those answers and return PASS if the artifact is complete unless an answer creates a new material ambiguity. userConfirmed true means requirements are grounded in the original request or direct answers and no material question remains; it does not mean document approval. Do not ask for generic final confirmation. The subsequent PRD Review is the sole full-document approval gate.',
     architecture: 'Produce a structured implementation architecture: context, constraints, quality attribute scenarios, solution strategy, building blocks, runtime scenarios, deployment view, cross-cutting concepts, decisions/tradeoffs, risks, UI routing, and only genuine specialist capability gaps.',
     'ui-design': 'Translate the user requirements and the Architect’s structured architecture artifact into concrete visual tokens, layout hierarchies, interaction states, and responsive styling.',
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
     planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs, incorporating architectural and UI/UX design specifications.',
+    'qa-planning': 'Create the authoritative pre-implementation black-box and regression test plan for every planned task. Cover every exact task acceptance criterion plus relevant PRD, Architecture, and UI/UX obligations. Design tests only; do not execute them, inspect source, modify files, or provide repair instructions.',
     'critical-review': session.lockedCriticalFindings.length
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, UI/UX design (if present), plan, and QA feasibility.',
@@ -1035,11 +1093,22 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     session = writeSession(repo, { ...session, status: 'ACTIVE', blockedReason: null });
   }
   if (session.status !== 'ACTIVE') throw new Error(`AITEAM session is not active: ${session.status}`);
+  if (session.currentStage === 'critical-review' && session.taskLedger?.length && !session.stageEvidence['qa-planning']?.result) {
+    const reason = 'Migrated the in-flight workflow through mandatory QA Test Planning before Critical Review.';
+    session = writeSession(repo, {
+      ...session,
+      currentStage: 'qa-planning',
+      phasePlan: phasePlanWithQaPlanning(session.phasePlan),
+      completedStages: (session.completedStages || []).filter((stage) => !['qa-planning', 'critical-review', 'trd-review'].includes(stage)),
+      lastFailure: reason
+    });
+    appendEvent(repo, { type: 'qa_test_planning_migration', reason });
+  }
   if (['prd-review', 'trd-review'].includes(session.currentStage)) {
     throw new Error(`${STAGE_LABELS[session.currentStage]} is awaiting human approval. Open the linked HTML document, wait for the user response, then call aiteam_update_session.`);
   }
   if (session.currentStage !== 'intake' && session.stageEvidence.intake?.result?.userConfirmed !== true) {
-    throw new Error('Workflow gate rejected: Analyst Intake must produce a user-confirmed requirements artifact before Architecture.');
+    throw new Error('Workflow gate rejected: Analyst Intake must produce a resolved, user-grounded requirements artifact before Architecture.');
   }
   if (session.activeRun) {
     const age = Date.now() - Date.parse(session.activeRun.startedAt || 0);
@@ -1055,7 +1124,7 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     session = writeSession(repo, { ...session, activeRun: null, lastFailure: recoveryReason });
     appendEvent(repo, { type: 'stale_active_run_recovered', reason: recoveryReason, previous: staleRun });
   }
-  if (['planning', 'critical-review'].includes(session.currentStage)) {
+  if (['planning', 'qa-planning', 'critical-review'].includes(session.currentStage)) {
     const missingGaps = unresolvedArchitectureGaps(session, repo);
     if (missingGaps.length) {
       const queuedIds = new Set((session.recruiterQueue || []).map((gap) => proposedSpecialistId(gap)));
@@ -1069,7 +1138,7 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
         currentStage: 'recruiting',
         resumeStage: 'planning',
         recruiterQueue: queue,
-        completedStages: (session.completedStages || []).filter((stage) => !['planning', 'critical-review'].includes(stage)),
+        completedStages: (session.completedStages || []).filter((stage) => !['planning', 'qa-planning', 'critical-review'].includes(stage)),
         lastFailure: reason
       });
       appendEvent(repo, { type: 'unresolved_specialist_gaps_recovered', reason, gaps: missingGaps });
@@ -1306,6 +1375,7 @@ function testingCards(tasks) {
         <section class="test-card">
           <h4>${escapeHtml(test.name)}</h4>
           <dl>
+            ${test.covers?.length ? `<dt>Covers</dt><dd>${escapeHtml(test.covers.join(' | '))}</dd>` : ''}
             <dt>Action</dt><dd>${escapeHtml(test.action)}</dd>
             <dt>Expected</dt><dd>${escapeHtml(test.expected)}</dd>
             <dt>Evidence</dt><dd>${escapeHtml(test.evidenceMethod)}</dd>
@@ -1445,9 +1515,10 @@ export function generateTrd(repo, session) {
   const arch = architecturePromptView(session.stageEvidence.architecture?.result) || {};
   const ui = session.stageEvidence['ui-design']?.result || null;
   const plan = session.stageEvidence.planning?.result || {};
+  const qaPlan = session.stageEvidence['qa-planning']?.result || {};
   const review = session.stageEvidence['critical-review']?.result || {};
   const intake = session.stageEvidence.intake?.result || {};
-  const tasks = plan.tasks || [];
+  const tasks = session.taskLedger?.length ? session.taskLedger : (plan.tasks || []);
   const reqs = intake.requirements || [];
   const traceRows = tasks.flatMap((task) => (task.acceptanceCriteria || []).map((criterion) => ({ task, criterion })));
   const html = documentShell({
@@ -1488,7 +1559,12 @@ export function generateTrd(repo, session) {
       <h2>Screen Mockups</h2>${screenMockups(ui)}
       <h2>Implementation Plan</h2>${taskCards(tasks)}
       <h2>Requirements-To-Work Traceability</h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Acceptance Criterion</th><th>Likely PRD Link</th></tr></thead><tbody>${traceRows.map(({ task, criterion }, index) => `<tr><td>${escapeHtml(task.id)}</td><td>${escapeHtml(criterion)}</td><td>${escapeHtml(reqs[index % Math.max(reqs.length, 1)] ? `PRD-R${(index % reqs.length) + 1}` : 'PRD requirement not mapped')}</td></tr>`).join('')}</tbody></table></div>
-      <h2>Testing Plan</h2><p>This section is the planned black-box QA test plan. QA must use these task-level tests as the starting point for validation after implementation.</p>${testingCards(tasks)}
+      <h2>QA Test Plan Ownership</h2><div class="wide-grid">
+        <section class="card"><h3>Owner And Purpose</h3><p>The QA Test Planner created this black-box plan before implementation. Execution QA must use it as the approved starting point and retain its test names as coverage obligations.</p></section>
+        <section class="card"><h3>Coverage Notes</h3>${listItems(qaPlan.coverageNotes)}</section>
+        <section class="card"><h3>Regression Strategy</h3>${listItems(qaPlan.regressionStrategy)}</section>
+      </div>
+      <h2>Testing Plan</h2><p>This is the QA-authored black-box test plan. Each test identifies the approved behavior it covers, the action QA should perform, the expected observable result, and the evidence to collect.</p>${testingCards(tasks)}
       <h2>Critical Review</h2>${listItems((review.findings || []).map((finding) => `${finding.severity}: ${finding.description || finding.id}`))}
       <h2>Risks And Open Questions</h2><div class="grid">
         <section class="card"><h3>Technical Risks</h3>${listItems(arch.risks)}</section>
@@ -1737,6 +1813,11 @@ function applyResult(repo, session, assignment, result, run) {
     if (stage === 'critical-review') {
       next.lockedCriticalFindings = result.findings;
       next.currentStage = result.repairStage;
+    } else if (stage === 'qa-planning') {
+      next.currentStage = 'planning';
+      next.completedStages = next.completedStages.filter((item) => !['planning', 'qa-planning', 'critical-review'].includes(item));
+      next.taskLedger = [];
+      next.lastFailure = `QA Test Planning requires task-plan clarification: ${result.summary}`;
     } else if (stage === 'code-review' || stage === 'qa') {
       if (stage === 'code-review') {
         recordWorkflowAdvisory(repo, stage, result, () => validateCodeReviewMaterialFindings(result));
@@ -1823,9 +1904,34 @@ function applyResult(repo, session, assignment, result, run) {
       if (specialist.id === 'qa') throw new Error(`Tasks in the task ledger cannot be assigned to QA. QA is executed automatically by the workflow gates.`);
       if (specialist.sandbox !== 'workspace-write') throw new Error(`Planner selected non-implementation specialist ${task.specialistId} for task ${task.id}.`);
     }
-    next.completedStages = [...new Set([...next.completedStages, 'planning'])];
+    next.completedStages = [...new Set(next.completedStages.filter((item) => !['qa-planning', 'critical-review'].includes(item)).concat('planning'))];
     next.taskLedger = normalizeTasks(result.tasks);
     next.currentTaskId = null;
+    next.phasePlan = phasePlanWithQaPlanning(next.phasePlan);
+    next.currentStage = 'qa-planning';
+  } else if (stage === 'qa-planning') {
+    const tasksById = new Map(next.taskLedger.map((task) => [task.id, task]));
+    const plansById = new Map(result.taskTestPlans.map((taskPlan) => [taskPlan.taskId, taskPlan.tests]));
+    const unknown = [...plansById.keys()].filter((taskId) => !tasksById.has(taskId));
+    const missing = [...tasksById.keys()].filter((taskId) => !plansById.has(taskId));
+    if (unknown.length || missing.length) {
+      throw new Error(`QA Test Planning task coverage mismatch. Unknown task IDs: ${unknown.join(', ') || 'none'}. Missing task IDs: ${missing.join(', ') || 'none'}.`);
+    }
+    for (const task of next.taskLedger) {
+      const covered = new Set(plansById.get(task.id).flatMap((test) => test.covers));
+      const uncovered = task.acceptanceCriteria.filter((criterion) => !covered.has(criterion));
+      if (uncovered.length) {
+        throw new Error(`QA Test Planning must cover every exact acceptance criterion for ${task.id}. Missing: ${uncovered.join(' | ')}`);
+      }
+    }
+    next.taskLedger = next.taskLedger.map((task) => ({ ...task, blackBoxTestPlan: plansById.get(task.id) }));
+    if (next.stageEvidence.planning?.result?.tasks) {
+      next.stageEvidence.planning.result.tasks = next.stageEvidence.planning.result.tasks.map((task) => ({
+        ...task,
+        blackBoxTestPlan: plansById.get(task.id)
+      }));
+    }
+    next.completedStages = [...new Set([...next.completedStages, 'qa-planning'])];
     next.currentStage = 'critical-review';
   } else if (stage === 'critical-review') {
     next.completedStages = [...new Set([...next.completedStages, 'critical-review'])];
@@ -2154,6 +2260,21 @@ export function confirmHumanReview(repo, response) {
     });
   }
 
+  if (approved && session.taskLedger?.length && !session.stageEvidence['qa-planning']?.result) {
+    const reason = 'The legacy TRD did not contain a QA-authored test plan. QA Test Planning and a new TRD review are required before implementation.';
+    appendEvent(repo, { type: 'qa_test_planning_migration', reason });
+    return writeSession(repo, {
+      ...session,
+      pendingUserInput: null,
+      humanReviewHistory: reviewHistory,
+      completedStages: (session.completedStages || []).filter((stage) => !['qa-planning', 'critical-review', 'trd-review'].includes(stage)),
+      currentStage: 'qa-planning',
+      phasePlan: phasePlanWithQaPlanning(session.phasePlan),
+      currentTaskId: null,
+      lastFailure: reason
+    });
+  }
+
   return writeSession(repo, {
     ...session,
     pendingUserInput: approved ? null : answeredReview,
@@ -2324,6 +2445,8 @@ export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coor
           ? `${coordinatorContext}\n\n${implementationRetryContext(repo, retrySession, assignment, error.message)}`
           : assignment.stage === 'qa'
           ? `${coordinatorContext}\n\nQA RESULT REJECTED: ${error.message}\nExecute suitable black-box commands now. You decide the tools based on the observable interface; no specific framework is mandatory. Record every executed command and actual result in automationAttempts. Do not claim attempts only in prose. Return ONLY one valid JSON object matching the assignment schema.`
+          : assignment.stage === 'intake'
+          ? `${coordinatorContext}\n\nINTAKE RESULT REJECTED: ${error.message}\nAsk only concrete unresolved material clarification questions. If the user's pending answers resolve every material question, incorporate them and return PASS with userConfirmed true. Do not ask for generic confirmation of the complete requirements; PRD Review owns explicit document approval. Return ONLY one valid JSON object matching the assignment schema.`
           : `${coordinatorContext}\n\nThe previous specialist response was rejected: ${error.message}\nReturn ONLY one valid JSON object matching the assignment schema. Do not use Markdown, prose, or code fences.`;
         continue;
       }

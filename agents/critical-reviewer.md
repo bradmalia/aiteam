@@ -26,12 +26,14 @@ Also reject source material that would make the PRD/TRD incomplete as a source o
   - Verify that proposed coordinate math, clamping ranges, or formulas are mathematically coherent and do not contradict visual or physical requirements (e.g., verifying that paddle top edges at `minY` do not clip past boundaries).
   - Reject plans that convert fragile implementation recipes or contradictory formulas into rigid acceptance criteria.
 - **BLACK-BOX QA PLAN CHECK**:
+  - Treat the QA Test Planner artifact as the owner of the test plan; do not accept a plan attributed only to Planner.
   - Reject plans where any implementation task lacks a non-empty `blackBoxTestPlan`.
   - Reject QA plans that rely on source inspection, source line numbers, function names, implementation formulas, or repair instructions.
   - Verify each planned QA test states the runtime action, expected observable result, and evidence method that QA can use later, and that the plan covers relevant acceptance criteria and non-functional requirements.
   - Verify planned QA tests cover relevant Architecture runtime scenarios and observable quality attribute measures where possible.
+  - Verify relevant UI/UX user flows, accessibility heuristics, interaction states, and validation hypotheses are represented in the QA-authored coverage.
 - **FINDING QUALITY**:
-  - Every BLOCKER or MAJOR finding must include why it blocks delivery, the violated contract or risk, and whether repair belongs in Architecture or Planning.
+  - Every BLOCKER or MAJOR finding must include why it blocks delivery, the violated contract or risk, and whether repair belongs in Architecture, Planning, or QA Test Planning.
 
 ## VERIFY_REPAIRS
 

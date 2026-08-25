@@ -17,7 +17,7 @@ const provenance = { source: 'recruiter', runId: 'run-1', proposalId: 'proposal-
 test('registry includes core roles and specialists', () => {
   const registry = loadRegistry();
   const ids = new Set(registry.agents.map((a) => a.id));
-  for (const id of ['analyst','architect','planner','critical-reviewer','recruiter','code-reviewer','qa','maintainer','godot-gdscript','oracle-plsql','sqlserver-tsql']) {
+  for (const id of ['analyst','architect','planner','qa-planner','critical-reviewer','recruiter','code-reviewer','qa','maintainer','godot-gdscript','oracle-plsql','sqlserver-tsql']) {
     assert.ok(ids.has(id), `missing ${id}`);
   }
 });
@@ -37,6 +37,9 @@ test('read-only prompts forbid temporary JSON file validation', () => {
   assert.match(prompt, /Do not create temporary JSON files/);
   assert.match(prompt, /Return the required JSON object directly/);
   assert.match(prompt, /Return the final structured JSON object directly/);
+  assert.match(prompt, /Do not ask a generic final confirmation/);
+  assert.match(prompt, /PRD Review is the sole full-document approval gate/);
+  assert.match(prompt, /does not mean the user approved the complete generated requirements document/);
 });
 
 test('planner prompt requires implementation-ready task planning discipline', () => {
@@ -46,7 +49,17 @@ test('planner prompt requires implementation-ready task planning discipline', ()
   assert.match(prompt, /dependencies are explicit and minimal/);
   assert.match(prompt, /risky handoffs/);
   assert.match(prompt, /practical contingency/);
-  assert.match(prompt, /scope, setup, action, expected result, and pass\/fail evidence/);
+  assert.match(prompt, /QA Test Planning stage owns the black-box and regression test plan/);
+  assert.match(prompt, /Do not include `blackBoxTestPlan` in Planner output/);
+});
+
+test('QA Test Planner owns pre-implementation coverage without executing tests', () => {
+  const agent = getAgent('qa-planner');
+  const prompt = buildAgentPrompt(agent, 'Create the QA test plan', '{}', 'qa-planning');
+  assert.match(prompt, /Create the pre-implementation black-box test plan/);
+  assert.match(prompt, /exactly one `taskTestPlans` entry/);
+  assert.match(prompt, /union of `covers`.*every acceptance criterion exactly as written/);
+  assert.match(prompt, /Do not run the application, inspect source code, modify files/);
 });
 
 test('shared and coordinator contracts preserve orchestration discipline', () => {

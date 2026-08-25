@@ -181,21 +181,34 @@ export function outputSchemaPath(repo, runBase, stage = null) {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'title', 'description', 'specialistId', 'acceptanceCriteria', 'dependencies', 'blackBoxTestPlan'],
+        required: ['id', 'title', 'description', 'specialistId', 'acceptanceCriteria', 'dependencies'],
         properties: {
           id: { type: 'string' },
           title: { type: 'string' },
           description: { type: 'string' },
           specialistId: { type: 'string' },
           acceptanceCriteria: { type: 'array', items: { type: 'string' } },
-          dependencies: { type: 'array', items: { type: 'string' } },
-          blackBoxTestPlan: {
+          dependencies: { type: 'array', items: { type: 'string' } }
+        },
+        additionalProperties: false
+      }
+    };
+  } else if (stage === 'qa-planning') {
+    baseProperties.taskTestPlans = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['taskId', 'tests'],
+        properties: {
+          taskId: { type: 'string' },
+          tests: {
             type: 'array',
             items: {
               type: 'object',
-              required: ['name', 'action', 'expected', 'evidenceMethod'],
+              required: ['name', 'covers', 'action', 'expected', 'evidenceMethod'],
               properties: {
                 name: { type: 'string' },
+                covers: { type: 'array', items: { type: 'string' } },
                 action: { type: 'string' },
                 expected: { type: 'string' },
                 evidenceMethod: { type: 'string' }
@@ -207,6 +220,9 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
+    baseProperties.regressionStrategy = { type: 'array', items: { type: 'string' } };
+    baseProperties.coverageNotes = { type: 'array', items: { type: 'string' } };
+    required.push('taskTestPlans', 'regressionStrategy', 'coverageNotes');
   } else if (stage === 'implementation') {
     baseProperties.filesChanged = { type: 'array', items: { type: 'string' } };
     baseProperties.validations = {
@@ -234,7 +250,7 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
-    baseProperties.repairStage = { type: 'string', enum: ['architecture', 'planning', 'none'] };
+    baseProperties.repairStage = { type: 'string', enum: ['architecture', 'planning', 'qa-planning', 'none'] };
     required.push('findings', 'repairStage');
   } else if (stage === 'code-review') {
     baseProperties.findings = {
@@ -481,8 +497,17 @@ export function buildAgentInvocation({ repo, agent, prompt, model = null, output
 export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
   const command = env.AITEAM_CODEX_BIN || 'codex';
   const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
-  const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', agent.sandbox || 'read-only'];
-  if (agent.sandbox === 'workspace-write') args.push('--add-dir', repo);
+  const requestedSandbox = agent.sandbox || 'read-only';
+  const writableSandbox = env.AITEAM_CODEX_WRITABLE_SANDBOX || 'danger-full-access';
+  if (!['workspace-write', 'danger-full-access'].includes(writableSandbox)) {
+    throw new Error('AITEAM_CODEX_WRITABLE_SANDBOX must be "workspace-write" or "danger-full-access".');
+  }
+  // Browser processes need syscalls that Codex's workspace sandbox can block.
+  // Keep analysis agents read-only while allowing writable specialists to run
+  // project tooling, browsers, and black-box tests without the outer sandbox.
+  const effectiveSandbox = requestedSandbox === 'workspace-write' ? writableSandbox : requestedSandbox;
+  const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', effectiveSandbox];
+  if (requestedSandbox === 'workspace-write' && effectiveSandbox === 'workspace-write') args.push('--add-dir', repo);
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
   args.push('-c', 'mcp_servers={}');
 

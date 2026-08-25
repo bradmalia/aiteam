@@ -123,6 +123,16 @@ test('recruiting output schema requires gap evaluation fields', () => {
   assert.ok(recruiting.required.includes('specialist'));
 });
 
+test('QA Test Planning schema requires per-task covered tests and regression notes', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-qa-planning-schema-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const schema = JSON.parse(fs.readFileSync(outputSchemaPath(repo, 'qa-planning', 'qa-planning'), 'utf8'));
+  assert.ok(schema.required.includes('taskTestPlans'));
+  assert.ok(schema.required.includes('regressionStrategy'));
+  assert.ok(schema.required.includes('coverageNotes'));
+  assert.deepEqual(schema.properties.taskTestPlans.items.properties.tests.items.required, ['name', 'covers', 'action', 'expected', 'evidenceMethod']);
+});
+
 test('critical-review output schema requires simple repairStage enum for model compatibility', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-critical-schema-'));
   execFileSync('git', ['-C', repo, 'init', '--quiet']);
@@ -130,7 +140,7 @@ test('critical-review output schema requires simple repairStage enum for model c
   assert.ok(schema.required.includes('findings'));
   assert.ok(schema.required.includes('repairStage'));
   assert.equal(schema.properties.repairStage.type, 'string');
-  assert.deepEqual(schema.properties.repairStage.enum, ['architecture', 'planning', 'none']);
+  assert.deepEqual(schema.properties.repairStage.enum, ['architecture', 'planning', 'qa-planning', 'none']);
 });
 
 test('child Codex invocation uses launcher-selected version, provider, model, and isolated home', () => {
@@ -201,7 +211,7 @@ test('custom Codex providers do not have authentication disabled implicitly', ()
   }), /must be "true" or "false"/);
 });
 
-test('workspace-write specialists receive an explicit repository write scope and JSON schema', () => {
+test('workspace-write specialists receive full process access and JSON schema by default', () => {
   const invocation = buildCodexInvocation({
     repo: '/tmp/example-repo',
     agent: { sandbox: 'workspace-write' },
@@ -210,14 +220,50 @@ test('workspace-write specialists receive an explicit repository write scope and
     env: { AITEAM_CODEX_PREFIX_ARGS_JSON: '[]' }
   });
 
-  assert.deepEqual(invocation.args.slice(0, 7), [
-    'exec', '-C', '/tmp/example-repo', '--sandbox', 'workspace-write', '--add-dir', '/tmp/example-repo'
+  assert.deepEqual(invocation.args.slice(0, 5), [
+    'exec', '-C', '/tmp/example-repo', '--sandbox', 'danger-full-access'
   ]);
+  assert.ok(!invocation.args.includes('--add-dir'));
   assert.ok(invocation.args.includes('--output-schema'));
   assert.ok(invocation.args.includes('/tmp/example-repo/.aiteam/runs/agent.schema.json'));
   assert.equal(invocation.args.at(-1), '-');
   assert.equal(invocation.stdinText, 'Implement the assigned task');
   assert.ok(!invocation.args.includes('Implement the assigned task'));
+});
+
+test('writable Codex sandbox can be restricted through configuration', () => {
+  const invocation = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the assigned task',
+    env: {
+      AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
+      AITEAM_CODEX_WRITABLE_SANDBOX: 'workspace-write'
+    }
+  });
+
+  assert.deepEqual(invocation.args.slice(0, 7), [
+    'exec', '-C', '/tmp/example-repo', '--sandbox', 'workspace-write', '--add-dir', '/tmp/example-repo'
+  ]);
+  assert.throws(() => buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the assigned task',
+    env: { AITEAM_CODEX_WRITABLE_SANDBOX: 'read-only' }
+  }), /must be "workspace-write" or "danger-full-access"/);
+});
+
+test('read-only Codex specialists remain sandboxed when writable agents have full access', () => {
+  const invocation = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'read-only' },
+    prompt: 'Review the task',
+    env: { AITEAM_CODEX_WRITABLE_SANDBOX: 'danger-full-access' }
+  });
+
+  assert.deepEqual(invocation.args.slice(0, 5), [
+    'exec', '-C', '/tmp/example-repo', '--sandbox', 'read-only'
+  ]);
 });
 
 test('implementation retries can enforce structured output after tool-using work', () => {

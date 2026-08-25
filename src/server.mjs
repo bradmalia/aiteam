@@ -119,7 +119,7 @@ export function advanceResultText(result) {
       : `STOP CALLING TOOLS! User input required before Intake can advance:\n${result.session.pendingUserInput.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nYou MUST print these questions to the user and wait for their reply. DO NOT call aiteam_update_session until the real user responds.`
     : result.session.status === 'READY_TO_COMPLETE'
     ? 'All enforced gates passed. Required next action: call aiteam_complete.'
-    : `Next enforced assignment: ${phaseLine(result.workflow)}`;
+    : `Next enforced assignment: ${phaseLine(result.workflow)}\nMANDATORY SAME-TURN ACTION: After reporting this result, call aiteam_advance immediately. Do not end your turn after this update; continue advancing until real human input is required or the workflow is ready to complete.`;
   const urgentUserInput = result.session.pendingUserInput?.response == null && result.session.pendingUserInput?.questions?.length
     ? `${next}\n\n`
     : '';
@@ -182,7 +182,7 @@ function watchHealth(port) {
 }
 
 async function ensureWatchServer(repo) {
-  if (process.env.NODE_ENV === 'test' || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
+  if (process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
     return getWatchPort(repo);
   }
   const resolved = path.resolve(repo);
@@ -328,7 +328,10 @@ export async function callTool(name, args) {
         model: args.model || null,
         coordinatorContext: args.context || ''
       });
-      return textResult(advanceResultText(result), result);
+      return textResult(advanceResultText(result), {
+        ...result,
+        coordinatorDirective: coordinatorDirective(result.session)
+      });
     } catch (error) {
       const session = readSession(repo);
       const workflow = workflowStatus(session, repo);
@@ -351,7 +354,10 @@ export async function callTool(name, args) {
       coordinatorContext: [args.task || '', args.context || ''].filter(Boolean).join('\n\n'),
       expectedAgentId: args.agent_id
     });
-    return textResult(advanceResultText(result), result);
+    return textResult(advanceResultText(result), {
+      ...result,
+      coordinatorDirective: coordinatorDirective(result.session)
+    });
   }
   if (name === 'aiteam_register_specialist') {
     const session = readSession(repo);
@@ -454,12 +460,13 @@ function buildInitInstructions(repo = process.cwd()) {
       `1. Do NOT call aiteam_start (a session is already active).`,
       `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${session.watchPort || getWatchPort(repo)}/)."`,
       `3. Call aiteam_advance immediately to continue advancing the workflow gates.`,
+      `   - Progress updates are not stopping points. After every result update, call aiteam_advance again in the same assistant turn while no real human input is pending.`,
       `4. If questions or manual QA checks are pending for the user:`,
       `   - Present the exact questions / checks directly to the user in chat.`,
       `   - DO NOT answer questions yourself, do NOT guess user preferences, and do NOT self-approve manual QA.`,
       `   - Wait for the user to reply in chat, then call aiteam_update_session(patch: { pendingUserInput: "<user response>" }).`,
       `   - Immediately call aiteam_advance to re-enter the execution loop.`,
-      `5. Continue looping aiteam_advance until the project reaches COMPLETED or the user cancels.`
+      `5. Continue looping aiteam_advance in the same assistant turn until real human input is required, the project reaches COMPLETED, or the user explicitly pauses/cancels.`
     ].join('\n');
   }
 
@@ -484,6 +491,7 @@ function buildInitInstructions(repo = process.cwd()) {
     `WORKFLOW LOOP & MANUAL QA PROTOCOL:`,
     `- After calling aiteam_start, confirm: "The AITEAM project is now running! Use the Watch Dashboard URL returned by aiteam_start to monitor live progress."`,
     `- Loop calling aiteam_advance for each step until status is COMPLETED.`,
+    `- A progress update is never a stopping point. After reporting each result, call aiteam_advance again in the same assistant turn unless real human input is pending or the user explicitly pauses/cancels.`,
     `- When QA reaches manual validation:`,
     `  1. Present the exact manual test checklist to the human user in chat.`,
     `  2. DO NOT answer or pass manual checks yourself, and do NOT guess that tests pass.`,

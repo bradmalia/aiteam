@@ -16,6 +16,9 @@ test('session lifecycle persists state', () => {
   const repo = repository();
   const session = newSession(repo, 'build pong');
   assert.equal(session.request, 'build pong');
+  assert.ok(session.phasePlan.includes('qa-planning'));
+  assert.ok(session.phasePlan.indexOf('planning') < session.phasePlan.indexOf('qa-planning'));
+  assert.ok(session.phasePlan.indexOf('qa-planning') < session.phasePlan.indexOf('critical-review'));
   assert.equal(readSession(repo).id, session.id);
   patchSession(repo, { currentStage: 'planning' });
   assert.equal(readSession(repo).currentStage, 'planning');

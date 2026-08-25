@@ -74,6 +74,25 @@ test('awaiting-user results put the exact questions before any next-step guidanc
   assert.match(text, /^STOP CALLING TOOLS!/);
   assert.ok(text.indexOf('How many points?') < text.indexOf('AITEAM | Agent: Analyst (analyst) awaiting user'));
   assert.doesNotMatch(text, /Next enforced assignment:.*Architecture/);
+  assert.doesNotMatch(text, /MANDATORY SAME-TURN ACTION/);
+});
+
+test('resumable advance results require another advance in the same turn', () => {
+  const session = {
+    status: 'ACTIVE',
+    currentStage: 'planning',
+    phasePlan: ['intake', 'architecture', 'planning', 'critical-review'],
+    pendingUserInput: null
+  };
+  const text = advanceResultText({
+    result: { outcome: 'PASS', summary: 'Architecture completed.', manualChecks: [] },
+    session,
+    workflow: { active: true, phase: 'Planning', remainingPhases: ['Critical Review'] },
+    assignment: { session, agentId: 'architect', role: 'Architect', phase: 'Architecture' }
+  });
+  assert.match(text, /MANDATORY SAME-TURN ACTION/);
+  assert.match(text, /call aiteam_advance immediately/);
+  assert.match(text, /Do not end your turn after this update/);
 });
 
 test('start auto-runs the first specialist and status exposes the next gate', async () => {
@@ -86,8 +105,10 @@ test('start auto-runs the first specialist and status exposes the next gate', as
   assert.match(startText, /Do not wait, sleep, repeatedly poll/);
   assert.match(startText, /REQUIRED USER-VISIBLE PHASE REPORTING/);
   assert.match(startText, /AITEAM \| Agent: <role> \(<agent_id>\) \| Phase:/);
-  assert.match(startText, /Intake -> Architecture -> optional UI\/UX Design -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration/);
+  assert.match(startText, /Intake -> PRD Review -> Architecture -> optional UI\/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA Execution -> Integration/);
   assert.match(startText, /AITEAM advances synchronously/);
+  assert.match(startText, /progress update is never a stopping point/i);
+  assert.match(startText, /same assistant turn/i);
   assert.doesNotMatch(startText, /git add <files>|patch `aiteam\/agents/);
   assert.equal(started.structuredContent.coordinatorDirective.autonomous, false);
   assert.equal(started.structuredContent.coordinatorDirective.userProgressReporting.required, true);
@@ -145,6 +166,8 @@ test('MCP initialize returns facilitator instructions tailored to session presen
     assert.match(activeInit.result.instructions, /Active Session In Progress/);
     assert.match(activeInit.result.instructions, /Do NOT call aiteam_start/);
     assert.match(activeInit.result.instructions, /Call aiteam_advance immediately/);
+    assert.match(activeInit.result.instructions, /Progress updates are not stopping points/);
+    assert.match(activeInit.result.instructions, /same assistant turn/);
   } finally {
     process.chdir(originalCwd);
   }

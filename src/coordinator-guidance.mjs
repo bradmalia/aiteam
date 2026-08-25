@@ -99,6 +99,7 @@ export function coordinatorDirective(session = null) {
         'Declare and persist the ordered phase plan at session start.',
         'Emit the beforeEverySpawn line immediately before every aiteam_advance call.',
         'Emit the afterEveryResult line immediately after every aiteam_advance result.',
+        'A progress update is never a stopping point. After the after-result update, call aiteam_advance again in the same assistant turn while the session is resumable and no real human input is pending.',
         'Never say an agent is running after its synchronous advance call has returned.',
         'When the plan changes, report the revised ordered remaining phases.'
       ]
@@ -106,7 +107,7 @@ export function coordinatorDirective(session = null) {
     requiredNextAction: {
       tool: 'aiteam_advance',
       recommendedAgentId: session.currentStage === 'intake' ? 'analyst' : null,
-      instruction: 'Call aiteam_advance now. The server selects the required specialist and refuses out-of-order or ungated work.'
+      instruction: 'Call aiteam_advance now in this same assistant turn. After reporting its result, immediately call aiteam_advance again while the session remains resumable and no real human input is pending. A progress update is not a stopping point.'
     },
     prohibitedActions: [
       'wait_for_background_progress',
@@ -148,7 +149,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
         : 'STOP CALLING TOOLS AND DO NOT EXPLORE THE CODEBASE. You are the Facilitator. Present these exact questions directly to the human user in your chat response and wait. DO NOT read or explore repository files to answer them yourself, and DO NOT guess user intent. Only after the user replies in chat, submit their exact words via aiteam_update_session and immediately loop aiteam_advance.')
     : isImplFail
       ? 'CRITICAL: The implementation specialist returned FAIL without calling exec_command or bash to write files. This is NOT a real sandbox restriction — the specialist has full workspace-write access. Do NOT output code in chat, do NOT tell the user to copy-paste or save files manually. Call aiteam_advance immediately to retry. The specialist will write the files to disk on the next invocation.'
-      : 'When the synchronous tool call returns, report its result and call aiteam_advance again until the server reports READY_TO_COMPLETE, then call aiteam_complete.';
+      : 'When the synchronous tool call returns, report its result and call aiteam_advance again IN THE SAME ASSISTANT TURN until real human input is required or the server reports READY_TO_COMPLETE, then call aiteam_complete. A progress update, PASS, FAIL, retry notice, or stage transition is never a stopping point.';
 
   return [
     '# REQUIRED NEXT ACTION — AITEAM is not autonomous',
@@ -170,13 +171,14 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     'If a task undergoes two or more rework cycles, include the exact latest reviewer/QA findings in the next aiteam_advance context. Do not prescribe unverified replacement code, modify framework files, or create Git commits from the Coordinator.',
     '',
     '# REQUIRED USER-VISIBLE PHASE REPORTING',
-    'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> Architecture -> optional UI/UX Design -> Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration.',
+    'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> PRD Review -> Architecture -> optional UI/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA Execution -> Integration.',
     'AITEAM advances synchronously, so report immediately before the call and immediately after it returns. Do not promise minute-by-minute chat messages while the MCP call is blocking; direct the user to the Watch Dashboard for live subprocess output.',
     '1. Immediately before every aiteam_advance call, use the assignment in the latest AITEAM response and tell the user exactly:',
     'AITEAM | Agent: <role> (<agent_id>) | Phase: <current phase> | Remaining: <ordered phases after this phase, or none>',
     '2. Immediately after the synchronous call returns, tell the user exactly:',
     'AITEAM | Agent: <role> (<agent_id>) <finished|failed> | Phase: <current phase> | Remaining: <ordered phases after this phase, or none>',
     '3. After the result, summarize only observed file paths, validations, and reviewer/QA findings contained in the specialist result.',
-    '4. If the workflow plan changes, show the revised remaining phases. Never leave the user guessing which agent or phase is active.'
+    '4. If the workflow plan changes, show the revised remaining phases. Never leave the user guessing which agent or phase is active.',
+    '5. Unless real human input is pending, immediately make the next required AITEAM tool call in the same assistant turn. Do not end the turn merely because you emitted the required update.'
   ].join('\n');
 }

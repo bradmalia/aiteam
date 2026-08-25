@@ -48,16 +48,19 @@ AITEAM | Agent: <role> (<agent_id>) <finished|failed> | Phase: <current phase> |
 
 Never say an agent is running after its call returns. Rework stays in the current phase until the server advances it.
 
+A progress update is never a stopping point. After emitting the required after-result line and concise summary, immediately call `aiteam_advance` again in the same assistant turn if the session is `ACTIVE` or retryable `BLOCKED` and no real human input is pending. Do not end the turn after a PASS, FAIL, stage transition, progress summary, or retry notice. Stop only for a real human-input gate, explicit user pause/cancel, or completion; call `aiteam_complete` immediately when the server reports `READY_TO_COMPLETE`.
+
 ## Enforced lifecycle
 
-Intake -> PRD Review -> Architecture -> Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA -> Integration -> Complete.
+Intake -> PRD Review -> Architecture -> UI/UX Design when applicable -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA Execution -> Integration -> Complete.
 
 - Analyst must produce a complete user-confirmed product intake artifact: goals, target users, user stories, requirements, acceptance criteria, MVP scope, out-of-scope boundaries, assumptions, constraints, non-functional requirements, success metrics, and risks.
 - PRD Review generates a human-readable HTML Product Requirements Document and requires real user approval before Architecture.
 - Architect must produce a structured architecture artifact: context, constraints, quality attributes, solution strategy, building blocks, runtime scenarios, deployment view, cross-cutting concepts, decisions/tradeoffs, risks, UI routing, and genuine capability gaps.
 - UI/UX Designer must produce user flows, usability risks, accessibility heuristics, validation hypotheses, theme, screens, interaction states, and design tokens when the architecture has a user interface.
 - A capability gap routes through Recruiter; only a verified Recruiter proposal with gap justification, existing-specialist assessment, and evaluation criteria can register a specialist.
-- Planner must produce a dependency-valid task ledger using registered specialist IDs and black-box test plans that preserve Intake, Architecture, and UI/UX contracts.
+- Planner must produce a dependency-valid implementation task ledger using registered specialist IDs and acceptance criteria that preserve Intake, Architecture, and UI/UX contracts.
+- QA Test Planner must create the authoritative pre-implementation black-box and regression test plan for every implementation task. This QA-authored plan must appear in the TRD before human approval.
 - Initial Critical Review is comprehensive. Failed material findings route to Architecture or Planning; later review verifies locked repairs.
 - TRD Review generates a human-readable HTML Technical Requirements Document including architecture, implementation plan, and testing plan, and requires real user approval before Implementation.
 - Every implementation task must pass Code Review and QA. BLOCKER/MAJOR review findings or failed QA route that task back to Implementation.

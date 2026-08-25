@@ -79,7 +79,37 @@ function result(outcome, extra = {}) {
 
 function queuedRunner(repo, outputs) {
   let index = 0;
-  return async ({ agentId }) => {
+  return async ({ agentId, context }) => {
+    if (agentId === 'qa-planner' && outputs[index]?.agentId !== 'qa-planner') {
+      const parsedContext = JSON.parse(context);
+      const tasks = parsedContext.plan?.tasks || parsedContext.taskLedger || [];
+      const taskTestPlans = tasks.map((task) => ({
+        taskId: task.id,
+        tests: (task.blackBoxTestPlan?.length ? task.blackBoxTestPlan : [{
+          name: `${task.title} acceptance`,
+          action: 'Exercise the task through its public interface.',
+          expected: 'Every task acceptance criterion is observable as passing.',
+          evidenceMethod: 'Runtime or public-interface test output.'
+        }]).map((plannedTest) => ({ ...plannedTest, covers: task.acceptanceCriteria }))
+      }));
+      return {
+        runId: `run-qa-planning-${index}`,
+        agentId,
+        role: agentId,
+        exitCode: 0,
+        timedOut: false,
+        completedAt: new Date().toISOString(),
+        stdout: result('PASS', {
+          taskTestPlans,
+          regressionStrategy: ['Retain each approved test name as a later execution and regression obligation.'],
+          coverageNotes: ['Every exact task acceptance criterion is covered by the QA-authored plan.']
+        }),
+        stderr: '',
+        stdoutPath: '',
+        stderrPath: '',
+        metaPath: ''
+      };
+    }
     const item = outputs[index++];
     if (!item) throw new Error(`Unexpected runner call ${index} for ${agentId}`);
     if (item.write) fs.writeFileSync(path.join(repo, item.write.path), item.write.content);
@@ -111,7 +141,8 @@ function latestAdvisory(repo) {
 }
 
 async function advanceWithHumanApprovals(args) {
-  const result = await advanceWorkflow(args);
+  let result = await advanceWorkflow(args);
+  if (result.session.currentStage === 'qa-planning') result = await advanceWorkflow(args);
   const session = readSession(args.repo);
   if (['prd-review', 'trd-review'].includes(session?.pendingUserInput?.kind) && session.pendingUserInput.response == null) {
     await callTool('aiteam_update_session', { repository: args.repo, patch: { pendingUserInput: 'approved' } });
@@ -256,8 +287,12 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   session = readSession(repo);
   assert.equal(session.currentStage, 'trd-review');
+  assert.ok(session.completedStages.includes('qa-planning'));
+  assert.equal(session.stageEvidence['qa-planning'].agentId, 'qa-planner');
+  assert.deepEqual(session.taskLedger[0].blackBoxTestPlan[0].covers, ['Works']);
   assert.equal(session.pendingUserInput.kind, 'trd-review');
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'looks good' } });
   session = readSession(repo);
@@ -266,6 +301,7 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.equal(session.pendingUserInput.kind, 'trd-review');
   assert.match(session.lastFailure, /TRD changes requested/);
 
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'critical-review');
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -276,11 +312,16 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.match(session.pendingUserInput.questions.join('\n'), /local file instead: file:\/\//);
   const trdHtml = fs.readFileSync(session.pendingUserInput.artifact.path, 'utf8');
   assert.match(trdHtml, /Testing Plan/);
-  assert.match(trdHtml, /planned black-box QA test plan/);
+  assert.match(trdHtml, /QA Test Plan Ownership/);
+  assert.match(trdHtml, /QA Test Planner created this black-box plan/);
+  assert.match(trdHtml, /QA-authored black-box test plan/);
+  assert.match(trdHtml, /Regression Strategy/);
+  assert.match(trdHtml, /Coverage Notes/);
   assert.match(trdHtml, /revised runtime behavior/);
   assert.match(trdHtml, /Run the revised feature through the public interface/);
   assert.match(trdHtml, /The revised expected behavior is observable/);
   assert.match(trdHtml, /Runtime test output/);
+  assert.match(trdHtml, /<dt>Covers<\/dt>/);
   assert.match(trdHtml, /System Boundary And Runtime Flows/);
   assert.match(trdHtml, /Data, Interfaces, And Dependencies/);
   assert.match(trdHtml, /Security, Privacy, And Operations/);
@@ -302,6 +343,7 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   assert.equal(session.pendingUserInput.kind, 'trd-review');
   assert.match(session.lastFailure, /add another regression test/);
 
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(readSession(repo).currentStage, 'critical-review');
   await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
@@ -1589,16 +1631,23 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   const awaiting = parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need clarification', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['What platform should we target?'], userConfirmed: false }));
   assert.equal(awaiting.outcome, 'AWAITING_USER');
   assert.equal(awaiting.userConfirmed, false);
+  assert.throws(() => parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need final confirmation', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['Do you confirm that these finalized requirements and acceptance criteria are complete and correct?'], userConfirmed: false })), /PRD Review owns explicit full-document approval/);
+  const concreteConfirmation = parseStageResult('intake', JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need target platform', evidence: [], requirements: [], acceptanceCriteria: [], questions: ['Can you confirm the target platform: browser or desktop?'], userConfirmed: false }));
+  assert.equal(concreteConfirmation.questions[0], 'Can you confirm the target platform: browser or desktop?');
   assert.throws(() => parseStageResult('intake', JSON.stringify({ outcome: 'PASS', summary: 'Incomplete intake', evidence: ['User asked for a feature'], requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [], userConfirmed: true })), /goals/);
   const intake = parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: [], userConfirmed: true }));
   assert.equal(intake.goals[0], 'Deliver the requested user-visible outcome.');
   assert.equal(intake.successMetrics[0], 'Acceptance criteria pass through observable behavior.');
   assert.throws(() => parseStageResult('intake', result('PASS', { requirements: ['Feature'], acceptanceCriteria: ['Works'], questions: ['Still unclear'], userConfirmed: false })), /cannot PASS/i);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [] })), /non-empty array/);
-  assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] })), /blackBoxTestPlan/);
+  const plannerOwnedScope = parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [] }] }));
+  assert.deepEqual(plannerOwnedScope.tasks[0].blackBoxTestPlan, []);
   assert.throws(() => parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'source check', action: 'grep src/audio.js line 49', expected: 'Function should call toggleMute.', evidenceMethod: 'Source inspection.' }] }] })), /black-box test plan only/);
   const planned = parseStageResult('planning', result('PASS', { tasks: [{ id: 'feature-task', title: 'Feature', description: 'Implement', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [{ name: 'runtime behavior', action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }] }));
   assert.equal(planned.tasks[0].blackBoxTestPlan[0].action, 'Run the feature through the public interface.');
+  const qaPlanned = parseStageResult('qa-planning', result('PASS', { taskTestPlans: [{ taskId: 'feature-task', tests: [{ name: 'runtime behavior', covers: ['Works'], action: 'Run the feature through the public interface.', expected: 'The expected behavior is observable.', evidenceMethod: 'Runtime test output.' }] }], regressionStrategy: ['Retain the test for regression.'], coverageNotes: ['The task acceptance criterion is covered.'] }));
+  assert.deepEqual(qaPlanned.taskTestPlans[0].tests[0].covers, ['Works']);
+  assert.throws(() => parseStageResult('qa-planning', result('PASS', { taskTestPlans: [{ taskId: 'feature-task', tests: [{ name: 'runtime behavior', covers: [], action: 'Run it.', expected: 'It works.', evidenceMethod: 'Runtime output.' }] }], regressionStrategy: ['Retain it.'], coverageNotes: ['Covered.'] })), /covers must not be empty/);
   assert.throws(() => parseStageResult('architecture', JSON.stringify({ outcome: 'PASS', summary: 'Old architecture', evidence: ['Observed repository evidence'], design: ['Module'], hasUserInterface: false, specialistNeeds: [] })), /context/);
   assert.throws(() => parseStageResult('architecture', result('PASS', { design: ['Module'], specialistNeeds: [] })), /hasUserInterface/);
   const architecture = parseStageResult('architecture', result('PASS', { design: ['Module'], hasUserInterface: false, specialistNeeds: [] }));
@@ -1616,6 +1665,8 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }] })), /cannot PASS/);
   const failedCritical = parseStageResult('critical-review', result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Material issue', recommendation: 'Repair it' }], repairStage: 'planning' }));
   assert.equal(failedCritical.repairStage, 'planning');
+  const failedQaPlanReview = parseStageResult('critical-review', result('FAIL', { findings: [{ id: 'F1', severity: 'MAJOR', description: 'Test coverage issue', recommendation: 'Repair the QA plan' }], repairStage: 'qa-planning' }));
+  assert.equal(failedQaPlanReview.repairStage, 'qa-planning');
   const passedCritical = parseStageResult('critical-review', result('PASS', { findings: [], repairStage: 'none' }));
   assert.equal(passedCritical.repairStage, 'none');
   assert.throws(() => parseStageResult('critical-review', result('PASS', { findings: [], repairStage: 'planning' })), /repairStage to none/);
@@ -1634,14 +1685,19 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   assert.throws(() => normalizeTimeoutSeconds('not-a-number'), /finite number/);
 });
 
-test('Analyst Intake pauses for user answers and blocks Architecture until confirmation', async () => {
+test('Analyst Intake completes after clarifications and leaves full approval to PRD Review', async () => {
   const repo = createRepository();
   newSession(repo, 'Build a game');
-  const runner = queuedRunner(repo, [
+  const calls = [];
+  const queued = queuedRunner(repo, [
     { stdout: JSON.stringify({ outcome: 'AWAITING_USER', summary: 'Need platform decision', evidence: ['User requirements are incomplete'], requirements: [], acceptanceCriteria: [], questions: ['Should this be browser-based?'], userConfirmed: false }) },
     { stdout: result('PASS', { requirements: ['Browser game'], acceptanceCriteria: ['Runs in a browser'], questions: [], userConfirmed: true }) },
     { stdout: result('PASS', { design: ['Use a browser game architecture'], hasUserInterface: false, specialistNeeds: [] }) }
   ]);
+  const runner = async (args) => {
+    calls.push(args);
+    return queued(args);
+  };
 
   const awaiting = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(awaiting.session.status, 'ACTIVE');
@@ -1654,6 +1710,9 @@ test('Analyst Intake pauses for user answers and blocks Architecture until confi
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Yes, make it browser-based.' } });
   const intake = await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
   assert.equal(intake.session.currentStage, 'prd-review');
+  assert.match(calls[1].task, /Do not ask for generic final confirmation/);
+  assert.match(calls[1].task, /PRD Review is the sole full-document approval gate/);
+  assert.doesNotMatch(calls[1].task, /EXPLICITLY confirmed complete requirements/);
   assert.equal(intake.session.pendingUserInput.kind, 'prd-review');
   assert.match(intake.session.pendingUserInput.artifact.url, /\/artifacts\/prd\.html$/);
   assert.match(intake.session.pendingUserInput.artifact.fileUrl, /^file:\/\/.*\/prd\.html$/);

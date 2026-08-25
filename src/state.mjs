@@ -8,6 +8,7 @@ export const DEFAULT_PHASE_PLAN = [
   'prd-review',
   'architecture',
   'planning',
+  'qa-planning',
   'critical-review',
   'trd-review',
   'implementation',
