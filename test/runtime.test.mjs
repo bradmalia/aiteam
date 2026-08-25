@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, detectRunner, outputSchemaPath, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
+import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, detectRunner, discoverParentCodexContext, outputSchemaPath, parseCodexSessionContext, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
 
 test('runner detection honors explicit selection and host markers', () => {
   assert.equal(detectRunner({ AITEAM_RUNNER: 'agy', CODEX_HOME: '/tmp/codex' }), 'agy');
@@ -22,19 +22,59 @@ test('an unmarked MCP host defaults to Codex', () => {
   assert.equal(detectRunner({}), 'codex');
 });
 
-test('the unmarked Codex fallback uses the V100 provider and Qwen defaults', () => {
-  const childHome = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-default-v100-')), 'codex-home');
+test('an unmarked Codex invocation inherits the active parent session routing', () => {
+  const childHome = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-parent-codex-')), 'codex-home');
   const invocation = buildAgentInvocation({
     repo: '/tmp/example-repo',
     agent: { sandbox: 'read-only' },
     prompt: 'Analyze requirements',
-    env: { AITEAM_CODEX_HOME: childHome }
+    env: {},
+    parentCodexContext: {
+      model: 'gpt-current',
+      provider: 'openai',
+      reasoningEffort: 'high',
+      codexHome: childHome
+    }
   });
 
   assert.equal(invocation.command, 'codex');
-  assert.ok(invocation.args.includes('model_provider="v100_ollama"'));
-  assert.ok(invocation.args.includes('model_providers.v100_ollama.base_url="http://192.168.122.50:11434/v1/"'));
-  assert.ok(invocation.args.includes('v100-qwen3.6-codex-256k'));
+  assert.ok(invocation.args.includes('model_provider="openai"'));
+  assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
+  assert.ok(invocation.args.includes('gpt-current'));
+  assert.equal(invocation.childEnv.CODEX_HOME, childHome);
+});
+
+test('parent Codex context is parsed from the active session descriptor', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-proc-'));
+  const pid = 1234;
+  const fdDir = path.join(root, String(pid), 'fd');
+  const codexHome = path.join(root, 'codex-home');
+  const sessionPath = path.join(codexHome, 'sessions', '2026', '08', '25', 'rollout.jsonl');
+  fs.mkdirSync(fdDir, { recursive: true });
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+  fs.writeFileSync(path.join(root, String(pid), 'status'), 'Name:\tcodex\nPPid:\t1\n');
+  fs.writeFileSync(sessionPath, [
+    JSON.stringify({ type: 'event_msg', payload: { type: 'thread_settings_applied', thread_settings: { model: 'gpt-selected', model_provider_id: 'openai', reasoning_effort: 'high' } } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-selected', effort: 'high', model_context_window: 258400 } })
+  ].join('\n'));
+  fs.symlinkSync(sessionPath, path.join(fdDir, '7'));
+
+  assert.deepEqual(discoverParentCodexContext({ pid, procRoot: root }), {
+    model: 'gpt-selected',
+    provider: 'openai',
+    reasoningEffort: 'high',
+    contextWindow: 258400,
+    codexHome,
+    source: 'parent-codex-session'
+  });
+});
+
+test('malformed session records cannot inject model or provider configuration', () => {
+  const context = parseCodexSessionContext([
+    '{not json}',
+    JSON.stringify({ type: 'event_msg', payload: { thread_settings: { model: 'bad model;override=true', model_provider_id: 'bad.provider' } } })
+  ].join('\n'), '/tmp/codex/sessions/run.jsonl');
+  assert.equal(context, null);
 });
 
 test('Agy invocations enforce read-only and writable specialist boundaries', () => {
@@ -218,7 +258,8 @@ test('custom Codex providers do not have authentication disabled implicitly', ()
     env: {
       AITEAM_CODEX_HOME: childHome,
       AITEAM_CODEX_REQUIRES_OPENAI_AUTH: 'sometimes'
-    }
+    },
+    parentCodexContext: null
   }), /must be "true" or "false"/);
 });
 
@@ -362,7 +403,7 @@ test('timeout terminates the full specialist process group', async () => {
     '#!/usr/bin/env node',
     "const fs = require('node:fs');",
     "const { spawn } = require('node:child_process');",
-    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
     "fs.writeFileSync(process.env.AITEAM_TEST_GRANDCHILD_PID, String(child.pid));",
     'setInterval(() => {}, 1000);'
   ].join('\n'));
@@ -404,6 +445,63 @@ test('timeout terminates the full specialist process group', async () => {
     }
     if (grandchildPid) {
       try { process.kill(grandchildPid, 'SIGKILL'); } catch {}
+    }
+  }
+});
+
+test('successful specialist completion terminates residual child processes', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-process-cleanup-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const wrapper = path.join(repo, 'fake-codex.cjs');
+  const pidFile = path.join(repo, 'residual.pid');
+  fs.writeFileSync(wrapper, [
+    '#!/usr/bin/env node',
+    "const fs = require('node:fs');",
+    "const { spawn } = require('node:child_process');",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
+    "fs.writeFileSync(process.env.AITEAM_TEST_RESIDUAL_PID, String(child.pid));",
+    'child.unref();',
+    "process.stdout.write(JSON.stringify({ outcome: 'PASS', summary: 'ok', evidence: ['done'] }));"
+  ].join('\n'));
+  fs.chmodSync(wrapper, 0o755);
+
+  const saved = {};
+  const replacements = {
+    AITEAM_CODEX_BIN: wrapper,
+    AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
+    AITEAM_TEST_RESIDUAL_PID: pidFile,
+    AITEAM_CODEX_HOME: '',
+    AITEAM_CODEX_MODEL: '',
+    AITEAM_CODEX_PROVIDER: ''
+  };
+  for (const [key, value] of Object.entries(replacements)) {
+    saved[key] = process.env[key];
+    process.env[key] = value;
+  }
+
+  let residualPid = null;
+  try {
+    const result = await runAgent({ repo, agentId: 'analyst', task: 'cleanup test', timeoutMs: 5000 });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.residualProcessCleanup, true);
+    residualPid = Number(fs.readFileSync(pidFile, 'utf8'));
+    let alive = true;
+    for (let attempt = 0; attempt < 20 && alive; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      try { process.kill(residualPid, 0); }
+      catch (error) {
+        if (error.code === 'ESRCH') alive = false;
+        else throw error;
+      }
+    }
+    assert.equal(alive, false, 'residual child must not survive successful specialist completion');
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    if (residualPid) {
+      try { process.kill(residualPid, 'SIGKILL'); } catch {}
     }
   }
 });

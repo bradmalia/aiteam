@@ -55,6 +55,7 @@ env_vars = [
   "AITEAM_CODEX_HOME",
   "AITEAM_CODEX_WRITABLE_SANDBOX",
   "AITEAM_CODEX_MODEL",
+  "AITEAM_CODEX_REASONING_EFFORT",
   "AITEAM_CODEX_PROVIDER",
   "AITEAM_CODEX_PROVIDER_NAME",
   "AITEAM_CODEX_BASE_URL",
@@ -70,6 +71,8 @@ tool_timeout_sec = 7200
 ```
 
 Restart Codex after changing MCP configuration.
+
+By default, AITEAM inherits the active parent Codex session's model, provider, reasoning effort, and Codex home on each specialist launch. Changing models in a long-running Codex session therefore changes subsequent AITEAM specialists too. Explicit `AITEAM_CODEX_MODEL` or `AITEAM_CODEX_PROVIDER` settings take precedence for intentionally pinned projects such as local V100 workflows. When parent-session discovery is unavailable, AITEAM omits model/provider overrides and lets the normal Codex configuration choose them.
 
 Writable Codex specialists default to `danger-full-access` so implementation and QA can launch browsers and other project tooling that the `workspace-write` process sandbox may block. Read-only planning and review agents remain sandboxed. Set `AITEAM_CODEX_WRITABLE_SANDBOX=workspace-write` in the MCP server environment to restore the stricter writable sandbox.
 

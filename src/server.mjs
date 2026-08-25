@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { newSession, readSession, patchSession, appendEvent } from './state.mjs';
 import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './registry.mjs';
-import { activeProcesses, killChildTree } from './runtime.mjs';
+import { activeProcesses, killActiveProcessTrees, killChildTree } from './runtime.mjs';
 import { gitSnapshot, ensureGitRepo } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
 import { advanceWorkflow, completeWorkflow, confirmHumanReview, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
@@ -626,27 +626,33 @@ export async function handle(msg) {
 
 export async function runServer() {
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    let msg;
-    try { msg = JSON.parse(line); }
-    catch (parseErr) { process.stderr.write(`AITEAM: malformed JSON-RPC input (${parseErr.message}): ${line.slice(0, 200)}\n`); continue; }
-    
-    handle(msg).then((response) => {
-      if (response) process.stdout.write(JSON.stringify(response) + '\n');
-    }).catch((err) => {
-      if (msg.id !== undefined) {
-        process.stdout.write(JSON.stringify({
-          jsonrpc: '2.0',
-          id: msg.id,
-          error: { code: -32603, message: `Internal error: ${err.message}` }
-        }) + '\n');
-      } else {
-        process.stderr.write(`AITEAM server error: ${err.stack || err}\n`);
-      }
-    });
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      let msg;
+      try { msg = JSON.parse(line); }
+      catch (parseErr) { process.stderr.write(`AITEAM: malformed JSON-RPC input (${parseErr.message}): ${line.slice(0, 200)}\n`); continue; }
+
+      handle(msg).then((response) => {
+        if (response) process.stdout.write(JSON.stringify(response) + '\n');
+      }).catch((err) => {
+        if (msg.id !== undefined) {
+          process.stdout.write(JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            error: { code: -32603, message: `Internal error: ${err.message}` }
+          }) + '\n');
+        } else {
+          process.stderr.write(`AITEAM server error: ${err.stack || err}\n`);
+        }
+      });
+    }
+  } finally {
+    killActiveProcessTrees('SIGTERM');
   }
 }
+
+process.once('exit', () => killActiveProcessTrees('SIGTERM'));
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await runServer();

@@ -9,6 +9,112 @@ function safeName(s) {
   return s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'agent';
 }
 
+const CODEX_SESSION_TAIL_BYTES = 2 * 1024 * 1024;
+
+function readFileTail(filePath, maxBytes = CODEX_SESSION_TAIL_BYTES) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    const length = Math.min(stat.size, maxBytes);
+    const offset = stat.size - length;
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, offset);
+    const text = buffer.toString('utf8');
+    if (offset === 0) return text;
+    const firstNewline = text.indexOf('\n');
+    return firstNewline === -1 ? '' : text.slice(firstNewline + 1);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function parseCodexSessionContext(text, sessionPath = null) {
+  let model = null;
+  let provider = null;
+  let reasoningEffort = null;
+  let contextWindow = null;
+  const lines = String(text || '').split('\n');
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    let record;
+    try { record = JSON.parse(line); }
+    catch { continue; }
+    const payload = record?.payload || {};
+    const settings = payload.thread_settings || {};
+    model ||= payload.model || settings.model || null;
+    provider ||= payload.model_provider_id || settings.model_provider_id || null;
+    reasoningEffort ||= payload.effort || payload.reasoning_effort || settings.reasoning_effort || null;
+    contextWindow ||= payload.model_context_window || payload.info?.model_context_window || null;
+    if (model && provider && reasoningEffort && contextWindow) break;
+  }
+
+  if (model && !/^[a-zA-Z0-9][a-zA-Z0-9._:+/-]{0,127}$/.test(model)) model = null;
+  if (provider && !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(provider)) provider = null;
+  if (reasoningEffort && !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(reasoningEffort)) reasoningEffort = null;
+  if (contextWindow != null && (!Number.isFinite(Number(contextWindow)) || Number(contextWindow) <= 0)) contextWindow = null;
+
+  let codexHome = null;
+  if (sessionPath) {
+    const marker = `${path.sep}sessions${path.sep}`;
+    const markerIndex = sessionPath.indexOf(marker);
+    if (markerIndex > 0) codexHome = sessionPath.slice(0, markerIndex);
+  }
+  if (!model && !provider) return null;
+  return {
+    model,
+    provider,
+    reasoningEffort,
+    contextWindow: contextWindow == null ? null : Number(contextWindow),
+    codexHome,
+    source: 'parent-codex-session'
+  };
+}
+
+function parentPid(pid, procRoot) {
+  try {
+    const status = fs.readFileSync(path.join(procRoot, String(pid), 'status'), 'utf8');
+    const match = status.match(/^PPid:\s+(\d+)$/m);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function discoverParentCodexContext({ pid = process.ppid, procRoot = '/proc' } = {}) {
+  if (process.platform !== 'linux' && procRoot === '/proc') return null;
+  let currentPid = Number(pid);
+  for (let hop = 0; hop < 6 && Number.isInteger(currentPid) && currentPid > 1; hop += 1) {
+    const fdDir = path.join(procRoot, String(currentPid), 'fd');
+    try {
+      const candidates = fs.readdirSync(fdDir)
+        .map((entry) => {
+          try { return fs.readlinkSync(path.join(fdDir, entry)).replace(/ \(deleted\)$/, ''); }
+          catch { return null; }
+        })
+        .filter((target) => target?.includes(`${path.sep}sessions${path.sep}`) && target.endsWith('.jsonl'))
+        .filter((target) => {
+          try { return fs.statSync(target).isFile(); }
+          catch { return false; }
+        })
+        .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+      for (const sessionPath of candidates) {
+        try {
+          const context = parseCodexSessionContext(readFileTail(sessionPath), sessionPath);
+          if (context) return context;
+        } catch {
+          // Continue to another descriptor or ancestor when a live session rotates.
+        }
+      }
+    } catch {
+      // Proc inspection is best-effort; explicit configuration remains available.
+    }
+    currentPid = parentPid(currentPid, procRoot);
+  }
+  return null;
+}
+
 function requiredCapabilitiesSchema() {
   return {
     type: 'array',
@@ -390,6 +496,19 @@ export function outputSchemaPath(repo, runBase, stage = null) {
 
 export const activeProcesses = new Map();
 
+export function killActiveProcessTrees(signal = 'SIGTERM') {
+  let killed = 0;
+  for (const child of new Set(activeProcesses.values())) {
+    try {
+      if (killChildTree(child, signal)) killed += 1;
+    } catch {
+      // Process shutdown is best-effort; one inaccessible process group must
+      // not prevent cleanup attempts for the remaining specialists.
+    }
+  }
+  return killed;
+}
+
 function responseOnlyPrompt(task, context) {
   return [
     'You are a lossless structured-output formatter.',
@@ -448,6 +567,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
 
     let timedOut = false;
     let forceKillTimer = null;
+    let residualProcessCleanup = false;
     const timer = setTimeout(() => {
       timedOut = true;
       killChildTree(child, 'SIGTERM');
@@ -456,11 +576,24 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
     }, timeoutMs);
 
     child.on('error', (err) => {
+      activeProcesses.delete(repo);
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
+      killChildTree(child, 'SIGTERM');
       stdoutStream.end();
       stderrStream.end();
       reject(err);
+    });
+
+    child.on('exit', () => {
+      // Descendants can inherit the specialist's stdout/stderr pipes, which
+      // delays the `close` event. Clean the process group as soon as its leader
+      // exits so an inherited pipe cannot keep a browser or game runtime alive.
+      residualProcessCleanup = killChildTree(child, 'SIGTERM');
+      if (residualProcessCleanup) {
+        const residualForceTimer = setTimeout(() => killChildTree(child, 'SIGKILL'), 2000);
+        residualForceTimer.unref();
+      }
     });
 
     child.on('close', (code, signal) => {
@@ -482,6 +615,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
         exitCode: code,
         signal,
         timedOut,
+        residualProcessCleanup,
         enforceSchema,
         responseOnly,
         stdoutPath,
@@ -558,15 +692,15 @@ export function detectRunner(env = process.env) {
   return 'codex';
 }
 
-export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
+export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env, parentCodexContext = undefined }) {
   const runner = detectRunner(env);
   if (runner === 'agy') {
     return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
   }
-  return buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
+  return buildCodexInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env, parentCodexContext });
 }
 
-export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
+export function buildCodexInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env, parentCodexContext = undefined }) {
   const command = env.AITEAM_CODEX_BIN || 'codex';
   const prefixArgs = parseStringArray('AITEAM_CODEX_PREFIX_ARGS_JSON', env.AITEAM_CODEX_PREFIX_ARGS_JSON);
   const requestedSandbox = agent.sandbox || 'read-only';
@@ -583,41 +717,50 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
   args.push('-c', 'mcp_servers={}');
 
-  const provider = env.AITEAM_CODEX_PROVIDER || 'v100_ollama';
+  const hasExplicitRouting = Boolean(model || env.AITEAM_CODEX_MODEL || env.AITEAM_CODEX_PROVIDER);
+  const inherited = hasExplicitRouting
+    ? null
+    : (parentCodexContext === undefined ? discoverParentCodexContext() : parentCodexContext);
+  const provider = env.AITEAM_CODEX_PROVIDER || inherited?.provider || null;
+  const requiresAuthSetting = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH ?? null;
+  if (requiresAuthSetting != null && !['true', 'false'].includes(requiresAuthSetting)) {
+    throw new Error('AITEAM_CODEX_REQUIRES_OPENAI_AUTH must be "true" or "false".');
+  }
   if (provider) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(provider)) {
       throw new Error('AITEAM_CODEX_PROVIDER contains unsupported characters.');
     }
     args.push('-c', `model_provider=${configString(provider)}`);
-    const providerName = env.AITEAM_CODEX_PROVIDER_NAME || (provider === 'v100_ollama' ? 'V100 Ollama' : null);
+    const providerName = env.AITEAM_CODEX_PROVIDER_NAME || null;
     if (providerName) {
       args.push('-c', `model_providers.${provider}.name=${configString(providerName)}`);
     }
-    const baseUrl = env.AITEAM_CODEX_BASE_URL || (provider === 'v100_ollama' ? 'http://192.168.122.50:11434/v1/' : null);
+    const baseUrl = env.AITEAM_CODEX_BASE_URL || null;
     if (baseUrl) {
       args.push('-c', `model_providers.${provider}.base_url=${configString(baseUrl)}`);
     }
-    const wireApi = env.AITEAM_CODEX_WIRE_API || (provider === 'v100_ollama' ? 'responses' : null);
+    const wireApi = env.AITEAM_CODEX_WIRE_API || null;
     if (wireApi) {
       args.push('-c', `model_providers.${provider}.wire_api=${configString(wireApi)}`);
     }
-    const requiresAuthSetting = env.AITEAM_CODEX_REQUIRES_OPENAI_AUTH ?? (provider === 'v100_ollama' ? 'false' : null);
     if (requiresAuthSetting != null) {
-      if (!['true', 'false'].includes(requiresAuthSetting)) {
-        throw new Error('AITEAM_CODEX_REQUIRES_OPENAI_AUTH must be "true" or "false".');
-      }
       args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuthSetting}`);
     }
   }
 
-  const contextWindow = env.AITEAM_CODEX_CONTEXT_WINDOW || 262144;
-  args.push('-c', `model_context_window=${Number(contextWindow)}`);
+  const reasoningEffort = env.AITEAM_CODEX_REASONING_EFFORT || inherited?.reasoningEffort || null;
+  if (reasoningEffort) args.push('-c', `model_reasoning_effort=${configString(reasoningEffort)}`);
 
-  const autoCompactLimit = env.AITEAM_CODEX_AUTO_COMPACT_LIMIT || 229376;
-  args.push('-c', `model_auto_compact_token_limit=${Number(autoCompactLimit)}`);
-  args.push('-c', 'model_auto_compact_token_limit_scope="total"');
+  const contextWindow = env.AITEAM_CODEX_CONTEXT_WINDOW || null;
+  if (contextWindow) args.push('-c', `model_context_window=${Number(contextWindow)}`);
 
-  const selectedModel = model || env.AITEAM_CODEX_MODEL || 'v100-qwen3.6-codex-256k';
+  const autoCompactLimit = env.AITEAM_CODEX_AUTO_COMPACT_LIMIT || null;
+  if (autoCompactLimit) {
+    args.push('-c', `model_auto_compact_token_limit=${Number(autoCompactLimit)}`);
+    args.push('-c', 'model_auto_compact_token_limit_scope="total"');
+  }
+
+  const selectedModel = model || env.AITEAM_CODEX_MODEL || inherited?.model || null;
   if (selectedModel) args.push('--model', selectedModel);
   // Skip --output-schema for implementation stages: the schema constraint causes
   // Qwen to bypass the agentic tool-calling loop and emit JSON in a single pass
@@ -631,7 +774,7 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-');
 
   const childEnv = { ...env };
-  const codexHome = env.AITEAM_CODEX_HOME || path.join(os.homedir(), '.aiteam-codex-home');
+  const codexHome = env.AITEAM_CODEX_HOME || inherited?.codexHome || env.CODEX_HOME || path.join(os.homedir(), '.codex');
   fs.mkdirSync(codexHome, { recursive: true });
   childEnv.CODEX_HOME = codexHome;
   return { command, args, childEnv, stdinText: prompt };
