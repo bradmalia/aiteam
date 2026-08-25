@@ -19,6 +19,8 @@ Intake -> Architecture -> Planning -> Critical Review
 
 `aiteam_advance` runs exactly the specialist required by the current server gate. Specialist results must be structured JSON. Invalid output, timeouts, nonzero exits, out-of-order agents, material review findings, and QA failures cannot advance the workflow.
 
+Coordinator-facing `aiteam_start` and `aiteam_advance` results intentionally return compact structured content: the completed-stage summary and evidence, routing state, exact human questions, and required next action. Full specialist stdout/stderr, session evidence, and task context remain available through the Watch Dashboard, `.aiteam/runs`, and the explicit `aiteam_status` inspection tool instead of being duplicated into every coordinator turn.
+
 Every implementation task must pass Code Review and QA. Failed review or QA returns that task to Implementation. `aiteam_complete` refuses completion until all tasks pass and server-controlled Git integration succeeds.
 
 ## Agent roster

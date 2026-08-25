@@ -126,6 +126,101 @@ export function advanceResultText(result) {
   return [urgentUserInput, finished, `Outcome: ${result.result.outcome}`, `Summary: ${result.result.summary}`, manualChecksText, urgentUserInput ? '' : next].filter(Boolean).join('\n');
 }
 
+function pendingUserInputSummary(session) {
+  const pending = session?.pendingUserInput;
+  if (!pending || pending.response != null) return null;
+  return {
+    kind: pending.kind || null,
+    stage: pending.stage || null,
+    questions: pending.questions || [],
+    artifact: pending.artifact || null,
+    requestedAt: pending.requestedAt || null
+  };
+}
+
+function workflowSummary(session, workflow) {
+  return {
+    sessionId: session?.id || null,
+    status: session?.status || workflow?.status || null,
+    currentStage: session?.currentStage || workflow?.stage || null,
+    currentTaskId: session?.currentTaskId || workflow?.currentTaskId || null,
+    phase: workflow?.phase || null,
+    remainingPhases: workflow?.remainingPhases || [],
+    watchDashboard: session?.watchPort ? `http://127.0.0.1:${session.watchPort}/` : null
+  };
+}
+
+function nextAssignmentSummary(session, workflow) {
+  if (session?.status !== 'ACTIVE' || pendingUserInputSummary(session)) return null;
+  return {
+    stage: workflow?.stage || session.currentStage,
+    phase: workflow?.phase || null,
+    agentId: workflow?.agentId || null,
+    role: workflow?.agentRole || null,
+    taskId: workflow?.currentTaskId || session.currentTaskId || null
+  };
+}
+
+function completedStageSummary(result) {
+  const stageResult = result.result || {};
+  const failure = ['FAIL', 'BLOCKED'].includes(stageResult.outcome);
+  const counts = {
+    evidence: stageResult.evidence?.length || 0,
+    filesChanged: stageResult.filesChanged?.length || 0,
+    validations: stageResult.validations?.length || 0,
+    findings: stageResult.findings?.length || 0,
+    checks: stageResult.checks?.length || 0,
+    automationAttempts: stageResult.automationAttempts?.length || 0,
+    manualChecks: stageResult.manualChecks?.length || 0,
+    tasks: stageResult.tasks?.length || 0,
+    taskTestPlans: stageResult.taskTestPlans?.length || 0
+  };
+  return {
+    stage: result.assignment?.stage || null,
+    phase: result.assignment?.phase || null,
+    agentId: result.assignment?.agentId || null,
+    role: result.assignment?.role || null,
+    taskId: result.assignment?.session?.currentTaskId || null,
+    outcome: stageResult.outcome || null,
+    summary: stageResult.summary || '',
+    evidence: stageResult.evidence || [],
+    runId: result.run?.runId || null,
+    completedAt: result.run?.completedAt || null,
+    counts,
+    ...(stageResult.filesChanged?.length ? { filesChanged: stageResult.filesChanged } : {}),
+    ...(stageResult.validations?.length ? { validations: stageResult.validations } : {}),
+    ...(stageResult.findings?.length ? { findings: stageResult.findings } : {}),
+    ...(stageResult.manualChecks?.length ? { manualChecks: stageResult.manualChecks } : {}),
+    ...(failure && stageResult.checks?.length ? { checks: stageResult.checks } : {}),
+    ...(failure && stageResult.automationAttempts?.length ? { automationAttempts: stageResult.automationAttempts } : {})
+  };
+}
+
+export function compactAdvanceResult(result) {
+  const directive = coordinatorDirective(result.session);
+  return {
+    completed: completedStageSummary(result),
+    workflow: workflowSummary(result.session, result.workflow),
+    nextAssignment: nextAssignmentSummary(result.session, result.workflow),
+    pendingUserInput: pendingUserInputSummary(result.session),
+    requiredAction: directive.requiredNextAction || null,
+    prohibitedActions: directive.prohibitedActions || []
+  };
+}
+
+function compactAdvanceError(error, session, workflow) {
+  const directive = coordinatorDirective(session);
+  return {
+    completed: null,
+    error: { message: String(error?.message || error) },
+    workflow: workflowSummary(session, workflow),
+    nextAssignment: nextAssignmentSummary(session, workflow),
+    pendingUserInput: pendingUserInputSummary(session),
+    requiredAction: directive.requiredNextAction || null,
+    prohibitedActions: directive.prohibitedActions || []
+  };
+}
+
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -291,12 +386,14 @@ export async function callTool(name, args) {
         ].join('\n')
         : `${text}\n\n${resultText}`;
       return textResult(startText, {
-        ...startedContent,
-        session: firstAdvance.session,
-        workflow: firstAdvance.workflow,
-        nextAssignment: firstAdvance.session.status === 'ACTIVE' && !(firstAdvance.session.pendingUserInput?.response == null && firstAdvance.session.pendingUserInput?.questions?.length) ? getCurrentAssignment(repo) : null,
-        coordinatorDirective: coordinatorDirective(firstAdvance.session),
-        firstAdvance
+        started: {
+          version: VERSION,
+          repository: repo,
+          git,
+          watchDashboard: `http://127.0.0.1:${watchPort}/`,
+          coordinatorReadOnly
+        },
+        ...compactAdvanceResult(firstAdvance)
       });
     }
     return textResult(`${text}\n\nAutomatic first-stage execution disabled. Required next action: call aiteam_advance.`, startedContent);
@@ -328,10 +425,7 @@ export async function callTool(name, args) {
         model: args.model || null,
         coordinatorContext: args.context || ''
       });
-      return textResult(advanceResultText(result), {
-        ...result,
-        coordinatorDirective: coordinatorDirective(result.session)
-      });
+      return textResult(advanceResultText(result), compactAdvanceResult(result));
     } catch (error) {
       const session = readSession(repo);
       const workflow = workflowStatus(session, repo);
@@ -343,7 +437,7 @@ export async function callTool(name, args) {
         '',
         'Required action: Review the error, provide guidance if needed, and call aiteam_advance to retry.'
       ].join('\n');
-      return textResult(text, { session, workflow, error: error.message, coordinatorDirective: coordinatorDirective(session) });
+      return textResult(text, compactAdvanceError(error, session, workflow));
     }
   }
   if (name === 'aiteam_spawn_agent') {
@@ -354,10 +448,7 @@ export async function callTool(name, args) {
       coordinatorContext: [args.task || '', args.context || ''].filter(Boolean).join('\n\n'),
       expectedAgentId: args.agent_id
     });
-    return textResult(advanceResultText(result), {
-      ...result,
-      coordinatorDirective: coordinatorDirective(result.session)
-    });
+    return textResult(advanceResultText(result), compactAdvanceResult(result));
   }
   if (name === 'aiteam_register_specialist') {
     const session = readSession(repo);

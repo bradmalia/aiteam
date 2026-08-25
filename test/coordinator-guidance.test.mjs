@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { advanceResultText, callTool, getWatchPort, toolDefs } from '../src/server.mjs';
+import { advanceResultText, callTool, compactAdvanceResult, getWatchPort, toolDefs } from '../src/server.mjs';
 
 function createRepository() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-guidance-'));
@@ -93,6 +93,91 @@ test('resumable advance results require another advance in the same turn', () =>
   assert.match(text, /MANDATORY SAME-TURN ACTION/);
   assert.match(text, /call aiteam_advance immediately/);
   assert.match(text, /Do not end your turn after this update/);
+});
+
+test('advance structured content is compact without losing routing or failure evidence', () => {
+  const hugeSessionData = 'x'.repeat(100_000);
+  const session = {
+    id: 'session-1',
+    status: 'ACTIVE',
+    currentStage: 'implementation',
+    currentTaskId: 'task-1',
+    watchPort: 12345,
+    stageEvidence: { architecture: hugeSessionData },
+    taskLedger: [{ id: 'task-1', description: hugeSessionData }],
+    pendingUserInput: null
+  };
+  const compact = compactAdvanceResult({
+    assignment: {
+      stage: 'code-review',
+      phase: 'Code Review',
+      agentId: 'code-reviewer',
+      role: 'Code Reviewer',
+      task: hugeSessionData,
+      context: hugeSessionData,
+      session: { ...session, currentStage: 'code-review' }
+    },
+    result: {
+      outcome: 'FAIL',
+      summary: 'Runtime validation failed.',
+      evidence: ['Observed a browser startup error.'],
+      findings: [{ id: 'startup', severity: 'MAJOR', location: 'page', impact: 'Page cannot load.', recommendation: 'Repair startup.' }],
+      checks: [{ name: 'Startup', status: 'FAIL', expected: 'Page loads.', actual: 'ReferenceError.', evidence: 'pageerror event' }],
+      automationAttempts: [{ command: 'node smoke.mjs', result: 'ReferenceError', covers: ['Startup'], fallbackReason: 'None' }]
+    },
+    run: { runId: 'run-1', completedAt: '2026-08-25T04:00:00.000Z', stdout: hugeSessionData, stderr: hugeSessionData },
+    session,
+    workflow: {
+      status: 'ACTIVE',
+      stage: 'implementation',
+      phase: 'Implementation',
+      agentId: 'frontend-js-dev',
+      agentRole: 'Frontend Developer',
+      currentTaskId: 'task-1',
+      remainingPhases: ['Code Review', 'QA']
+    }
+  });
+
+  assert.equal(compact.completed.runId, 'run-1');
+  assert.equal(compact.completed.findings[0].id, 'startup');
+  assert.equal(compact.completed.checks[0].actual, 'ReferenceError.');
+  assert.equal(compact.completed.automationAttempts[0].command, 'node smoke.mjs');
+  assert.equal(compact.nextAssignment.agentId, 'frontend-js-dev');
+  assert.equal(compact.requiredAction.tool, 'aiteam_advance');
+  assert.equal(compact.workflow.watchDashboard, 'http://127.0.0.1:12345/');
+  assert.ok(JSON.stringify(compact).length < 10_000);
+  assert.ok(!Object.hasOwn(compact, 'session'));
+  assert.ok(!Object.hasOwn(compact, 'run'));
+  assert.ok(!Object.hasOwn(compact, 'assignment'));
+});
+
+test('compact advance content preserves exact human questions and artifact links', () => {
+  const session = {
+    id: 'session-2',
+    status: 'ACTIVE',
+    currentStage: 'trd-review',
+    currentTaskId: null,
+    pendingUserInput: {
+      kind: 'trd-review',
+      stage: 'trd-review',
+      questions: ['Open http://127.0.0.1:12345/artifacts/trd.html', 'Reply exactly "approved".'],
+      artifact: { url: 'http://127.0.0.1:12345/artifacts/trd.html', fileUrl: 'file:///tmp/trd.html' },
+      requestedAt: '2026-08-25T04:00:00.000Z',
+      response: null
+    }
+  };
+  const compact = compactAdvanceResult({
+    assignment: { stage: 'critical-review', phase: 'Critical Review', agentId: 'critical-reviewer', role: 'Critical Reviewer', session },
+    result: { outcome: 'PASS', summary: 'Review passed.', evidence: ['Reviewed plan.'] },
+    run: { runId: 'run-2', completedAt: '2026-08-25T04:00:00.000Z' },
+    session,
+    workflow: { status: 'ACTIVE', stage: 'trd-review', phase: 'TRD Review', remainingPhases: ['Implementation'] }
+  });
+
+  assert.deepEqual(compact.pendingUserInput.questions, session.pendingUserInput.questions);
+  assert.equal(compact.pendingUserInput.artifact.url, session.pendingUserInput.artifact.url);
+  assert.equal(compact.nextAssignment, null);
+  assert.equal(compact.requiredAction.tool, 'aiteam_update_session');
 });
 
 test('start auto-runs the first specialist and status exposes the next gate', async () => {
