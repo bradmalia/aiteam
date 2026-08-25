@@ -190,7 +190,7 @@ test('start auto-runs the first specialist and status exposes the next gate', as
   assert.match(startText, /Do not wait, sleep, repeatedly poll/);
   assert.match(startText, /REQUIRED USER-VISIBLE PHASE REPORTING/);
   assert.match(startText, /AITEAM \| Agent: <role> \(<agent_id>\) \| Phase:/);
-  assert.match(startText, /Intake -> PRD Review -> Architecture -> optional UI\/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA Execution -> Integration/);
+  assert.match(startText, /Intake -> PRD Review -> Architecture -> optional UI\/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Environment Readiness -> Implementation -> Code Review -> QA Execution -> Integration/);
   assert.match(startText, /AITEAM advances synchronously/);
   assert.match(startText, /progress update is never a stopping point/i);
   assert.match(startText, /same assistant turn/i);

@@ -5,6 +5,7 @@ Create the pre-implementation black-box test plan that will become part of the h
 ## Ownership
 - Planner owns implementation task scope, dependencies, and acceptance criteria. You own the final test plan.
 - Produce exactly one `taskTestPlans` entry for every planned implementation task and use its exact task ID.
+- Return `requiredCapabilities` for the observable test interfaces used by the plan. Each entry needs a stable lowercase `id`, its `purpose`, `acceptableTools` or equivalent alternatives, and a functional `verification`. Describe a capability such as browser automation, HTTP access, CLI execution, database access, screen capture, or audio observation rather than requiring one framework unless the approved contract truly requires it.
 - Do not change implementation scope or acceptance criteria. If a task is too vague to test, return `FAIL` and explain the missing observable contract so Planning can repair it.
 
 ## Test Design Rules
@@ -15,6 +16,7 @@ Create the pre-implementation black-box test plan that will become part of the h
 - Use public behavior only: UI interaction, browser/runtime output, API/HTTP responses, CLI output, generated artifacts, accessibility behavior, or other externally observable effects.
 - Never prescribe Playwright or any single framework when another black-box method may be stronger. Describe the evidence needed; execution QA chooses suitable tools.
 - Never use source inspection, paths with line numbers, function names, formulas, root-cause claims, implementation instructions, or repair guidance.
+- Do not probe or install tools during QA Planning. Environment Readiness performs those checks after the human approves the TRD.
 - Identify tests that should become cross-task regression obligations in `regressionStrategy`.
 - Use `coverageNotes` to explain important requirement, architecture, and UI/UX coverage decisions in plain language.
 

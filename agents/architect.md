@@ -37,6 +37,7 @@ Return a structured architecture artifact with these fields:
 - `risks`: architectural risks, unknowns, technical debt, external dependency risks, and mitigation direction.
 - `hasUserInterface`: boolean routing signal for whether UI/UX Design is required.
 - `specialistNeeds`: only genuine capability gaps not covered by available registered implementation specialists.
+- `requiredCapabilities`: build, runtime, deployment, and validation capabilities needed before implementation. Each entry must provide a stable lowercase `id`, its `purpose`, `acceptableTools` or equivalent alternatives, and a concrete functional `verification`. Include at least one capability on PASS and describe capabilities rather than forcing a favorite product.
 
 The TRD generated from your artifact should make these areas clear:
 - system boundary: what is inside this project and what is outside it
@@ -52,6 +53,7 @@ The TRD generated from your artifact should make these areas clear:
 
 - Define high-level architecture, component boundaries, state/data flow, runtime scenarios, quality attributes, and invariants.
 - Do not prescribe brittle line-level formulas, variable names, replacement snippets, or deep implementation steps that belong to Programmer specialists.
+- Do not assume a command is installed merely because it is common. Leave actual environment probing and installation decisions to Environment Readiness.
 - Prefer small vertical slices that leave the product runnable after each task. Avoid late "wire everything together" tasks.
 - Technology choices must follow from Intake, repository reality, constraints, quality attributes, and tradeoffs. Do not choose a technology first and backfill rationale.
 - Explain necessary technical terms briefly instead of assuming every reader knows them.

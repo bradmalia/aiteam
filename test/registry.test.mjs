@@ -17,7 +17,7 @@ const provenance = { source: 'recruiter', runId: 'run-1', proposalId: 'proposal-
 test('registry includes core roles and specialists', () => {
   const registry = loadRegistry();
   const ids = new Set(registry.agents.map((a) => a.id));
-  for (const id of ['analyst','architect','planner','qa-planner','critical-reviewer','recruiter','code-reviewer','qa','maintainer','godot-gdscript','oracle-plsql','sqlserver-tsql']) {
+  for (const id of ['analyst','architect','planner','qa-planner','critical-reviewer','environment-readiness','recruiter','code-reviewer','qa','maintainer','godot-gdscript','oracle-plsql','sqlserver-tsql']) {
     assert.ok(ids.has(id), `missing ${id}`);
   }
 });
@@ -60,6 +60,21 @@ test('QA Test Planner owns pre-implementation coverage without executing tests',
   assert.match(prompt, /exactly one `taskTestPlans` entry/);
   assert.match(prompt, /union of `covers`.*every acceptance criterion exactly as written/);
   assert.match(prompt, /Do not run the application, inspect source code, modify files/);
+  assert.match(prompt, /requiredCapabilities/);
+  assert.match(prompt, /rather than requiring one framework/);
+});
+
+test('Environment Readiness verifies capabilities and hands unsafe installation to the human', () => {
+  const agent = getAgent('environment-readiness');
+  const prompt = buildAgentPrompt(agent, 'Verify approved capabilities', '{"pendingUserInput":{"response":"installed"}}', 'environment-readiness');
+  assert.equal(agent.sandbox, 'workspace-write');
+  assert.match(prompt, /do not trust the statement as proof/i);
+  assert.match(prompt, /actual browser can start and close/i);
+  assert.match(prompt, /create, read, syntax-check where applicable, and delete round trip/i);
+  assert.match(prompt, /Never run `sudo`/);
+  assert.match(prompt, /AWAITING_USER/);
+  assert.match(prompt, /FINAL ENVIRONMENT READINESS ORDER/);
+  assert.ok(prompt.indexOf('FINAL ENVIRONMENT READINESS ORDER') > prompt.indexOf('Coordinator Context'));
 });
 
 test('shared and coordinator contracts preserve orchestration discipline', () => {
@@ -70,11 +85,14 @@ test('shared and coordinator contracts preserve orchestration discipline', () =>
   assert.match(base, /security, data integrity, accessibility, and destructive operations/);
   assert.match(base, /If task wording contains an internal conflict/);
   assert.match(base, /prioritize the user-visible acceptance criteria/);
-  assert.match(base, /short repo-local smoke script/);
+  assert.match(base, /Run an existing runtime test or recorded validation command first/);
   assert.match(base, /pageerror` and console-error listeners/);
+  assert.match(base, /QA is NOT required to create or edit a file before testing/);
+  assert.match(base, /environmentProfile/);
   assert.match(coordinator, /Coordinate the workflow; do not manage the work/);
   assert.match(coordinator, /Do not diagnose specialist failures from memory or speculation/);
   assert.match(coordinator, /Report only what AITEAM returned/);
+  assert.match(coordinator, /Environment Readiness/);
 });
 
 test('code reviewer contract requires source review checklist without replacing QA', () => {
@@ -106,6 +124,14 @@ test('QA contract requires owned local test ports in manual checks', () => {
   assert.match(prompt, /strongest available black-box method/);
   assert.match(prompt, /No particular framework is mandatory/);
   assert.match(prompt, /BLOCKED` is reserved for a concrete external limitation/);
+  assert.match(prompt, /run the existing test runners and each applicable command already recorded in `currentTask\.validations`/);
+  assert.match(prompt, /failed compound discovery command is not proof that a tool is unavailable/);
+  assert.match(prompt, /Do not use `which browser-a browser-b && check-package`/);
+  assert.match(prompt, /Never use `pip --break-system-packages`/);
+  assert.match(prompt, /do not nest `bash -lc`, `python -c`, base64 generation, long `echo` chains/);
+  assert.match(prompt, /After two failed attempts to write or parse a helper/);
+  assert.match(prompt, /FINAL QA EXECUTION ORDER/);
+  assert.ok(prompt.lastIndexOf('FINAL QA EXECUTION ORDER') > prompt.lastIndexOf('# Coordinator Context'));
   assert.doesNotMatch(prompt, /first try Playwright/);
 });
 

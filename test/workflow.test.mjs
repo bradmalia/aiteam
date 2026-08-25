@@ -56,7 +56,8 @@ function result(outcome, extra = {}) {
         deploymentView: ['Run in the repository-supported local/runtime environment.'],
         crossCuttingConcepts: ['Use existing project conventions for error handling, validation, and tests.'],
         architectureDecisions: [{ decision: 'Use existing project conventions.', optionsConsidered: ['Existing conventions', 'Introduce new architecture'], rationale: 'Minimizes scope and risk.', consequences: ['Implementation remains narrow and compatible.'] }],
-        risks: ['No material architectural risks identified.']
+        risks: ['No material architectural risks identified.'],
+        requiredCapabilities: [{ id: 'project-runtime', purpose: 'Run and validate the delivered behavior.', acceptableTools: ['repository runtime', 'equivalent compatible runtime'], verification: 'Execute the public entry point and observe a successful result.' }]
       }
     : {};
   const uiDefaults = Object.hasOwn(extra, 'theme') || Object.hasOwn(extra, 'screens') || Object.hasOwn(extra, 'designTokens')
@@ -74,7 +75,10 @@ function result(outcome, extra = {}) {
         evaluationCriteria: ['The specialist must preserve scope, use authoritative documentation, and run relevant validation.']
       }
     : {};
-  return JSON.stringify({ outcome, summary: `${outcome} result`, ...intakeDefaults, ...architectureDefaults, ...uiDefaults, ...recruitingDefaults, ...extra, evidence });
+  const qaPlanningDefaults = Object.hasOwn(extra, 'taskTestPlans')
+    ? { requiredCapabilities: [{ id: 'black-box-runner', purpose: 'Execute the planned public-interface checks.', acceptableTools: ['existing project test runner', 'equivalent public-interface harness'], verification: 'Run one planned test through the public interface and capture its observable result.' }] }
+    : {};
+  return JSON.stringify({ outcome, summary: `${outcome} result`, ...intakeDefaults, ...architectureDefaults, ...uiDefaults, ...recruitingDefaults, ...qaPlanningDefaults, ...extra, evidence });
 }
 
 function queuedRunner(repo, outputs) {
@@ -103,6 +107,54 @@ function queuedRunner(repo, outputs) {
           taskTestPlans,
           regressionStrategy: ['Retain each approved test name as a later execution and regression obligation.'],
           coverageNotes: ['Every exact task acceptance criterion is covered by the QA-authored plan.']
+        }),
+        stderr: '',
+        stdoutPath: '',
+        stderrPath: '',
+        metaPath: ''
+      };
+    }
+    if (agentId === 'environment-readiness' && outputs[index]?.agentId !== 'environment-readiness') {
+      const parsedContext = JSON.parse(context);
+      const planned = [
+        ...(parsedContext.requiredCapabilities?.architecture || []).map((capability) => ({ ...capability, requiredBy: ['architecture'] })),
+        ...(parsedContext.requiredCapabilities?.qa || []).map((capability) => ({ ...capability, requiredBy: ['qa-planning'] }))
+      ];
+      const merged = [...planned.reduce((byId, capability) => {
+        const existing = byId.get(capability.id);
+        byId.set(capability.id, existing
+          ? { ...existing, requiredBy: [...new Set([...existing.requiredBy, ...capability.requiredBy])] }
+          : capability);
+        return byId;
+      }, new Map()).values()];
+      return {
+        runId: `run-environment-readiness-${index}`,
+        agentId,
+        role: agentId,
+        exitCode: 0,
+        timedOut: false,
+        completedAt: new Date().toISOString(),
+        stdout: result('PASS', {
+          capabilities: merged.map((capability) => ({
+            id: capability.id,
+            requiredBy: capability.requiredBy,
+            selectedTool: capability.acceptableTools[0],
+            probeCommand: capability.verification,
+            status: 'VERIFIED',
+            version: 'test-version',
+            executablePath: '/test/tool',
+            evidence: 'Functional readiness probe passed.'
+          })),
+          fileOperations: {
+            workspaceWriteVerified: true,
+            tempDirectory: '.aiteam-readiness-probe',
+            writeMethod: 'literal quoted heredoc',
+            syntaxCheckVerified: true,
+            syntaxCheckCommand: 'test syntax check',
+            evidence: 'Create, read, syntax-check, and delete round trip passed.'
+          },
+          missingTools: [],
+          questions: []
         }),
         stderr: '',
         stdoutPath: '',
@@ -143,9 +195,13 @@ function latestAdvisory(repo) {
 async function advanceWithHumanApprovals(args) {
   let result = await advanceWorkflow(args);
   if (result.session.currentStage === 'qa-planning') result = await advanceWorkflow(args);
-  const session = readSession(args.repo);
+  let session = readSession(args.repo);
   if (['prd-review', 'trd-review'].includes(session?.pendingUserInput?.kind) && session.pendingUserInput.response == null) {
     await callTool('aiteam_update_session', { repository: args.repo, patch: { pendingUserInput: 'approved' } });
+    session = readSession(args.repo);
+  }
+  if (session?.currentStage === 'environment-readiness' && !session.pendingUserInput) {
+    result = await advanceWorkflow(args);
   }
   return result;
 }
@@ -350,7 +406,126 @@ test('PRD and TRD human review gates generate HTML artifacts and route feedback'
   session = readSession(repo);
   assert.equal(session.currentStage, 'trd-review');
   await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'approved' } });
-  assert.equal(readSession(repo).currentStage, 'implementation');
+  assert.equal(readSession(repo).currentStage, 'environment-readiness');
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  session = readSession(repo);
+  assert.equal(session.currentStage, 'implementation');
+  assert.ok(session.completedStages.includes('environment-readiness'));
+  assert.equal(session.environmentProfile.capabilities[0].status, 'VERIFIED');
+});
+
+test('Environment Readiness pauses for human installation and re-verifies before implementation', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build a browser utility');
+  const architectureCapability = { id: 'project-runtime', purpose: 'Run the product.', acceptableTools: ['node'], verification: 'Run the public entry point.' };
+  const qaCapability = { id: 'browser-black-box', purpose: 'Exercise browser behavior.', acceptableTools: ['Playwright', 'equivalent browser runner'], verification: 'Launch a browser, load a page, and close without errors.' };
+  writeSession(repo, {
+    ...session,
+    currentStage: 'environment-readiness',
+    completedStages: ['intake', 'prd-review', 'architecture', 'planning', 'qa-planning', 'critical-review', 'trd-review'],
+    stageEvidence: {
+      intake: { result: { userConfirmed: true } },
+      architecture: { result: { requiredCapabilities: [architectureCapability] } },
+      'qa-planning': { result: { requiredCapabilities: [qaCapability] } }
+    },
+    taskLedger: [{ id: 'feature-task', title: 'Feature', description: 'Implement feature', specialistId: 'python', acceptanceCriteria: ['Works'], dependencies: [], blackBoxTestPlan: [], status: 'planned', filesChanged: [], validations: [] }]
+  });
+  const falseFileOperations = {
+    workspaceWriteVerified: false,
+    tempDirectory: '.aiteam-readiness-probe',
+    writeMethod: 'literal quoted heredoc',
+    syntaxCheckVerified: false,
+    syntaxCheckCommand: 'python -m py_compile probe.py',
+    evidence: 'Write probe was deferred until the required runtime is available.'
+  };
+  const verifiedFileOperations = {
+    workspaceWriteVerified: true,
+    tempDirectory: '.aiteam-readiness-probe',
+    writeMethod: 'literal quoted heredoc',
+    syntaxCheckVerified: true,
+    syntaxCheckCommand: 'python -m py_compile probe.py',
+    evidence: 'Create, read, syntax-check, and delete round trip passed.'
+  };
+  const runner = queuedRunner(repo, [
+    {
+      agentId: 'environment-readiness',
+      stdout: result('AWAITING_USER', {
+        capabilities: [],
+        fileOperations: falseFileOperations,
+        missingTools: [{
+          tool: 'Playwright or equivalent browser runner',
+          capability: 'browser-black-box',
+          whyNeeded: 'The approved QA plan requires browser startup and interaction.',
+          detectedProblem: 'Direct browser-runner probes found no working automation interface.',
+          alternativesTried: ['Python Playwright import failed', 'No compatible existing browser runner passed startup'],
+          installInstructions: ['Install a supported browser automation package using the host-approved package manager'],
+          verificationCommand: 'python3 -c "from playwright.sync_api import sync_playwright; print(sync_playwright)"',
+          requiresHuman: true
+        }],
+        questions: ['Install a browser automation tool and reply when complete.']
+      })
+    },
+    {
+      agentId: 'environment-readiness',
+      stdout: result('PASS', {
+        capabilities: [
+          { id: 'project-runtime', requiredBy: ['architecture'], selectedTool: 'node', probeCommand: 'node --version', status: 'VERIFIED', version: '22.0.0', executablePath: '/usr/bin/node', evidence: 'Runtime probe passed.' },
+          { id: 'browser-black-box', requiredBy: ['qa-planning'], selectedTool: 'Playwright with system Chrome', probeCommand: 'python3 browser_probe.py', status: 'VERIFIED', version: '1.60.0', executablePath: '/usr/bin/google-chrome', evidence: 'Browser launched, loaded a page, and closed without errors.' }
+        ],
+        fileOperations: verifiedFileOperations,
+        missingTools: [],
+        questions: []
+      })
+    }
+  ]);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  let pending = readSession(repo);
+  assert.equal(pending.currentStage, 'environment-readiness');
+  assert.equal(pending.pendingUserInput.kind, 'environment-install');
+  assert.match(pending.pendingUserInput.questions[0], /Why it is needed:/);
+  assert.match(pending.pendingUserInput.questions[0], /AITEAM will verify with:/);
+
+  await callTool('aiteam_update_session', { repository: repo, patch: { pendingUserInput: 'Installed Playwright for Python.' } });
+  pending = readSession(repo);
+  assert.equal(pending.currentStage, 'environment-readiness');
+  assert.match(pending.pendingUserInput.response, /Installed Playwright/);
+
+  await advanceWorkflow({ repo, runner, timeoutSeconds: 300 });
+  const ready = readSession(repo);
+  assert.equal(ready.currentStage, 'implementation');
+  assert.ok(ready.completedStages.includes('environment-readiness'));
+  assert.equal(ready.environmentProfile.capabilities[1].selectedTool, 'Playwright with system Chrome');
+  const implementationContext = JSON.parse(getCurrentAssignment(repo).context);
+  assert.equal(implementationContext.environmentProfile.capabilities[1].status, 'VERIFIED');
+});
+
+test('Environment Readiness cannot pass while omitting an approved capability', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build a browser utility');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'environment-readiness',
+    stageEvidence: {
+      intake: { result: { userConfirmed: true } },
+      architecture: { result: { requiredCapabilities: [{ id: 'project-runtime' }] } },
+      'qa-planning': { result: { requiredCapabilities: [{ id: 'browser-black-box' }] } }
+    }
+  });
+  const runner = queuedRunner(repo, [{
+    agentId: 'environment-readiness',
+    stdout: result('PASS', {
+      capabilities: [{ id: 'project-runtime', requiredBy: ['architecture'], selectedTool: 'node', probeCommand: 'node --version', status: 'VERIFIED', version: '22', executablePath: '/usr/bin/node', evidence: 'Passed.' }],
+      fileOperations: { workspaceWriteVerified: true, tempDirectory: '.aiteam-readiness-probe', writeMethod: 'heredoc', syntaxCheckVerified: true, syntaxCheckCommand: 'node --check probe.js', evidence: 'Round trip passed.' },
+      missingTools: [],
+      questions: []
+    })
+  }]);
+  await assert.rejects(
+    advanceWorkflow({ repo, runner, timeoutSeconds: 300 }),
+    /missing approved capability verification for: browser-black-box/
+  );
+  assert.equal(readSession(repo).currentStage, 'environment-readiness');
 });
 
 test('review failure routes the same task back to implementation', async () => {
@@ -1752,9 +1927,12 @@ test('implementation specialist prompt contains chunked-write instructions (here
   const prompt = buildAgentPrompt(agent, task, context, 'implementation');
 
   // Must instruct chunked writing with append (>>) mode
-  assert.ok(prompt.includes('AITEAM_EOF'), 'prompt must reference AITEAM_EOF heredoc marker');
+  assert.ok(prompt.includes("<<'AITEAM_EOF'"), 'prompt must require a literal quoted AITEAM_EOF heredoc marker');
   assert.ok(prompt.includes('>>'), 'prompt must include append (>>) mode for subsequent chunks');
   assert.ok(prompt.includes('wc -l'), 'prompt must instruct verification with wc -l after chunked write');
+  assert.match(prompt, /language syntax checker\/compiler/);
+  assert.match(prompt, /Do not search for unavailable editing tools/);
+  assert.match(prompt, /nested `bash -lc`, `python -c`, base64, long echo chains/);
   assert.match(prompt, /reviewArtifacts\.prd/);
   assert.match(prompt, /reviewArtifacts\.trd/);
   assert.match(prompt, /source-of-truth/);

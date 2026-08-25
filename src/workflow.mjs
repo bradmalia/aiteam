@@ -17,6 +17,7 @@ const STAGE_LABELS = {
   'qa-planning': 'QA Test Planning',
   'critical-review': 'Critical Review',
   'trd-review': 'TRD Review',
+  'environment-readiness': 'Environment Readiness',
   implementation: 'Implementation',
   'code-review': 'Code Review',
   qa: 'QA',
@@ -31,6 +32,7 @@ const FIXED_AGENTS = {
   planning: 'planner',
   'qa-planning': 'qa-planner',
   'critical-review': 'critical-reviewer',
+  'environment-readiness': 'environment-readiness',
   'code-review': 'code-reviewer',
   qa: 'qa',
   integration: 'maintainer'
@@ -50,7 +52,7 @@ const STAGE_SCHEMAS = {
 For Intake, "outcome" may also be "AWAITING_USER". Also return "goals", "targetUsers", "userStories", "requirements", "acceptanceCriteria", "mvpScope", "outOfScope", "assumptions", "constraints", "nonFunctionalRequirements", "successMetrics", "risks", and "questions" as string arrays, plus boolean "userConfirmed".
 Use AWAITING_USER only while a concrete material clarification remains unresolved: include non-empty questions and set userConfirmed to false. For compatibility, userConfirmed true means the requirements are grounded in the original request or direct user answers and no material question remains; it does not mean the user approved the complete document. After all pending questions are answered, incorporate the answers and use PASS unless an answer creates a new material ambiguity. Do not ask for generic final confirmation of the requirements; the subsequent PRD Review is the sole full-document approval gate. Use PASS only when questions is empty, requirements are complete, and userConfirmed is true. On PASS, goals, targetUsers, userStories, requirements, acceptanceCriteria, mvpScope, and successMetrics must be non-empty. Capture unknowns as assumptions/risks instead of silently dropping them.`,
   architecture: `${COMMON_SCHEMA}
-Also return "design", "context", "constraints", "solutionStrategy", "deploymentView", "crossCuttingConcepts", and "risks" as non-empty string arrays; "qualityAttributes" as non-empty array of {"name","scenario","measure"}; "buildingBlocks" as non-empty array of {"name","responsibility","interfaces"}; "runtimeScenarios" as non-empty array of {"name","trigger","flow"}; "architectureDecisions" as non-empty array of {"decision","optionsConsidered","rationale","consequences"}; "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI); and "specialistNeeds" (array of {"capability","reason","suggestedId"}). Use an empty specialistNeeds array when the registry covers the work. Derive technology choices from Intake, repository reality, constraints, quality attributes, and tradeoffs; do not choose technology first and backfill rationale.`,
+Also return "design", "context", "constraints", "solutionStrategy", "deploymentView", "crossCuttingConcepts", and "risks" as non-empty string arrays; "qualityAttributes" as non-empty array of {"name","scenario","measure"}; "buildingBlocks" as non-empty array of {"name","responsibility","interfaces"}; "runtimeScenarios" as non-empty array of {"name","trigger","flow"}; "architectureDecisions" as non-empty array of {"decision","optionsConsidered","rationale","consequences"}; "hasUserInterface" (boolean: true if the project has user-facing visual frontend/UI/screens, false if purely headless backend/API/CLI); "specialistNeeds" (array of {"capability","reason","suggestedId"}); and non-empty "requiredCapabilities" (array of {"id","purpose","acceptableTools","verification"}). Use an empty specialistNeeds array when the registry covers the work. Capability IDs must be stable lowercase identifiers, acceptableTools must offer reasonable alternatives when possible, and verification must describe a functional probe. Derive technology choices from Intake, repository reality, constraints, quality attributes, and tradeoffs; do not choose technology first and backfill rationale.`,
   'ui-design': `${COMMON_SCHEMA}
 Also return "userFlows" (array of {"name","actor","goal","steps"}), "usabilityRisks" (string array), "accessibilityHeuristics" (string array), "validationHypotheses" (array of {"hypothesis","validationMethod","successSignal"}), "theme" ({"palette": string array, "typography": string array, "spacing": string array}), "screens" (array of {"name": string, "layout": string, "components": string array, "interactionStates": string array}), and "designTokens" (string array). All collections must be non-empty on PASS. Produce UX analysis plus concrete visual specifications aligned with the chosen architecture.`,
   recruiting: `${COMMON_SCHEMA}
@@ -58,9 +60,11 @@ Also return "gapJustification", "existingSpecialistAssessment", and "evaluationC
   planning: `${COMMON_SCHEMA}
 Also return "tasks", a non-empty array of {"id","title","description","specialistId","acceptanceCriteria","dependencies"}. IDs must be unique lowercase identifiers; acceptanceCriteria and dependencies are arrays. specialistId must name an available registered implementation specialist. Each task MUST be strictly isolated and narrow. Do not create the test plan; the next QA Test Planning stage owns black-box and regression test design.`,
   'qa-planning': `${COMMON_SCHEMA}
-For QA Test Planning, design tests only; do not execute tests, inspect implementation source, modify files, or provide fix guidance. Return "taskTestPlans", a non-empty array containing exactly one {"taskId","tests"} entry per planned implementation task. Each tests array must be non-empty and contain {"name","covers","action","expected","evidenceMethod"}; covers is a non-empty string array and must collectively include every exact acceptance criterion for that task. Also return non-empty string arrays "regressionStrategy" and "coverageNotes". Include relevant PRD requirements, architecture scenarios/quality measures, and UI/UX flows, accessibility rules, and validation hypotheses in covers when applicable.`,
+For QA Test Planning, design tests only; do not execute tests, inspect implementation source, modify files, or provide fix guidance. Return "taskTestPlans", a non-empty array containing exactly one {"taskId","tests"} entry per planned implementation task. Each tests array must be non-empty and contain {"name","covers","action","expected","evidenceMethod"}; covers is a non-empty string array and must collectively include every exact acceptance criterion for that task. Also return non-empty string arrays "regressionStrategy" and "coverageNotes", plus non-empty "requiredCapabilities" as {"id","purpose","acceptableTools","verification"}. Capabilities describe observable interfaces and acceptable alternatives, not a mandatory favorite framework. Include relevant PRD requirements, architecture scenarios/quality measures, and UI/UX flows, accessibility rules, and validation hypotheses in covers when applicable.`,
   'critical-review': `${COMMON_SCHEMA}
 Also return "findings" as an array of {"id","severity","description","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. Always return "repairStage". If any BLOCKER or MAJOR remains, outcome must be FAIL and repairStage must be "architecture", "planning", or "qa-planning". Route test-plan-only repairs to "qa-planning". If outcome is PASS, repairStage must be "none".`,
+  'environment-readiness': `${COMMON_SCHEMA}
+For Environment Readiness, "outcome" may also be "AWAITING_USER". Return "capabilities" as an array of {"id","requiredBy","selectedTool","probeCommand","status","version","executablePath","evidence"}; "fileOperations" as {"workspaceWriteVerified","tempDirectory","writeMethod","syntaxCheckVerified","syntaxCheckCommand","evidence"}; "missingTools" as an array of {"tool","capability","whyNeeded","detectedProblem","alternativesTried","installInstructions","verificationCommand","requiresHuman"}; and "questions" as a string array. On PASS, capabilities must be non-empty and all have status VERIFIED, fileOperations verification booleans must be true, and missingTools/questions must be empty. Use AWAITING_USER only when a required capability cannot be prepared safely without human installation; missingTools and questions must then be non-empty. Never modify product source, product manifests, or lockfiles.`,
   implementation: `${COMMON_SCHEMA}
 For Implementation, you MUST return outcome "PASS" with a NON-EMPTY "filesChanged" array. Never return outcome "FAIL" for your own implementation task.
 
@@ -91,6 +95,25 @@ function stringArray(value, name, { nonEmpty = false } = {}) {
   }
   if (nonEmpty && value.length === 0) throw new Error(`${name} must not be empty.`);
   return value.map((item) => item.trim());
+}
+
+function normalizeRequiredCapabilities(value, name, { nonEmpty = false } = {}) {
+  if (!Array.isArray(value) || (nonEmpty && value.length === 0)) {
+    throw new Error(`${name} must be ${nonEmpty ? 'a non-empty' : 'an'} array.`);
+  }
+  const ids = new Set();
+  return value.map((capability, index) => {
+    const id = nonEmptyString(capability?.id, `${name}[${index}].id`);
+    if (!/^[a-z][a-z0-9-]{1,63}$/.test(id)) throw new Error(`${name}[${index}].id must be a lowercase capability identifier.`);
+    if (ids.has(id)) throw new Error(`Duplicate capability id in ${name}: ${id}`);
+    ids.add(id);
+    return {
+      id,
+      purpose: nonEmptyString(capability?.purpose, `${name}[${index}].purpose`),
+      acceptableTools: stringArray(capability?.acceptableTools, `${name}[${index}].acceptableTools`, { nonEmpty: true }),
+      verification: nonEmptyString(capability?.verification, `${name}[${index}].verification`)
+    };
+  });
 }
 
 function parseJson(stdout) {
@@ -172,7 +195,11 @@ function isRedundantIntakeApprovalQuestion(question) {
 export function parseStageResult(stage, stdout) {
   const result = parseJson(stdout);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error('Specialist result must be one JSON object.');
-  const allowed = stage === 'qa' ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION'] : stage === 'intake' ? ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER'] : ['PASS', 'FAIL', 'BLOCKED'];
+  const allowed = stage === 'qa'
+    ? ['PASS', 'FAIL', 'BLOCKED', 'PASS_WITH_MANUAL_VALIDATION']
+    : ['intake', 'environment-readiness'].includes(stage)
+      ? ['PASS', 'FAIL', 'BLOCKED', 'AWAITING_USER']
+      : ['PASS', 'FAIL', 'BLOCKED'];
   if (!allowed.includes(result.outcome)) throw new Error(`${stage} outcome must be one of: ${allowed.join(', ')}.`);
   result.summary = nonEmptyString(result.summary, 'summary');
   if (stage === 'implementation' && (!result.evidence || !Array.isArray(result.evidence) || result.evidence.length === 0) && Array.isArray(result.validations) && result.validations.length > 0) {
@@ -250,6 +277,7 @@ export function parseStageResult(stage, stdout) {
       reason: nonEmptyString(gap?.reason, `specialistNeeds[${index}].reason`),
       suggestedId: nonEmptyString(gap?.suggestedId, `specialistNeeds[${index}].suggestedId`)
     }));
+    result.requiredCapabilities = normalizeRequiredCapabilities(result.requiredCapabilities || [], 'requiredCapabilities', { nonEmpty: result.outcome === 'PASS' });
   } else if (stage === 'ui-design') {
     if (!Array.isArray(result.userFlows || []) || (result.outcome === 'PASS' && (result.userFlows || []).length === 0)) throw new Error('userFlows must be a non-empty array on PASS.');
     result.userFlows = (result.userFlows || []).map((flow, index) => ({
@@ -354,6 +382,63 @@ export function parseStageResult(stage, stdout) {
     });
     result.regressionStrategy = stringArray(result.regressionStrategy || [], 'regressionStrategy', { nonEmpty: result.outcome === 'PASS' });
     result.coverageNotes = stringArray(result.coverageNotes || [], 'coverageNotes', { nonEmpty: result.outcome === 'PASS' });
+    result.requiredCapabilities = normalizeRequiredCapabilities(result.requiredCapabilities || [], 'requiredCapabilities', { nonEmpty: result.outcome === 'PASS' });
+  } else if (stage === 'environment-readiness') {
+    if (!Array.isArray(result.capabilities || []) || (result.outcome === 'PASS' && result.capabilities.length === 0)) {
+      throw new Error('Environment Readiness capabilities must be a non-empty array on PASS.');
+    }
+    const capabilityIds = new Set();
+    result.capabilities = (result.capabilities || []).map((capability, index) => {
+      const normalized = {
+        id: nonEmptyString(capability?.id, `capabilities[${index}].id`),
+        requiredBy: stringArray(capability?.requiredBy || [], `capabilities[${index}].requiredBy`, { nonEmpty: true }),
+        selectedTool: nonEmptyString(capability?.selectedTool, `capabilities[${index}].selectedTool`),
+        probeCommand: nonEmptyString(capability?.probeCommand, `capabilities[${index}].probeCommand`),
+        status: nonEmptyString(capability?.status, `capabilities[${index}].status`).toUpperCase(),
+        version: typeof capability?.version === 'string' ? capability.version.trim() : '',
+        executablePath: typeof capability?.executablePath === 'string' ? capability.executablePath.trim() : '',
+        evidence: nonEmptyString(capability?.evidence, `capabilities[${index}].evidence`)
+      };
+      if (capabilityIds.has(normalized.id)) throw new Error(`Duplicate Environment Readiness capability: ${normalized.id}.`);
+      capabilityIds.add(normalized.id);
+      return normalized;
+    });
+    if (result.outcome === 'PASS' && result.capabilities.some((capability) => capability.status !== 'VERIFIED')) {
+      throw new Error('Every Environment Readiness capability must have status VERIFIED on PASS.');
+    }
+    const operations = result.fileOperations || {};
+    result.fileOperations = {
+      workspaceWriteVerified: operations.workspaceWriteVerified === true,
+      tempDirectory: nonEmptyString(operations.tempDirectory, 'fileOperations.tempDirectory'),
+      writeMethod: nonEmptyString(operations.writeMethod, 'fileOperations.writeMethod'),
+      syntaxCheckVerified: operations.syntaxCheckVerified === true,
+      syntaxCheckCommand: nonEmptyString(operations.syntaxCheckCommand, 'fileOperations.syntaxCheckCommand'),
+      evidence: nonEmptyString(operations.evidence, 'fileOperations.evidence')
+    };
+    if (result.outcome === 'PASS' && (!result.fileOperations.workspaceWriteVerified || !result.fileOperations.syntaxCheckVerified)) {
+      throw new Error('Environment Readiness PASS requires verified workspace writing and syntax checking.');
+    }
+    if (!Array.isArray(result.missingTools || [])) throw new Error('missingTools must be an array.');
+    result.missingTools = (result.missingTools || []).map((tool, index) => ({
+      tool: nonEmptyString(tool?.tool, `missingTools[${index}].tool`),
+      capability: nonEmptyString(tool?.capability, `missingTools[${index}].capability`),
+      whyNeeded: nonEmptyString(tool?.whyNeeded, `missingTools[${index}].whyNeeded`),
+      detectedProblem: nonEmptyString(tool?.detectedProblem, `missingTools[${index}].detectedProblem`),
+      alternativesTried: stringArray(tool?.alternativesTried || [], `missingTools[${index}].alternativesTried`, { nonEmpty: true }),
+      installInstructions: stringArray(tool?.installInstructions || [], `missingTools[${index}].installInstructions`, { nonEmpty: true }),
+      verificationCommand: nonEmptyString(tool?.verificationCommand, `missingTools[${index}].verificationCommand`),
+      requiresHuman: tool?.requiresHuman === true
+    }));
+    result.questions = stringArray(result.questions || [], 'questions');
+    if (result.outcome === 'AWAITING_USER' && (!result.missingTools.length || !result.questions.length)) {
+      throw new Error('Environment Readiness AWAITING_USER requires non-empty missingTools and questions.');
+    }
+    if (result.outcome === 'AWAITING_USER' && result.missingTools.some((tool) => !tool.requiresHuman)) {
+      throw new Error('Environment Readiness may ask the human only for missing tools marked requiresHuman.');
+    }
+    if (result.outcome === 'PASS' && (result.missingTools.length || result.questions.length)) {
+      throw new Error('Environment Readiness PASS cannot contain missingTools or questions.');
+    }
   } else if (stage === 'critical-review' || stage === 'code-review') {
     if (!Array.isArray(result.findings || [])) throw new Error('findings must be an array.');
     result.findings = (result.findings || []).map((finding, index) => {
@@ -826,6 +911,13 @@ function phasePlanWithQaPlanning(phasePlan) {
   return [...withoutQaPlanning.slice(0, planningIndex + 1), 'qa-planning', ...withoutQaPlanning.slice(planningIndex + 1)];
 }
 
+function phasePlanWithEnvironmentReadiness(phasePlan) {
+  const withoutReadiness = (phasePlan || []).filter((stage) => stage !== 'environment-readiness');
+  const trdIndex = withoutReadiness.indexOf('trd-review');
+  if (trdIndex < 0) return [...withoutReadiness, 'environment-readiness'];
+  return [...withoutReadiness.slice(0, trdIndex + 1), 'environment-readiness', ...withoutReadiness.slice(trdIndex + 1)];
+}
+
 export function workflowStatus(session, repo = null) {
   if (!session) return { active: false, message: 'No active AITEAM session exists.' };
   const stage = session.currentStage;
@@ -935,7 +1027,8 @@ function architecturePromptView(arch) {
     architectureDecisions: arch.architectureDecisions || [],
     risks: arch.risks || [],
     hasUserInterface: arch.hasUserInterface === true,
-    specialistNeeds: arch.specialistNeeds || []
+    specialistNeeds: arch.specialistNeeds || [],
+    requiredCapabilities: arch.requiredCapabilities || []
   };
 }
 
@@ -986,6 +1079,7 @@ function stageContext(session, repo) {
       architectureDesignOverview: arch ? arch.design : null,
       architectureOverview: architecturePromptView(arch),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
+      environmentProfile: session.environmentProfile || null,
       reviewArtifacts: reviewArtifactsPromptView(session),
       pendingUserInput: session.pendingUserInput
     }, null, 2);
@@ -1001,6 +1095,7 @@ function stageContext(session, repo) {
       architecture: architecturePromptView(session.stageEvidence.architecture?.result),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
       qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
+      environmentProfile: session.environmentProfile || null,
       reviewArtifacts: reviewArtifactsPromptView(session),
       plan: session.stageEvidence.planning?.result || null,
       lockedCriticalFindings: session.lockedCriticalFindings,
@@ -1019,6 +1114,11 @@ function stageContext(session, repo) {
     architecture: architecturePromptView(session.stageEvidence.architecture?.result),
     uiDesign: session.stageEvidence['ui-design']?.result || null,
     qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
+    requiredCapabilities: {
+      architecture: session.stageEvidence.architecture?.result?.requiredCapabilities || [],
+      qa: session.stageEvidence['qa-planning']?.result?.requiredCapabilities || []
+    },
+    environmentProfile: session.environmentProfile || null,
     reviewArtifacts: reviewArtifactsPromptView(session),
     plan: session.stageEvidence.planning?.result || null,
     lockedCriticalFindings: session.lockedCriticalFindings,
@@ -1057,6 +1157,7 @@ function assignmentText(stage, session) {
     recruiting: `Create the specialist required for this verified capability gap: ${JSON.stringify(session.recruiterQueue[0])}`,
     planning: 'Create an ordered, dependency-valid implementation task ledger using available specialist IDs, incorporating architectural and UI/UX design specifications.',
     'qa-planning': 'Create the authoritative pre-implementation black-box and regression test plan for every planned task. Cover every exact task acceptance criterion plus relevant PRD, Architecture, and UI/UX obligations. Design tests only; do not execute them, inspect source, modify files, or provide repair instructions.',
+    'environment-readiness': 'Verify every approved architecture and QA capability in the actual workspace before implementation. Prefer existing tools and equivalent alternatives. Prove browser startup when browser capability is required and prove a harmless write/read/syntax-check/delete round trip. Do not modify product source, manifests, or lockfiles. If a required tool needs unsafe or system-level installation, return AWAITING_USER with exact need, observed failure, alternatives tried, installation instructions, and verification command. If the user reported installation, re-run the probes rather than trusting the report.',
     'critical-review': session.lockedCriticalFindings.length
       ? 'VERIFY_REPAIRS only against the locked critical findings. Do not create unrelated findings.'
       : 'Perform the initial COMPREHENSIVE critical review of requirements, architecture, UI/UX design (if present), plan, and QA feasibility.',
@@ -1520,6 +1621,10 @@ export function generateTrd(repo, session) {
   const intake = session.stageEvidence.intake?.result || {};
   const tasks = session.taskLedger?.length ? session.taskLedger : (plan.tasks || []);
   const reqs = intake.requirements || [];
+  const capabilityRows = [
+    ...(arch.requiredCapabilities || []).map((capability) => ({ ...capability, owner: 'Architecture' })),
+    ...(qaPlan.requiredCapabilities || []).map((capability) => ({ ...capability, owner: 'QA Test Planning' }))
+  ];
   const traceRows = tasks.flatMap((task) => (task.acceptanceCriteria || []).map((criterion) => ({ task, criterion })));
   const html = documentShell({
     title: 'Technical Requirements Document',
@@ -1528,11 +1633,11 @@ export function generateTrd(repo, session) {
       <section class="card"><h2>How To Read This</h2><p>This TRD explains how the team plans to build and test the approved product. Please review the architecture, implementation plan, and testing plan. If the plan does not match what you approved in the PRD, describe the change you want instead of approving.</p></section>
       <h2>Document Basics</h2><div class="table-wrap"><table><tbody>
         <tr><th>Status</th><td>Ready for human review</td></tr>
-        <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, Critical Reviewer</td></tr>
+        <tr><th>Owners</th><td>Architect, UI/UX Analyst and Designer, Planner, QA Test Planner, Critical Reviewer</td></tr>
         <tr><th>Last Updated</th><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
-        <tr><th>Implementation Starts After</th><td>Human approval of this TRD</td></tr>
+        <tr><th>Implementation Starts After</th><td>Human approval of this TRD and successful Environment Readiness verification</td></tr>
       </tbody></table></div>
-      ${svgFlow('Technical Delivery Flow', ['Architecture', 'UI/UX', 'Task plan', 'Black-box tests', 'Human TRD approval', 'Implementation'])}
+      ${svgFlow('Technical Delivery Flow', ['Architecture', 'Task and QA plan', 'Human TRD approval', 'Environment readiness', 'Implementation', 'Review and QA'])}
       <h2>Product Requirements Covered</h2><div class="table-wrap"><table><thead><tr><th>PRD ID</th><th>Requirement</th></tr></thead><tbody>${reqs.map((req, index) => `<tr><td>PRD-R${index + 1}</td><td>${escapeHtml(req)}</td></tr>`).join('')}</tbody></table></div>
       <h2>Architecture Overview</h2>${listItems(arch.design)}
       <div class="wide-grid">
@@ -1565,12 +1670,13 @@ export function generateTrd(repo, session) {
         <section class="card"><h3>Regression Strategy</h3>${listItems(qaPlan.regressionStrategy)}</section>
       </div>
       <h2>Testing Plan</h2><p>This is the QA-authored black-box test plan. Each test identifies the approved behavior it covers, the action QA should perform, the expected observable result, and the evidence to collect.</p>${testingCards(tasks)}
+      <h2>Required Tools And Environment Capabilities</h2><p>These are capabilities the team must prove before implementation. The listed tools are acceptable options, not automatic requirements; Environment Readiness may select any equivalent tool that passes the functional verification.</p><div class="table-wrap"><table><thead><tr><th>Owner</th><th>Capability</th><th>Purpose</th><th>Acceptable Tools</th><th>Readiness Check</th></tr></thead><tbody>${capabilityRows.map((capability) => `<tr><td>${escapeHtml(capability.owner)}</td><td>${escapeHtml(capability.id)}</td><td>${escapeHtml(capability.purpose)}</td><td>${escapeHtml((capability.acceptableTools || []).join(', '))}</td><td>${escapeHtml(capability.verification)}</td></tr>`).join('')}</tbody></table></div>
       <h2>Critical Review</h2>${listItems((review.findings || []).map((finding) => `${finding.severity}: ${finding.description || finding.id}`))}
       <h2>Risks And Open Questions</h2><div class="grid">
         <section class="card"><h3>Technical Risks</h3>${listItems(arch.risks)}</section>
         <section class="card"><h3>Open Questions</h3>${listItems((review.findings || []).filter((finding) => finding.severity === 'INFO').map((finding) => finding.description || finding.id))}</section>
       </div>
-      <h2>Approval</h2><p>Reply with exactly <strong>approved</strong> to begin implementation. Any other response is treated as requested TRD/testing-plan feedback and returns the work to Planning.</p>`
+      <h2>Approval</h2><p>Reply with exactly <strong>approved</strong> to approve the technical and testing plan and begin Environment Readiness verification. Implementation starts only after the approved capabilities are verified. Any other response is treated as requested TRD/testing-plan feedback and returns the work to Planning.</p>`
   });
   return writeReviewArtifact(repo, session, 'trd.html', html);
 }
@@ -1745,6 +1851,45 @@ function rejectImplementationFalseAccessDeferral(result) {
   }
 }
 
+function environmentInstallQuestions(result) {
+  return result.missingTools.map((tool) => [
+    `Required tool: ${tool.tool}`,
+    `Capability: ${tool.capability}`,
+    `Why it is needed: ${tool.whyNeeded}`,
+    `Detected problem: ${tool.detectedProblem}`,
+    `Alternatives tried: ${tool.alternativesTried.join('; ')}`,
+    `Install: ${tool.installInstructions.join(' ; ')}`,
+    `AITEAM will verify with: ${tool.verificationCommand}`,
+    'After installation, reply with what you installed. AITEAM will re-run verification before continuing.'
+  ].join('\n'));
+}
+
+function validateEnvironmentCapabilityCoverage(session, result) {
+  if (result.outcome !== 'PASS') return;
+  const required = new Set([
+    ...(session.stageEvidence.architecture?.result?.requiredCapabilities || []).map((capability) => capability.id),
+    ...(session.stageEvidence['qa-planning']?.result?.requiredCapabilities || []).map((capability) => capability.id)
+  ]);
+  const verified = new Set(result.capabilities
+    .filter((capability) => capability.status === 'VERIFIED')
+    .map((capability) => capability.id));
+  const missing = [...required].filter((id) => !verified.has(id));
+  if (missing.length) {
+    throw new Error(`Environment Readiness PASS is missing approved capability verification for: ${missing.join(', ')}.`);
+  }
+}
+
+function validateEnvironmentInstallRequest(session, result) {
+  const required = new Set([
+    ...(session.stageEvidence.architecture?.result?.requiredCapabilities || []).map((capability) => capability.id),
+    ...(session.stageEvidence['qa-planning']?.result?.requiredCapabilities || []).map((capability) => capability.id)
+  ]);
+  const invalid = result.missingTools.filter((tool) => !required.has(tool.capability));
+  if (invalid.length) {
+    throw new Error(`Environment Readiness may request human installation only for approved capabilities: ${invalid.map((tool) => tool.capability).join(', ')}.`);
+  }
+}
+
 function applyResult(repo, session, assignment, result, run) {
   let next = { ...session, activeRun: null, stageEvidence: recordEvidence(session, assignment, result, run) };
   const stage = assignment.stage;
@@ -1773,6 +1918,21 @@ function applyResult(repo, session, assignment, result, run) {
     };
     appendEvent(repo, { type: 'user_input_requested', stage, questions: result.questions, runId: run.runId });
     return writeSession(repo, { ...next, interviewHistory: nextHistory, pendingUserInput });
+  }
+
+  if (stage === 'environment-readiness' && result.outcome === 'AWAITING_USER') {
+    validateEnvironmentInstallRequest(next, result);
+    const pendingUserInput = {
+      kind: 'environment-install',
+      stage,
+      questions: environmentInstallQuestions(result),
+      response: null,
+      requestedAt: new Date().toISOString(),
+      runId: run.runId,
+      missingTools: result.missingTools
+    };
+    appendEvent(repo, { type: 'environment_install_requested', stage, missingTools: result.missingTools, runId: run.runId });
+    return writeSession(repo, { ...next, pendingUserInput, lastFailure: result.summary });
   }
 
   if (result.outcome === 'BLOCKED' && ['code-review', 'qa'].includes(stage)) {
@@ -1945,7 +2105,7 @@ function applyResult(repo, session, assignment, result, run) {
       questions: [
         `Open the Technical Requirements Document: ${artifact.url}`,
         `If the localhost link does not open, use the local file instead: ${artifact.fileUrl}`,
-        'Review the architecture, implementation plan, and testing plan. Reply exactly "approved" to begin implementation. Any other response will be treated as required TRD/testing-plan feedback.'
+        'Review the architecture, implementation plan, testing plan, and required environment capabilities. Reply exactly "approved" to begin Environment Readiness verification. Any other response will be treated as required TRD/testing-plan feedback.'
       ],
       artifact,
       response: null,
@@ -1953,6 +2113,20 @@ function applyResult(repo, session, assignment, result, run) {
       runId: run.runId
     };
     appendEvent(repo, { type: 'human_review_requested', stage: 'trd-review', artifact });
+  } else if (stage === 'environment-readiness') {
+    validateEnvironmentCapabilityCoverage(next, result);
+    next.completedStages = [...new Set([...next.completedStages, 'environment-readiness'])];
+    next.environmentProfile = {
+      verifiedAt: run.completedAt || new Date().toISOString(),
+      runId: run.runId,
+      capabilities: result.capabilities,
+      fileOperations: result.fileOperations,
+      evidence: result.evidence
+    };
+    next.pendingUserInput = null;
+    next.currentStage = 'implementation';
+    next.lastFailure = null;
+    appendEvent(repo, { type: 'environment_readiness_verified', runId: run.runId, capabilities: result.capabilities.map((capability) => capability.id) });
   } else if (stage === 'implementation') {
     const missing = result.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
     if (missing.length) {
@@ -2280,7 +2454,8 @@ export function confirmHumanReview(repo, response) {
     pendingUserInput: approved ? null : answeredReview,
     humanReviewHistory: reviewHistory,
     completedStages: approved ? [...new Set([...session.completedStages, 'trd-review'])] : session.completedStages,
-    currentStage: approved ? 'implementation' : 'planning',
+    currentStage: approved ? 'environment-readiness' : 'planning',
+    phasePlan: approved ? phasePlanWithEnvironmentReadiness(session.phasePlan) : session.phasePlan,
     currentTaskId: null,
     taskLedger: approved ? session.taskLedger : [],
     lastFailure: approved ? null : `TRD changes requested by user: ${trimmedResponse}`

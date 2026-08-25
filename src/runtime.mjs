@@ -9,6 +9,23 @@ function safeName(s) {
   return s.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'agent';
 }
 
+function requiredCapabilitiesSchema() {
+  return {
+    type: 'array',
+    items: {
+      type: 'object',
+      required: ['id', 'purpose', 'acceptableTools', 'verification'],
+      properties: {
+        id: { type: 'string' },
+        purpose: { type: 'string' },
+        acceptableTools: { type: 'array', items: { type: 'string' } },
+        verification: { type: 'string' }
+      },
+      additionalProperties: false
+    }
+  };
+}
+
 export function outputSchemaPath(repo, runBase, stage = null) {
   const schemaPath = path.join(ensureStateDir(repo), 'runs', `${runBase}.schema.json`);
   const baseProperties = {
@@ -104,6 +121,8 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         additionalProperties: false
       }
     };
+    baseProperties.requiredCapabilities = requiredCapabilitiesSchema();
+    required.push('requiredCapabilities');
   } else if (stage === 'ui-design') {
     baseProperties.userFlows = {
       type: 'array',
@@ -222,7 +241,60 @@ export function outputSchemaPath(repo, runBase, stage = null) {
     };
     baseProperties.regressionStrategy = { type: 'array', items: { type: 'string' } };
     baseProperties.coverageNotes = { type: 'array', items: { type: 'string' } };
-    required.push('taskTestPlans', 'regressionStrategy', 'coverageNotes');
+    baseProperties.requiredCapabilities = requiredCapabilitiesSchema();
+    required.push('taskTestPlans', 'regressionStrategy', 'coverageNotes', 'requiredCapabilities');
+  } else if (stage === 'environment-readiness') {
+    baseProperties.capabilities = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'requiredBy', 'selectedTool', 'probeCommand', 'status', 'version', 'executablePath', 'evidence'],
+        properties: {
+          id: { type: 'string' },
+          requiredBy: { type: 'array', items: { type: 'string' } },
+          selectedTool: { type: 'string' },
+          probeCommand: { type: 'string' },
+          status: { type: 'string' },
+          version: { type: 'string' },
+          executablePath: { type: 'string' },
+          evidence: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.fileOperations = {
+      type: 'object',
+      required: ['workspaceWriteVerified', 'tempDirectory', 'writeMethod', 'syntaxCheckVerified', 'syntaxCheckCommand', 'evidence'],
+      properties: {
+        workspaceWriteVerified: { type: 'boolean' },
+        tempDirectory: { type: 'string' },
+        writeMethod: { type: 'string' },
+        syntaxCheckVerified: { type: 'boolean' },
+        syntaxCheckCommand: { type: 'string' },
+        evidence: { type: 'string' }
+      },
+      additionalProperties: false
+    };
+    baseProperties.missingTools = {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['tool', 'capability', 'whyNeeded', 'detectedProblem', 'alternativesTried', 'installInstructions', 'verificationCommand', 'requiresHuman'],
+        properties: {
+          tool: { type: 'string' },
+          capability: { type: 'string' },
+          whyNeeded: { type: 'string' },
+          detectedProblem: { type: 'string' },
+          alternativesTried: { type: 'array', items: { type: 'string' } },
+          installInstructions: { type: 'array', items: { type: 'string' } },
+          verificationCommand: { type: 'string' },
+          requiresHuman: { type: 'boolean' }
+        },
+        additionalProperties: false
+      }
+    };
+    baseProperties.questions = { type: 'array', items: { type: 'string' } };
+    required.push('capabilities', 'fileOperations', 'missingTools', 'questions');
   } else if (stage === 'implementation') {
     baseProperties.filesChanged = { type: 'array', items: { type: 'string' } };
     baseProperties.validations = {

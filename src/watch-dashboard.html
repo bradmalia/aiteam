@@ -99,7 +99,7 @@
     const totalTasks = tasks.length;
     
     let gatesHtml = '';
-    const setupGates = ['intake', 'prd-review', 'architecture', 'ui-design', 'planning', 'qa-planning', 'critical-review', 'trd-review'];
+    const setupGates = ['intake', 'prd-review', 'architecture', 'ui-design', 'planning', 'qa-planning', 'critical-review', 'trd-review', 'environment-readiness'];
     gatesHtml += setupGates.filter((g) => plan.includes(g)).map((gate) => {
       const isPassed = completed.has(gate);
       const isCurrent = gate === session?.currentStage;

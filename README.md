@@ -13,19 +13,21 @@ The primary Codex conversation remains the user interface. The AITEAM MCP server
 ## Enforced workflow
 
 ```text
-Intake -> Architecture -> Planning -> Critical Review
-       -> Implementation -> Code Review -> QA -> Integration -> Complete
+Intake -> PRD Review -> Architecture -> optional UI/UX Design -> Planning
+       -> QA Test Planning -> Critical Review -> TRD Review
+       -> Environment Readiness -> Implementation -> Code Review -> QA
+       -> Integration -> Complete
 ```
 
 `aiteam_advance` runs exactly the specialist required by the current server gate. Specialist results must be structured JSON. Invalid output, timeouts, nonzero exits, out-of-order agents, material review findings, and QA failures cannot advance the workflow.
 
 Coordinator-facing `aiteam_start` and `aiteam_advance` results intentionally return compact structured content: the completed-stage summary and evidence, routing state, exact human questions, and required next action. Full specialist stdout/stderr, session evidence, and task context remain available through the Watch Dashboard, `.aiteam/runs`, and the explicit `aiteam_status` inspection tool instead of being duplicated into every coordinator turn.
 
-Every implementation task must pass Code Review and QA. Failed review or QA returns that task to Implementation. `aiteam_complete` refuses completion until all tasks pass and server-controlled Git integration succeeds.
+After the human approves the TRD, Environment Readiness proves the required runtime, build, black-box testing, browser-startup, and file-writing capabilities. Verified paths and commands are stored in the session for later agents. A missing system-level tool pauses with exact installation and verification instructions, then is probed again after the user responds. Every implementation task must pass Code Review and QA. Failed review or QA returns that task to Implementation. `aiteam_complete` refuses completion until all tasks pass and server-controlled Git integration succeeds.
 
 ## Agent roster
 
-- Analyst, Architect, Planner, Critical Reviewer
+- Analyst, Architect, Planner, QA Test Planner, Critical Reviewer, Environment Readiness Specialist
 - Recruiter, Code Reviewer, QA, Maintainer
 - Godot/GDScript, .NET/C#, Python, Java, Oracle PL/SQL, and SQL Server T-SQL programmers
 
@@ -94,7 +96,7 @@ Without `--aiteam`, the server still enforces MCP workflow gates but cannot stop
 Before and after each synchronous specialist call, Coordinator reports:
 
 ```text
-AITEAM | Agent: Architect (architect) | Phase: Architecture | Remaining: Planning -> Critical Review -> Implementation -> Code Review -> QA -> Integration
+AITEAM | Agent: Architect (architect) | Phase: Architecture | Remaining: Planning -> QA Test Planning -> Critical Review -> TRD Review -> Environment Readiness -> Implementation -> Code Review -> QA -> Integration
 ```
 
 AITEAM has no background scheduler. `aiteam_start` synchronously runs the first required specialist (Analyst by default), while `aiteam_status` only reads state and must not be polled for progress.

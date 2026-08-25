@@ -128,12 +128,35 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '# ⚠️ FINAL INSTRUCTION — READ THIS LAST',
       '1. SCOPE DISCIPLINE: You MUST ONLY implement the acceptanceCriteria of your `currentTask`. The project requirements and architecture in your context are for background knowledge only. DO NOT build features belonging to future tasks (like AI, sound, or game loops) unless they are explicitly listed in your task\'s acceptance criteria. Over-achieving breaks the project plan.',
       '2. You MUST use bash/exec tools to write files to disk BEFORE emitting your JSON response.',
-      '3. Steps: (1) run `cat << EOF > filename` or equivalent, (2) verify with `ls -la filename`, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
+      '3. Steps: (1) use a direct edit tool if exposed, otherwise run one literal quoted heredoc such as `cat > filename <<\'AITEAM_EOF\'`, (2) verify with `ls -la filename` and the language syntax checker/compiler, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
+      '3a. If coordinator context contains `environmentProfile`, reuse its verified tools, executable paths, syntax checker, and write method instead of rediscovering or reinstalling them.',
       '4. Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
+      '5. ESCAPING DISCIPLINE: Do not search for unavailable editing tools or generate source through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed repairs. Keep source text in a literal quoted heredoc.',
       'LARGE FILE WARNING: exec_command truncates heredocs at ~200 lines. For files >150 lines, write in chunks:',
-      '  chunk 1: `cat << AITEAM_EOF > filename` … ~100 lines … `AITEAM_EOF`',
-      '  chunk 2+: `cat << AITEAM_EOF >> filename` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
-      'Then verify: `wc -l filename`. Never write a large file in a single heredoc or it will be silently truncated.',
+      '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
+      '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
+      'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
+    ].join('\n')
+    : stage === 'qa'
+    ? [
+      '# FINAL QA EXECUTION ORDER — READ THIS LAST',
+      '1. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
+      '2. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
+      '2a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
+      '3. DO NOT INSTALL CASUALLY: Install only after a direct capability check fails. Never use `--break-system-packages`, modify product dependency manifests for QA setup, or perform a system-wide install.',
+      '4. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
+      '5. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
+      '6. RETURN ONLY OBSERVATIONS: Report test, expected result, actual result, and runtime evidence. Do not inspect implementation source or prescribe a fix.'
+    ].join('\n')
+    : stage === 'environment-readiness'
+    ? [
+      '# FINAL ENVIRONMENT READINESS ORDER — READ THIS LAST',
+      '1. VERIFY, DO NOT ASSUME: Run direct import, executable, version, and functional probes for every approved capability. A user saying "installed" is not proof.',
+      '2. KEEP PROBES INDEPENDENT: Never let a missing optional executable prevent the actual package/import probe from running through a chained `&&` command.',
+      '3. PROVE FUNCTION: Browser capability requires actual browser launch/close. File operations require create/read/syntax-check/delete with no scratch file left behind.',
+      '4. PROTECT THE PRODUCT: Do not edit source, manifests, or lockfiles. Never use sudo, system package installation, or `pip --break-system-packages`.',
+      '5. HUMAN HANDOFF: If safe isolated preparation cannot provide a required capability, return AWAITING_USER with exact tool, reason, observed problem, alternatives, install steps, and verification command.',
+      '6. PASS PROFILE: PASS only with VERIFIED capabilities, verified file operations, no missing tools, and concrete command evidence.'
     ].join('\n')
     : null;
 

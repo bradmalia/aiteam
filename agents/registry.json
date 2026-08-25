@@ -6,6 +6,7 @@
     {"id":"planner","role":"Planner","contract":"agents/planner.md","sandbox":"read-only","triggers":["implementation plan","task decomposition","vertical slices"]},
     {"id":"qa-planner","role":"QA Test Planner","contract":"agents/qa-planner.md","sandbox":"read-only","triggers":["test plan","qa planning","coverage strategy","regression plan"]},
     {"id":"critical-reviewer","role":"Critical Reviewer","contract":"agents/critical-reviewer.md","sandbox":"read-only","triggers":["critical review","plan review","repair verification"]},
+    {"id":"environment-readiness","role":"Environment Readiness Specialist","contract":"agents/environment-readiness.md","sandbox":"workspace-write","triggers":["environment readiness","tool verification","runtime capability","installation handoff"]},
     {"id":"recruiter","role":"Recruiter","contract":"agents/recruiter.md","sandbox":"read-only","triggers":["specialist gap","new specialist"]},
     {"id":"code-reviewer","role":"Code Reviewer","contract":"agents/code-reviewer.md","sandbox":"read-only","triggers":["code review","diff review"]},
     {"id":"qa","role":"QA","contract":"agents/qa.md","sandbox":"workspace-write","triggers":["qa","testing","validation"]},

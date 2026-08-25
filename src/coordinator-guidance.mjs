@@ -171,7 +171,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     'If a task undergoes two or more rework cycles, include the exact latest reviewer/QA findings in the next aiteam_advance context. Do not prescribe unverified replacement code, modify framework files, or create Git commits from the Coordinator.',
     '',
     '# REQUIRED USER-VISIBLE PHASE REPORTING',
-    'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> PRD Review -> Architecture -> optional UI/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Implementation -> Code Review -> QA Execution -> Integration.',
+    'Declare and persist an ordered phase plan for this request. A normal plan is: Intake -> PRD Review -> Architecture -> optional UI/UX Design -> Planning -> QA Test Planning -> Critical Review -> TRD Review -> Environment Readiness -> Implementation -> Code Review -> QA Execution -> Integration.',
     'AITEAM advances synchronously, so report immediately before the call and immediately after it returns. Do not promise minute-by-minute chat messages while the MCP call is blocking; direct the user to the Watch Dashboard for live subprocess output.',
     '1. Immediately before every aiteam_advance call, use the assignment in the latest AITEAM response and tell the user exactly:',
     'AITEAM | Agent: <role> (<agent_id>) | Phase: <current phase> | Remaining: <ordered phases after this phase, or none>',

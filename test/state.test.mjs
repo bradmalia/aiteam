@@ -19,6 +19,9 @@ test('session lifecycle persists state', () => {
   assert.ok(session.phasePlan.includes('qa-planning'));
   assert.ok(session.phasePlan.indexOf('planning') < session.phasePlan.indexOf('qa-planning'));
   assert.ok(session.phasePlan.indexOf('qa-planning') < session.phasePlan.indexOf('critical-review'));
+  assert.ok(session.phasePlan.indexOf('trd-review') < session.phasePlan.indexOf('environment-readiness'));
+  assert.ok(session.phasePlan.indexOf('environment-readiness') < session.phasePlan.indexOf('implementation'));
+  assert.equal(session.environmentProfile, null);
   assert.equal(readSession(repo).id, session.id);
   patchSession(repo, { currentStage: 'planning' });
   assert.equal(readSession(repo).currentStage, 'planning');

@@ -99,6 +99,7 @@ test('architecture and UI-design output schemas contain their routing and delive
   assert.ok(architecture.required.includes('buildingBlocks'));
   assert.ok(architecture.required.includes('runtimeScenarios'));
   assert.ok(architecture.required.includes('architectureDecisions'));
+  assert.ok(architecture.required.includes('requiredCapabilities'));
   assert.deepEqual(architecture.properties.qualityAttributes.items.required, ['name', 'scenario', 'measure']);
   assert.deepEqual(architecture.properties.buildingBlocks.items.required, ['name', 'responsibility', 'interfaces']);
   assert.deepEqual(architecture.properties.architectureDecisions.items.required, ['decision', 'optionsConsidered', 'rationale', 'consequences']);
@@ -130,7 +131,17 @@ test('QA Test Planning schema requires per-task covered tests and regression not
   assert.ok(schema.required.includes('taskTestPlans'));
   assert.ok(schema.required.includes('regressionStrategy'));
   assert.ok(schema.required.includes('coverageNotes'));
+  assert.ok(schema.required.includes('requiredCapabilities'));
   assert.deepEqual(schema.properties.taskTestPlans.items.properties.tests.items.required, ['name', 'covers', 'action', 'expected', 'evidenceMethod']);
+});
+
+test('Environment Readiness schema captures verified tools, file operations, and installation handoff', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-environment-schema-'));
+  execFileSync('git', ['-C', repo, 'init', '--quiet']);
+  const schema = JSON.parse(fs.readFileSync(outputSchemaPath(repo, 'environment-readiness', 'environment-readiness'), 'utf8'));
+  for (const field of ['capabilities', 'fileOperations', 'missingTools', 'questions']) assert.ok(schema.required.includes(field));
+  assert.deepEqual(schema.properties.capabilities.items.required, ['id', 'requiredBy', 'selectedTool', 'probeCommand', 'status', 'version', 'executablePath', 'evidence']);
+  assert.deepEqual(schema.properties.missingTools.items.required, ['tool', 'capability', 'whyNeeded', 'detectedProblem', 'alternativesTried', 'installInstructions', 'verificationCommand', 'requiresHuman']);
 });
 
 test('critical-review output schema requires simple repairStage enum for model compatibility', () => {
