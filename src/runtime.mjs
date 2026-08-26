@@ -730,21 +730,25 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(provider)) {
       throw new Error('AITEAM_CODEX_PROVIDER contains unsupported characters.');
     }
-    args.push('-c', `model_provider=${configString(provider)}`);
-    const providerName = env.AITEAM_CODEX_PROVIDER_NAME || null;
-    if (providerName) {
-      args.push('-c', `model_providers.${provider}.name=${configString(providerName)}`);
-    }
-    const baseUrl = env.AITEAM_CODEX_BASE_URL || null;
-    if (baseUrl) {
-      args.push('-c', `model_providers.${provider}.base_url=${configString(baseUrl)}`);
-    }
-    const wireApi = env.AITEAM_CODEX_WIRE_API || null;
-    if (wireApi) {
-      args.push('-c', `model_providers.${provider}.wire_api=${configString(wireApi)}`);
-    }
-    if (requiresAuthSetting != null) {
-      args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuthSetting}`);
+    if (provider !== 'openai') {
+      args.push('-c', `model_provider=${configString(provider)}`);
+      const providerName = env.AITEAM_CODEX_PROVIDER_NAME || null;
+      if (providerName) {
+        args.push('-c', `model_providers.${provider}.name=${configString(providerName)}`);
+      }
+      const baseUrl = env.AITEAM_CODEX_BASE_URL || null;
+      if (baseUrl) {
+        args.push('-c', `model_providers.${provider}.base_url=${configString(baseUrl)}`);
+      }
+      const wireApi = env.AITEAM_CODEX_WIRE_API || null;
+      if (wireApi) {
+        args.push('-c', `model_providers.${provider}.wire_api=${configString(wireApi)}`);
+      }
+      if (requiresAuthSetting != null) {
+        args.push('-c', `model_providers.${provider}.requires_openai_auth=${requiresAuthSetting}`);
+      }
+    } else {
+      args.push('-c', 'model_provider="openai"');
     }
   }
 
