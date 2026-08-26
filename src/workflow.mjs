@@ -116,25 +116,46 @@ function normalizeRequiredCapabilities(value, name, { nonEmpty = false } = {}) {
   });
 }
 
+function unwrapSpecialistOutput(parsed) {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  if (parsed.structured_output && typeof parsed.structured_output === 'object') {
+    return parsed.structured_output;
+  }
+  if (typeof parsed.response === 'string' && !parsed.outcome) {
+    try {
+      const nested = parseJson(parsed.response);
+      if (nested && typeof nested === 'object' && nested.outcome) return nested;
+    } catch { /* continue */ }
+  }
+  return parsed;
+}
+
 function parseJson(stdout) {
   const text = String(stdout || '').trim();
   if (!text) throw new Error('Specialist returned no structured result.');
 
-  // 1. Entire output is a JSON object (--output-schema mode)
-  try { return JSON.parse(text); } catch { /* fall through */ }
+  // 1. Entire output is a JSON object (--output-schema mode or agy CLI envelope)
+  try {
+    const parsed = unwrapSpecialistOutput(JSON.parse(text));
+    if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      // If parsed has no outcome, store as initial candidate but fall through to check fences
+      var rootParsed = parsed;
+    }
+  } catch { /* fall through */ }
 
   // 2. Fenced code block — prefer the LAST fenced block (LLMs often show
   //    examples before emitting their final answer)
   const fencedAll = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
   for (let i = fencedAll.length - 1; i >= 0; i--) {
     try {
-      const parsed = JSON.parse(fencedAll[i][1].trim());
+      const parsed = unwrapSpecialistOutput(JSON.parse(fencedAll[i][1].trim()));
       if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
     } catch { /* continue searching */ }
   }
   // If any fenced block parsed at all (even without outcome), use the last one
   for (let i = fencedAll.length - 1; i >= 0; i--) {
-    try { return JSON.parse(fencedAll[i][1].trim()); } catch { /* continue */ }
+    try { return unwrapSpecialistOutput(JSON.parse(fencedAll[i][1].trim())); } catch { /* continue */ }
   }
 
   // 3. Brace-balanced extraction: find all top-level JSON objects in the text
@@ -144,14 +165,16 @@ function parseJson(stdout) {
   // Prefer the last candidate with an "outcome" field
   for (let i = candidates.length - 1; i >= 0; i--) {
     try {
-      const parsed = JSON.parse(candidates[i]);
+      const parsed = unwrapSpecialistOutput(JSON.parse(candidates[i]));
       if (parsed && typeof parsed === 'object' && parsed.outcome) return parsed;
     } catch { /* continue searching */ }
   }
   // Fall back to the last parseable candidate
   for (let i = candidates.length - 1; i >= 0; i--) {
-    try { return JSON.parse(candidates[i]); } catch { /* continue */ }
+    try { return unwrapSpecialistOutput(JSON.parse(candidates[i])); } catch { /* continue */ }
   }
+
+  if (typeof rootParsed !== 'undefined') return rootParsed;
 
   throw new Error(`Specialist result is not valid JSON. Output was: ${text.slice(0, 300)}`);
 }
@@ -551,7 +574,7 @@ function hasBrowserStartupEvidenceText(text) {
 }
 
 function browserRuntimeFallbackGuidance() {
-  return 'If Playwright is installed but bundled Chromium fails to launch because of sandbox, host permission, or missing browser dependencies, keep using Playwright with a system browser instead of improvised Puppeteer cache-path imports. Preferred fallback: Python Playwright sync_playwright().chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"]); if channel lookup fails, detect google-chrome/chromium/chromium-browser with which and pass it as executable_path. Minimal smoke recipe: create a short repo-local script such as aiteam-browser-smoke.py, attach page.on("pageerror", ...), page.on("console", lambda msg: collect msg.type == "error"), page.goto("file://" + resolved index.html path, wait_until="domcontentloaded"), assert the primary UI root exists, print "pageerror and console error listeners reported zero errors", then delete the script if it is not reusable evidence. Report the failed bundled-browser attempt separately from the successful system-browser startup check.';
+  return 'If Playwright is installed but bundled Chromium fails to launch because of sandbox, host permission, or missing browser dependencies, keep using Playwright with a system browser instead of improvised Puppeteer cache-path imports. Preferred fallback: Python Playwright sync_playwright().chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"]); if channel lookup fails, detect google-chrome/chromium/chromium-browser with which and pass it as executable_path. Use the repository-defined browser startup command when one exists. For a static browser app without one, do not default to file:// because ES modules, fetch, workers, and origin-dependent APIs can be blocked; start a temporary HTTP server on a verified free ephemeral loopback port, verify the served page identity, navigate to its http://127.0.0.1 URL, and stop the owned server before returning. Attach page.on("pageerror", ...), collect console messages whose type is "error", assert the primary UI root exists, and report that both listeners observed zero errors. Direct file navigation is acceptable only when the delivered runtime is intentionally self-contained for file:// and the browser reports no origin, CORS, module, or resource errors. Report the failed bundled-browser attempt separately from the successful system-browser startup check.';
 }
 
 function hasOnlyFailedBrowserStartupEvidence(text) {
@@ -735,18 +758,35 @@ function validateQaPlannedTestCoverage(session, result) {
 }
 
 function priorRegressionObligations(session, currentTaskId) {
-  return (session.taskLedger || [])
-    .filter((task) => task.id !== currentTaskId && ['qa-passed', 'integrated', 'completed'].includes(task.status))
-    .flatMap((task) => (task.qa?.checks || [])
-      .filter((check) => !/^fail$/i.test(check.status || ''))
-      .map((check, index) => ({
-        id: `${task.id}#${slugForRegressionId(check.name || `check-${index + 1}`)}`,
-        taskId: task.id,
-        taskTitle: task.title,
-        name: check.name,
+  const eligibleTasks = (session.taskLedger || [])
+    .filter((task) => task.id !== currentTaskId && ['qa-passed', 'integrated', 'completed'].includes(task.status));
+  const tasksById = new Map(eligibleTasks.map((task) => [task.id, task]));
+  const obligationsById = new Map();
+
+  for (const task of eligibleTasks) {
+    for (const [index, check] of (task.qa?.checks || []).entries()) {
+      if (/^fail$/i.test(check.status || '')) continue;
+      const name = String(check.name || `check-${index + 1}`).trim();
+      // A later task's QA result can contain regression checks copied from an
+      // earlier task. Preserve that existing canonical ID instead of prefixing
+      // it again (task-b#task-a-check), and collapse duplicate carried checks.
+      const originTask = eligibleTasks.find((candidate) => name.startsWith(`${candidate.id}#`));
+      const taskId = originTask?.id || task.id;
+      const suffix = originTask ? name.slice(originTask.id.length + 1) : name;
+      const id = `${taskId}#${slugForRegressionId(suffix)}`;
+      if (obligationsById.has(id)) continue;
+      obligationsById.set(id, {
+        id,
+        taskId,
+        taskTitle: tasksById.get(taskId)?.title || task.title,
+        name: originTask ? suffix : check.name,
         expected: check.expected,
         previousStatus: check.status
-      })));
+      });
+    }
+  }
+
+  return [...obligationsById.values()];
 }
 
 function validateQaRegressionCoverage(session, result) {
@@ -1051,6 +1091,9 @@ function stageContext(session, repo) {
   // We explicitly DO NOT leak the global session.request to implementation agents to prevent scope creep / overachieving.
   if (['implementation', 'code-review', 'qa'].includes(stage)) {
     const arch = session.stageEvidence.architecture?.result;
+    const regressionObligations = stage === 'qa'
+      ? priorRegressionObligations(session, task?.id)
+      : [];
     const completedPriorTasks = stage === 'qa'
       ? session.taskLedger
           .filter((t) => t.id !== task?.id && ['qa-passed', 'integrated', 'completed'].includes(t.status))
@@ -1059,14 +1102,9 @@ function stageContext(session, repo) {
             title: t.title,
             acceptanceCriteria: t.acceptanceCriteria,
             filesChanged: t.filesChanged || [],
-            regressionTests: (t.qa?.checks || [])
-              .filter((check) => !/^fail$/i.test(check.status || ''))
-              .map((check, index) => ({
-                id: `${t.id}#${slugForRegressionId(check.name || `check-${index + 1}`)}`,
-                name: check.name,
-                expected: check.expected,
-                previousStatus: check.status
-              }))
+            regressionTests: regressionObligations
+              .filter((obligation) => obligation.taskId === t.id)
+              .map(({ id, name, expected, previousStatus }) => ({ id, name, expected, previousStatus }))
           }))
       : undefined;
 
@@ -1097,7 +1135,7 @@ function stageContext(session, repo) {
       qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
       environmentProfile: session.environmentProfile || null,
       reviewArtifacts: reviewArtifactsPromptView(session),
-      plan: session.stageEvidence.planning?.result || null,
+      plan: session.taskLedger?.length ? undefined : (session.stageEvidence.planning?.result || null),
       lockedCriticalFindings: session.lockedCriticalFindings,
       pendingUserInput: session.pendingUserInput,
       taskLedger: session.taskLedger,
@@ -1105,7 +1143,25 @@ function stageContext(session, repo) {
     }, null, 2);
   }
 
-  // All other stages (intake, architecture, recruiting, integration) get the full context.
+  // Integration needs the task ledger, current task, and architecture/review summary.
+  if (stage === 'integration') {
+    return JSON.stringify({
+      currentStage: stage,
+      currentTask: currentTaskPromptView(task),
+      taskLedger: session.taskLedger.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        specialistId: t.specialistId,
+        filesChanged: t.filesChanged || [],
+        qa: t.qa ? { outcome: t.qa.outcome, summary: t.qa.summary } : null
+      })),
+      reviewArtifacts: reviewArtifactsPromptView(session),
+      completedTasks: session.completedTasks || []
+    }, null, 2);
+  }
+
+  // All other stages (intake, architecture, recruiting) get the full context.
   const registry = loadRegistry(repo).agents.map(({ id, role, sandbox, capabilities = [] }) => ({ id, role, sandbox, capabilities }));
   return JSON.stringify({
     request: session.request,
@@ -1120,7 +1176,7 @@ function stageContext(session, repo) {
     },
     environmentProfile: session.environmentProfile || null,
     reviewArtifacts: reviewArtifactsPromptView(session),
-    plan: session.stageEvidence.planning?.result || null,
+    plan: session.taskLedger?.length ? undefined : (session.stageEvidence.planning?.result || null),
     lockedCriticalFindings: session.lockedCriticalFindings,
     taskLedger: session.taskLedger,
     interviewHistory: session.interviewHistory || [],
@@ -1380,9 +1436,9 @@ function screenMockups(uiDesign) {
   if (!screens.length) return '<p class="muted">No UI mockups yet. UI/UX Design has not run or the product is headless.</p>';
   return `<div class="mockups">${screens.map((screen) => {
     const name = String(screen.name || '').toLowerCase();
-    const kind = /game|hud|court|play/.test(name) ? 'gameplay'
-      : /victory|win|over|result/.test(name) ? 'victory'
-      : /menu|start|difficulty|select/.test(name) ? 'menu'
+    const kind = /victory|win|result/.test(name) || (/game\s*over/.test(name) && !/start|menu/.test(name)) ? 'victory'
+      : /menu|start|difficulty|select|pause/.test(name) ? 'menu'
+      : /game|hud|court|play|arena/.test(name) ? 'gameplay'
       : 'generic';
     return `
       <article class="mockup">
@@ -1422,10 +1478,14 @@ function wireframeBody(kind, screen) {
       </div>`;
   }
   if (kind === 'menu') {
+    const isStart = /start|difficulty/i.test(screen.name || '');
+    const menuButtons = isStart
+      ? ['Easy', 'Medium', 'Hard', 'Start Game']
+      : ['Resume Game', 'Change Difficulty', 'Sound: On', 'Restart'];
     return `
-      <div class="screen-title">${escapeHtml(screen.name || 'Menu')}</div>
+      <div class="screen-title">${escapeHtml(shortLabel(screen.name || 'Menu'))}</div>
       <div class="button-stack">
-        ${(screen.components || ['Easy', 'Medium', 'Hard']).filter(Boolean).slice(0, 4).map((component) => `<button>${escapeHtml(shortLabel(component))}</button>`).join('')}
+        ${menuButtons.map((btn) => `<button>${escapeHtml(btn)}</button>`).join('')}
       </div>
       <button class="sound-dot" aria-label="Sound toggle">♪</button>`;
   }

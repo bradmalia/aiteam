@@ -1206,6 +1206,123 @@ test('QA must cover previous QA checks as regression obligations', async () => {
   assert.equal(next.taskLedger[1].status, 'qa-passed');
 });
 
+test('QA regression IDs remain canonical across multiple completed tasks', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature in stages');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'third-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: {
+      ...session.stageEvidence,
+      intake: { result: { userConfirmed: true } }
+    },
+    taskLedger: [
+      {
+        id: 'first-task',
+        title: 'First task',
+        description: 'First completed task',
+        specialistId: 'python',
+        acceptanceCriteria: ['First behavior works'],
+        dependencies: [],
+        status: 'qa-passed',
+        filesChanged: ['app.py'],
+        qa: {
+          outcome: 'PASS',
+          checks: [{ name: 'First behavior smoke', status: 'PASS', expected: 'First behavior works.', actual: 'Worked.', evidence: 'Runtime evidence.' }]
+        }
+      },
+      {
+        id: 'second-task',
+        title: 'Second task',
+        description: 'Second completed task',
+        specialistId: 'python',
+        acceptanceCriteria: ['Second behavior works'],
+        dependencies: ['first-task'],
+        status: 'qa-passed',
+        filesChanged: ['app.py'],
+        qa: {
+          outcome: 'PASS',
+          checks: [
+            { name: 'Second behavior smoke', status: 'PASS', expected: 'Second behavior works.', actual: 'Worked.', evidence: 'Runtime evidence.' },
+            { name: 'first-task#first-behavior-smoke', status: 'PASS', expected: 'First behavior still works.', actual: 'Worked.', evidence: 'Regression evidence.' }
+          ]
+        }
+      },
+      {
+        id: 'third-task',
+        title: 'Third task',
+        description: 'Current task',
+        specialistId: 'python',
+        acceptanceCriteria: ['Third behavior works'],
+        dependencies: ['second-task'],
+        status: 'review-passed',
+        filesChanged: ['app.py'],
+        validations: []
+      }
+    ]
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  const context = JSON.parse(assignment.context);
+  const regressionIds = context.completedPriorTasks.flatMap((task) => task.regressionTests.map((item) => item.id));
+  assert.deepEqual(regressionIds.sort(), [
+    'first-task#first-behavior-smoke',
+    'second-task#second-behavior-smoke'
+  ]);
+  assert.doesNotMatch(assignment.context, /second-task#first-task-first-behavior-smoke/);
+
+  await advanceWorkflow({
+    repo,
+    timeoutSeconds: 300,
+    runner: queuedRunner(repo, [
+      { stdout: result('PASS', {
+        checks: [
+          { name: 'first-task#first-behavior-smoke', status: 'PASS', expected: 'First behavior still works.', actual: 'Worked.', evidence: 'Runtime regression passed.' },
+          { name: 'second-task#second-behavior-smoke', status: 'PASS', expected: 'Second behavior still works.', actual: 'Worked.', evidence: 'Runtime regression passed.' },
+          { name: 'Third behavior smoke', status: 'PASS', expected: 'Third behavior works.', actual: 'Worked.', evidence: 'Runtime smoke passed.' }
+        ],
+        automationAttempts: [],
+        manualChecks: []
+      }) }
+    ])
+  });
+  assert.equal(readSession(repo).currentStage, 'integration');
+});
+
+test('browser QA guidance uses HTTP for module-capable static applications', () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build a browser application');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'qa',
+    currentTaskId: 'browser-task',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: {
+      ...session.stageEvidence,
+      intake: { result: { userConfirmed: true } }
+    },
+    taskLedger: [{
+      id: 'browser-task',
+      title: 'Browser task',
+      description: 'Render a canvas game in the browser.',
+      specialistId: 'python',
+      acceptanceCriteria: ['The browser app starts.'],
+      dependencies: [],
+      blackBoxTestPlan: [{ name: 'Browser startup', action: 'Open the app.', expected: 'The app starts.', evidenceMethod: 'Browser runtime output.' }],
+      status: 'review-passed',
+      filesChanged: ['index.html'],
+      validations: []
+    }]
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  assert.match(assignment.task, /do not default to file:\/\//i);
+  assert.match(assignment.task, /temporary HTTP server/i);
+  assert.match(assignment.task, /stop the owned server before returning/i);
+});
+
 test('QA false BLOCKED result without executed attempts retries in QA', async () => {
   const repo = createRepository();
   const session = newSession(repo, 'Validate CLI feature');
@@ -1977,3 +2094,36 @@ test('an active-run lease is recovered immediately when its owner process exited
   assert.equal(recovered.activeRun, null);
   assert.match(recovered.lastFailure, /owner process .* exited/);
 });
+
+test('parseStageResult unwraps agy envelope with structured_output or response', () => {
+  const agyStructured = JSON.stringify({
+    conversation_id: 'test-conv-id',
+    status: 'COMPLETED',
+    response: 'Here is the result',
+    structured_output: {
+      outcome: 'PASS',
+      summary: 'Intake parsed successfully from agy envelope',
+      evidence: ['Verified from agy schema output'],
+      goals: ['Test goal'],
+      targetUsers: ['Test users'],
+      userStories: ['As a user, I want tests'],
+      requirements: ['Must support agy envelopes'],
+      acceptanceCriteria: ['Passes parseStageResult'],
+      mvpScope: ['Unwrap structured_output'],
+      outOfScope: [],
+      assumptions: [],
+      constraints: [],
+      nonFunctionalRequirements: [],
+      successMetrics: ['100% test pass'],
+      risks: [],
+      questions: [],
+      userConfirmed: true
+    }
+  });
+
+  const parsed = parseStageResult('intake', agyStructured);
+  assert.equal(parsed.outcome, 'PASS');
+  assert.equal(parsed.summary, 'Intake parsed successfully from agy envelope');
+  assert.deepEqual(parsed.goals, ['Test goal']);
+});
+

@@ -669,7 +669,6 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
   const args = ['--add-dir', repo, '--disable-slash-commands'];
   if (writable) args.push('--dangerously-skip-permissions', '--mode', 'accept-edits');
   else args.push('--sandbox', '--mode', 'plan');
-  args.push('-p=' + prompt);
   const selectedModel = model || env.AITEAM_AGY_MODEL;
   if (selectedModel) args.push('--model', selectedModel);
   const effectiveSchema = stage === 'implementation' && !enforceSchema ? null : schemaPath;
@@ -677,6 +676,7 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
     args.push('--output-format', 'json');
     args.push('--json-schema', effectiveSchema);
   }
+  args.push('-p', prompt);
   return { command, args, childEnv: { ...env } };
 }
 

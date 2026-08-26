@@ -138,16 +138,41 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
     ].join('\n')
     : stage === 'qa'
-    ? [
-      '# FINAL QA EXECUTION ORDER — READ THIS LAST',
-      '1. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
-      '2. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
-      '2a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
-      '3. DO NOT INSTALL CASUALLY: Install only after a direct capability check fails. Never use `--break-system-packages`, modify product dependency manifests for QA setup, or perform a system-wide install.',
-      '4. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
-      '5. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
-      '6. RETURN ONLY OBSERVATIONS: Report test, expected result, actual result, and runtime evidence. Do not inspect implementation source or prescribe a fix.'
-    ].join('\n')
+    ? (() => {
+      let regressionIds = [];
+      try {
+        const parsed = JSON.parse(context);
+        if (Array.isArray(parsed?.completedPriorTasks)) {
+          for (const priorTask of parsed.completedPriorTasks) {
+            if (Array.isArray(priorTask.regressionTests)) {
+              for (const test of priorTask.regressionTests) {
+                if (test?.id) regressionIds.push(test.id);
+              }
+            }
+          }
+        }
+      } catch {
+        // Context may not be pure JSON or may be empty; fallback
+      }
+      const regressionReminder = regressionIds.length
+        ? [
+          '7. MANDATORY PRIOR REGRESSION TEST IDS: Your structured output MUST include test entries in `checks` or `automationAttempts[].covers` for each of the following prior test IDs:',
+          ...regressionIds.map((id) => `   - ${id}`)
+        ].join('\n')
+        : '7. CROSS-TASK REGRESSION: Include checks or automationAttempts for all prior task regression IDs listed in your context.';
+
+      return [
+        '# FINAL QA EXECUTION ORDER — READ THIS LAST',
+        '1. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
+        '2. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
+        '2a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
+        '3. DO NOT INSTALL CASUALLY: Install only after a direct capability check fails. Never use `--break-system-packages`, modify product dependency manifests for QA setup, or perform a system-wide install.',
+        '4. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
+        '5. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
+        '6. RETURN ONLY OBSERVATIONS: Report test, expected result, actual result, and runtime evidence. Do not inspect implementation source or prescribe a fix.',
+        regressionReminder
+      ].join('\n');
+    })()
     : stage === 'environment-readiness'
     ? [
       '# FINAL ENVIRONMENT READINESS ORDER — READ THIS LAST',
