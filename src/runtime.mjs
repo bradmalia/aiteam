@@ -715,7 +715,6 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   const args = [...prefixArgs, 'exec', '-C', repo, '--sandbox', effectiveSandbox];
   if (requestedSandbox === 'workspace-write' && effectiveSandbox === 'workspace-write') args.push('--add-dir', repo);
   args.push('-c', `approval_policy=${configString(env.AITEAM_CODEX_APPROVAL_POLICY || 'never')}`);
-  args.push('-c', 'mcp_servers={}');
 
   const hasExplicitRouting = Boolean(model || env.AITEAM_CODEX_MODEL || env.AITEAM_CODEX_PROVIDER);
   const inherited = hasExplicitRouting
@@ -778,8 +777,12 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-');
 
   const childEnv = { ...env };
-  const codexHome = env.AITEAM_CODEX_HOME || inherited?.codexHome || env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const codexHome = env.AITEAM_CODEX_HOME || inherited?.codexHome || env.CODEX_HOME || path.join(os.homedir(), '.aiteam-child-home');
   fs.mkdirSync(codexHome, { recursive: true });
+  const childConfigPath = path.join(codexHome, 'config.toml');
+  if (!fs.existsSync(childConfigPath)) {
+    fs.writeFileSync(childConfigPath, '# Dedicated AITEAM child configuration\n');
+  }
   childEnv.CODEX_HOME = codexHome;
   return { command, args, childEnv, stdinText: prompt };
 }

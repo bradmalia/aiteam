@@ -124,19 +124,29 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
   // Stage-specific final reminder placed AFTER coordinator context so it's the
   // last thing the model reads before generating output.
   const finalReminder = stage === 'implementation'
-    ? [
-      '# ⚠️ FINAL INSTRUCTION — READ THIS LAST',
-      '1. SCOPE DISCIPLINE: You MUST ONLY implement the acceptanceCriteria of your `currentTask`. The project requirements and architecture in your context are for background knowledge only. DO NOT build features belonging to future tasks (like AI, sound, or game loops) unless they are explicitly listed in your task\'s acceptance criteria. Over-achieving breaks the project plan.',
-      '2. You MUST use bash/exec tools to write files to disk BEFORE emitting your JSON response.',
-      '3. Steps: (1) use a direct edit tool if exposed, otherwise run one literal quoted heredoc such as `cat > filename <<\'AITEAM_EOF\'`, (2) verify with `ls -la filename` and the language syntax checker/compiler, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
-      '3a. If coordinator context contains `environmentProfile`, reuse its verified tools, executable paths, syntax checker, and write method instead of rediscovering or reinstalling them.',
-      '4. Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
-      '5. ESCAPING DISCIPLINE: Do not search for unavailable editing tools or generate source through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed repairs. Keep source text in a literal quoted heredoc.',
-      'LARGE FILE WARNING: exec_command truncates heredocs at ~200 lines. For files >150 lines, write in chunks:',
-      '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
-      '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
-      'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
-    ].join('\n')
+    ? (() => {
+      let writeMethodDirective = '3a. If coordinator context contains `environmentProfile`, reuse its verified tools, executable paths, syntax checker, and write method instead of rediscovering or reinstalling them. Do not experiment with alternative shell redirection unless the primary method fails.';
+      try {
+        const parsed = JSON.parse(context);
+        const method = parsed?.environmentProfile?.fileOperations?.writeMethod;
+        if (method) {
+          writeMethodDirective = `3a. PROVEN FILE-WRITING METHOD FOR THIS ENVIRONMENT: ${method}. Use this proven method; do not experiment with alternative shell redirection unless this method is not working.`;
+        }
+      } catch {}
+      return [
+        '# ⚠️ FINAL INSTRUCTION — READ THIS LAST',
+        '1. SCOPE DISCIPLINE: You MUST ONLY implement the acceptanceCriteria of your `currentTask`. The project requirements and architecture in your context are for background knowledge only. DO NOT build features belonging to future tasks (like AI, sound, or game loops) unless they are explicitly listed in your task\'s acceptance criteria. Over-achieving breaks the project plan.',
+        '2. You MUST write or edit the necessary files on disk (using a direct edit tool like apply_patch if exposed, or bash/exec commands with cat heredocs) BEFORE emitting your JSON response.',
+        '3. Steps: (1) use a direct edit tool if exposed, otherwise run one literal quoted heredoc such as `cat > filename <<\'AITEAM_EOF\'`, (2) verify with `ls -la filename` and the language syntax checker/compiler, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
+        writeMethodDirective,
+        '4. Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
+        '5. ESCAPING DISCIPLINE: Do not search for unavailable editing tools or generate source through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed repairs. Keep source text in a literal quoted heredoc.',
+        'LARGE FILE WARNING: exec_command truncates heredocs at ~200 lines. For files >150 lines, write in chunks:',
+        '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
+        '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
+        'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
+      ].join('\n');
+    })()
     : stage === 'qa'
     ? (() => {
       let regressionIds = [];
