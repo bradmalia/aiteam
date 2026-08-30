@@ -86,7 +86,7 @@ If the acceptance criteria for this task are already satisfied by existing code 
 
 CRITICAL SCOPE BOUNDARY: Implement ONLY the exact acceptanceCriteria specified for this task. Do NOT implement future features, sound effects, game physics, or unrelated modules if they are not in your task's acceptanceCriteria. Overachieving or implementing unassigned features is a boundary violation. Also return "filesChanged" (non-empty repository-relative path array on PASS) and "validations" (array of {"command","result"}).`,
   'code-review': `${COMMON_SCHEMA}
-Also return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
+Outcome must be "PASS" or "FAIL". Do not return outcome "BLOCKED". Inspect the modified files on disk and return "findings" as an array of {"id","severity","location","impact","recommendation"}, where severity is BLOCKER, MAJOR, MINOR, or INFO. If any BLOCKER or MAJOR exists, outcome must be FAIL. Do not modify files.`,
   qa: `${COMMON_SCHEMA}
 Outcome may also be "PASS_WITH_MANUAL_VALIDATION". Also return "checks" as a non-empty array of {"name","status","expected","actual","evidence"}, "automationAttempts" as an array of {"command","result","covers","fallbackReason"}, and "manualChecks" as a string array.
 CRITICAL SCOPE BOUNDARY: Generate black-box functional checks for the specific acceptanceCriteria of the current task AND regression checks for completedPriorTasks. Do NOT validate unbuilt future features or unassigned subsystems. FAIL means observable behavior failed for this task or regression. Do not inspect source code, do not modify files, and do not tell the programmer how to fix defects.`,
@@ -489,7 +489,9 @@ export function parseStageResult(stage, stdout) {
       return normalized;
     });
     const material = result.findings.some((finding) => ['BLOCKER', 'MAJOR'].includes(finding?.severity));
-    if (material && result.outcome === 'PASS') throw new Error('A review with BLOCKER or MAJOR findings cannot PASS.');
+    if (stage === 'code-review' && result.outcome === 'BLOCKED') {
+      throw new Error('Code review cannot return BLOCKED. You must inspect the modified files on disk and return PASS or FAIL with findings.');
+    }
     if (stage === 'critical-review' && result.outcome !== 'FAIL' && !result.repairStage) result.repairStage = 'none';
     if (stage === 'critical-review' && result.outcome === 'FAIL' && !['architecture', 'planning', 'qa-planning'].includes(result.repairStage)) {
       throw new Error('Failed critical review must set repairStage to architecture, planning, or qa-planning.');

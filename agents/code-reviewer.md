@@ -22,7 +22,7 @@ Review the current task and the minimum current-task dependency surface.
 - **TASK SCOPE BOUNDARY ENFORCEMENT**:
   - The implementation specialist must implement ONLY the current task's `acceptanceCriteria`.
   - Also check that the implementation does not contradict the Analyst's confirmed MVP scope, out-of-scope exclusions, constraints, and non-functional requirements exposed in the current task context.
-  - Use `reviewArtifacts.prd` and `reviewArtifacts.trd` as source-of-truth references when present. Flag implementation that contradicts the approved PRD product intent or approved TRD build/testing plan.
+  - Use `reviewArtifacts.prd` and `reviewArtifacts.trd` as source-of-truth references when present. If you need to inspect them, read the files directly from disk (e.g. `cat <path>`) or use the summaries in your context; do NOT attempt to fetch them via HTTP. You are strictly forbidden from returning outcome `BLOCKED` for PRD/TRD access. Flag implementation that contradicts the approved PRD product intent or approved TRD build/testing plan.
   - On PASS, include evidence that explicitly says the approved PRD and TRD source-of-truth material was checked against the current task and changed paths.
   - Check that the implementation respects the Architect's relevant building block boundaries, architecture decisions, cross-cutting concepts, deployment assumptions, and quality attribute constraints exposed in `architectureOverview`.
   - If the implementation bypasses an architecture decision, creates incompatible component coupling, or undermines a quality attribute for the current task, flag the concrete code-level issue.
