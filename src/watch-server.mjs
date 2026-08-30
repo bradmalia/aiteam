@@ -171,7 +171,7 @@ export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}
       }
       return sendJson(response, { ok: true, repository: activeRepo });
     }
-    if (request.method !== 'GET') return sendJson(response, { error: 'Only GET is supported.' }, 405);
+    if (request.method !== 'GET' && request.method !== 'HEAD') return sendJson(response, { error: 'Only GET and HEAD are supported.' }, 405);
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
     if (url.pathname.startsWith('/artifacts/')) return sendArtifact(response, activeRepo, url.pathname);

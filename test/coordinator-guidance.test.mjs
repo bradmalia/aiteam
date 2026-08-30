@@ -257,3 +257,16 @@ test('MCP initialize returns facilitator instructions tailored to session presen
     process.chdir(originalCwd);
   }
 });
+
+test('aiteam_status provides Watch Dashboard URL and watcher status in structured and text output', async () => {
+  const repo = createRepository();
+  await callTool('aiteam_start', { repository: repo, request: 'Build a game', auto_advance: false });
+  const status = await callTool('aiteam_status', { repository: repo });
+  
+  assert.ok(status.structuredContent.watchDashboard);
+  assert.match(status.structuredContent.watchDashboard, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+  assert.ok(status.structuredContent.watcher);
+  assert.equal(status.structuredContent.watcher.url, status.structuredContent.watchDashboard);
+  assert.ok(['active', 'offline'].includes(status.structuredContent.watcher.status));
+  assert.match(status.content[0].text, /Watch Dashboard: http:\/\/127\.0\.0\.1:\d+\//);
+});

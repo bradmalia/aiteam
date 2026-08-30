@@ -166,6 +166,7 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     '3. If a specialist fails, encounters an error, or times out, report the concrete failure and call aiteam_advance again so the workflow engine can perform its bounded retry.',
     '4. Framework changes to AITEAM itself are a separate maintenance action. Never edit or commit the AITEAM framework merely because a target-project task bounced; make such changes only when the user explicitly requests framework repair.',
     '5. TIMEOUT HANDLING: Complex engine builds and smoke test suites may take several minutes. Allow the requested aiteam_advance timeout to run unless the user asks to interrupt it.',
+    '6. WATCH DASHBOARD: When the user asks for the Watcher URL or live session monitor, provide the AITEAM Watch Dashboard URL (available in aiteam_status / session). Calling aiteam_status verifies and automatically restarts the local dashboard server if needed.',
     '',
     '# REWORK LOOP HANDLING',
     'If a task undergoes two or more rework cycles, include the exact latest reviewer/QA findings in the next aiteam_advance context. Do not prescribe unverified replacement code, modify framework files, or create Git commits from the Coordinator.',

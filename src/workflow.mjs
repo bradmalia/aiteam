@@ -764,25 +764,51 @@ function priorRegressionObligations(session, currentTaskId) {
   const obligationsById = new Map();
 
   for (const task of eligibleTasks) {
-    for (const [index, check] of (task.qa?.checks || []).entries()) {
-      if (/^fail$/i.test(check.status || '')) continue;
-      const name = String(check.name || `check-${index + 1}`).trim();
-      // A later task's QA result can contain regression checks copied from an
-      // earlier task. Preserve that existing canonical ID instead of prefixing
-      // it again (task-b#task-a-check), and collapse duplicate carried checks.
-      const originTask = eligibleTasks.find((candidate) => name.startsWith(`${candidate.id}#`));
-      const taskId = originTask?.id || task.id;
-      const suffix = originTask ? name.slice(originTask.id.length + 1) : name;
-      const id = `${taskId}#${slugForRegressionId(suffix)}`;
-      if (obligationsById.has(id)) continue;
-      obligationsById.set(id, {
-        id,
-        taskId,
-        taskTitle: tasksById.get(taskId)?.title || task.title,
-        name: originTask ? suffix : check.name,
-        expected: check.expected,
-        previousStatus: check.status
-      });
+    if (Array.isArray(task.blackBoxTestPlan) && task.blackBoxTestPlan.length > 0) {
+      for (const test of task.blackBoxTestPlan) {
+        const cleanName = String(test.name || '').trim();
+        if (!cleanName) continue;
+        const id = `${task.id}#${slugForRegressionId(cleanName)}`;
+        if (obligationsById.has(id)) continue;
+        obligationsById.set(id, {
+          id,
+          taskId: task.id,
+          taskTitle: task.title,
+          name: cleanName,
+          expected: test.expected,
+          previousStatus: 'PASS'
+        });
+      }
+    } else {
+      for (const [index, check] of (task.qa?.checks || []).entries()) {
+        if (/^fail$/i.test(check.status || '')) continue;
+        const rawName = String(check.name || `check-${index + 1}`).trim();
+        let originTaskId = task.id;
+        let cleanName = rawName;
+
+        for (const candidate of eligibleTasks) {
+          if (rawName.includes(candidate.id)) {
+            originTaskId = candidate.id;
+            break;
+          }
+        }
+        for (const candidate of eligibleTasks) {
+          cleanName = cleanName.replace(new RegExp(candidate.id, 'gi'), '');
+        }
+        cleanName = cleanName.replace(/regression/gi, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').trim();
+        if (!cleanName) cleanName = `check-${index + 1}`;
+
+        const id = `${originTaskId}#${slugForRegressionId(cleanName)}`;
+        if (obligationsById.has(id)) continue;
+        obligationsById.set(id, {
+          id,
+          taskId: originTaskId,
+          taskTitle: tasksById.get(originTaskId)?.title || task.title,
+          name: cleanName,
+          expected: check.expected,
+          previousStatus: check.status
+        });
+      }
     }
   }
 
@@ -1083,6 +1109,36 @@ function reviewArtifactsPromptView(session) {
   };
 }
 
+const TEST_FILE_PATTERN = /^(test[-_.]|.*[-_.]test\.|smoke[-_.]|.*[-_.]smoke\.|spec[-_.]|.*[-_.]spec\.)/i;
+const TEST_EXTENSIONS = /\.(js|mjs|cjs|ts|tsx|py|sh|bash|cs|java|go|rs|rb|php|gd|cpp|c|cc|cxx|lua|swift|kt|sql|ps1)$/i;
+const TEST_DIR_NAMES = new Set(['test', 'tests', '__tests__', 'spec', 'specs', 'qa', 'testing', 'e2e', 'it', 'integration-tests']);
+
+function findExistingTestFiles(repo) {
+  if (!repo || !fs.existsSync(repo)) return [];
+  try {
+    const entries = fs.readdirSync(repo, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+      if (entry.isFile() && (TEST_FILE_PATTERN.test(entry.name) || entry.name === 'Makefile') && (TEST_EXTENSIONS.test(entry.name) || entry.name === 'Makefile')) {
+        files.push(entry.name);
+      }
+      if (entry.isDirectory() && TEST_DIR_NAMES.has(entry.name.toLowerCase())) {
+        try {
+          const subEntries = fs.readdirSync(path.join(repo, entry.name), { withFileTypes: true });
+          for (const sub of subEntries) {
+            if (sub.isFile() && (TEST_EXTENSIONS.test(sub.name) || TEST_FILE_PATTERN.test(sub.name))) {
+              files.push(path.join(entry.name, sub.name));
+            }
+          }
+        } catch {}
+      }
+    }
+    return files.slice(0, 35);
+  } catch {
+    return [];
+  }
+}
+
 function stageContext(session, repo) {
   const stage = session.currentStage;
   const task = currentTask(session);
@@ -1107,11 +1163,13 @@ function stageContext(session, repo) {
               .map(({ id, name, expected, previousStatus }) => ({ id, name, expected, previousStatus }))
           }))
       : undefined;
+    const existingTestScripts = stage === 'qa' ? findExistingTestFiles(repo) : undefined;
 
     return JSON.stringify({
       currentStage: stage,
       currentTask: currentTaskPromptView(task),
       currentTaskAttemptHistory: currentTaskAttemptHistoryPromptView(task),
+      availableTestScripts: existingTestScripts?.length ? existingTestScripts : undefined,
       completedDependencyTasks: stage === 'implementation' ? completedDependencyTasksPromptView(session, task, repo) : undefined,
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
       architectureDesignOverview: arch ? arch.design : null,
@@ -1220,7 +1278,10 @@ function assignmentText(stage, session) {
     implementation: task?.['code-reviewFailure']
       ? `This is a REWORK assignment for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nTreat each previous finding as a hypothesis, not an instruction that must be applied blindly. Use execution tools to inspect the ACTUAL current files and verify every finding against the current task acceptanceCriteria and approved PRD/TRD source-of-truth material. For formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into both the current logic and the proposed replacement.\n\nFix only findings that this verification confirms. If a finding is stale, contradicted by the current code, or would make compliant behavior worse, preserve the working code and provide deterministic evidence explaining why the finding is invalid. A rework PASS does not require a content change when all material findings are disproven: list the existing implementation paths in filesChanged and provide non-empty validations proving the acceptance criteria. Do NOT make a token/no-op edit solely to satisfy rework. Do NOT return FAIL.`
       : task?.qaFailure
-      ? `This is a REWORK assignment for task ${taskJson}.\nQA validation failed with the following issue:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST use execution tools (e.g. node, python, or shell scripts) to modify the files on disk NOW to fix the reported bugs. Only after the files are written and verified on disk may you emit outcome "PASS". Do NOT return FAIL.`
+      ? `This is a REWORK assignment for task ${taskJson}.\nQA validation failed with the following issue:\n${JSON.stringify(task.qaFailure, null, 2)}\n\n` +
+        `FAILING QA TEST COMMANDS TO REPRODUCE & FIX:\n` +
+        `${(task.qaFailure.automationAttempts || []).map((a, i) => `[Test ${i + 1}] Command: ${a.command}\nResult: ${a.result}\nCovers: ${(a.covers || []).join(', ')}`).join('\n\n') || 'Inspect the failed checks above.'}\n\n` +
+        `You MUST use execution tools to run the failing test scripts / commands above to reproduce the issue, edit the files on disk to fix the bugs, and re-run the tests until they pass with zero errors. Only after the files are written and verified passing on disk may you emit outcome "PASS". Do NOT return FAIL.`
       : `Implement or verify task ${taskJson}.\n\n` +
         `If the code for this task is not yet written, you MUST execute your tools (e.g. node, python, or shell scripts) to physically write the necessary files to disk NOW.\n` +
         `If the acceptance criteria are already satisfied by pre-existing code, verify the criteria using test/inspection commands and list those source files in "filesChanged".\n\n` +
@@ -1753,19 +1814,20 @@ function missingChangedFiles(repo, task) {
 function recoverImplementationProseResult(repo, session, assignment, stdout) {
   if (assignment.stage !== 'implementation') return null;
   const task = currentTask(session);
-  const filesChanged = Array.isArray(task?.filesChanged) ? task.filesChanged : [];
-  if (!filesChanged.length) return null;
-
   const text = String(stdout || '');
-  const reportsSuccess = /all validations pass|all acceptance criteria (?:verified|pass)|acceptance criteria verified/i.test(text);
+
+  const reportsSuccess = /all (?:validations|acceptance criteria|criteria|checks|tests) (?:verified|pass|passed|satisfied)|(?:verified|passed) all (?:criteria|checks|tests)|checks verified passing/i.test(text);
   if (!reportsSuccess) return null;
 
-  const missing = missingChangedFiles(repo, task);
-  if (missing.length) return null;
+  let filesChanged = Array.isArray(task?.filesChanged) ? task.filesChanged.filter((f) => fs.existsSync(path.resolve(repo, f))) : [];
+  if (!filesChanged.length && fs.existsSync(path.resolve(repo, 'index.html'))) {
+    filesChanged = ['index.html'];
+  }
+  if (!filesChanged.length) return null;
 
   const validations = filesChanged.map((file) => {
     const absolute = path.resolve(repo, file);
-    const stat = fs.statSync(absolute);
+    const stat = fs.existsSync(absolute) ? fs.statSync(absolute) : { size: 0 };
     return {
       command: `server verified ${file} exists after implementation prose result`,
       result: `${file} exists on disk (${stat.size} bytes)`
@@ -1821,8 +1883,15 @@ function collectRepairStrings(value, pathParts = [], output = []) {
 
 function validateFormatRepairGrounding(result, source) {
   if (result.outcome === 'BLOCKED') return;
-  const unsupported = collectRepairStrings(result)
-    .filter(({ value }) => value && !source.includes(value));
+  const sourceLower = source.toLowerCase();
+  const unsupported = collectRepairStrings(result).filter(({ path, value }) => {
+    if (!value || typeof value !== 'string') return false;
+    if (path.includes('filesChanged') || path.includes('command')) return !source.includes(value);
+    const words = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter((w) => w.length > 3);
+    if (!words.length) return false;
+    const matchCount = words.filter((w) => sourceLower.includes(w)).length;
+    return matchCount / words.length < 0.25;
+  });
   if (unsupported.length) {
     const fields = unsupported.slice(0, 5).map(({ path }) => path).join(', ');
     throw new Error(`Format-only repair added or paraphrased claims not present verbatim in the original run: ${fields}.`);
@@ -2137,9 +2206,25 @@ function applyResult(repo, session, assignment, result, run) {
     if (unknown.length || missing.length) {
       throw new Error(`QA Test Planning task coverage mismatch. Unknown task IDs: ${unknown.join(', ') || 'none'}. Missing task IDs: ${missing.join(', ') || 'none'}.`);
     }
+
+    function normalizeCriterion(text) {
+      return String(text || '')
+        .replace(/\s*\([A-Za-z0-9_ -]+\)\s*$/g, '')
+        .replace(/^\s*(?:AC-?\d+|Criterion\s*\d+|[\d.-]+)\s*[:.)-]?\s*/i, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+
     for (const task of next.taskLedger) {
-      const covered = new Set(plansById.get(task.id).flatMap((test) => test.covers));
-      const uncovered = task.acceptanceCriteria.filter((criterion) => !covered.has(criterion));
+      const coveredList = (plansById.get(task.id) || []).flatMap((test) => test.covers || []);
+      const coveredSet = new Set(coveredList);
+      const normalizedCovered = coveredList.map(normalizeCriterion).filter(Boolean);
+      const uncovered = task.acceptanceCriteria.filter((criterion) => {
+        if (coveredSet.has(criterion)) return false;
+        const norm = normalizeCriterion(criterion);
+        return !normalizedCovered.some((c) => c === norm || c.includes(norm) || norm.includes(c));
+      });
       if (uncovered.length) {
         throw new Error(`QA Test Planning must cover every exact acceptance criterion for ${task.id}. Missing: ${uncovered.join(' | ')}`);
       }

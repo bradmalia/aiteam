@@ -20,7 +20,7 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_status',
-    description: 'Read one AITEAM session, enforced workflow gate, active agent, current phase, and remaining phases. This never advances work and must not be polled.',
+    description: 'Read the active AITEAM session, enforced workflow gate, active agent, current phase, remaining phases, and Watch Dashboard URL. Also verifies and ensures the local Watch Dashboard server is actively running. This never advances work and must not be polled.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' } } }
   },
   {
@@ -139,6 +139,7 @@ function pendingUserInputSummary(session) {
 }
 
 function workflowSummary(session, workflow) {
+  const watchPort = session?.watchPort || (session?.repository ? getWatchPort(session.repository) : null);
   return {
     sessionId: session?.id || null,
     status: session?.status || workflow?.status || null,
@@ -146,7 +147,7 @@ function workflowSummary(session, workflow) {
     currentTaskId: session?.currentTaskId || workflow?.currentTaskId || null,
     phase: workflow?.phase || null,
     remainingPhases: workflow?.remainingPhases || [],
-    watchDashboard: session?.watchPort ? `http://127.0.0.1:${session.watchPort}/` : null
+    watchDashboard: watchPort ? `http://127.0.0.1:${watchPort}/` : null
   };
 }
 
@@ -276,19 +277,20 @@ function watchHealth(port) {
   });
 }
 
-async function ensureWatchServer(repo) {
+export async function ensureWatchServer(repo, { openBrowser: shouldOpen = false } = {}) {
   if (process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
     return getWatchPort(repo);
   }
   const resolved = path.resolve(repo);
-  const basePort = getWatchPort(resolved);
+  const session = readSession(resolved);
+  const basePort = session?.watchPort || getWatchPort(resolved);
   const watchScript = path.resolve(fileURLToPath(import.meta.url), '../watch-server.mjs');
   for (let offset = 0; offset < 20; offset += 1) {
     const port = 1024 + ((basePort - 1024 + offset) % (65535 - 1024 + 1));
     const existing = await watchHealth(port);
     if (existing?.repository === resolved) {
       watchPorts.set(resolved, port);
-      openBrowser(`http://127.0.0.1:${port}/`);
+      if (shouldOpen) openBrowser(`http://127.0.0.1:${port}/`);
       return port;
     }
     if (existing?.occupied) continue;
@@ -302,7 +304,7 @@ async function ensureWatchServer(repo) {
       const started = await watchHealth(port);
       if (started?.repository === resolved) {
         watchPorts.set(resolved, port);
-        openBrowser(`http://127.0.0.1:${port}/`);
+        if (shouldOpen) openBrowser(`http://127.0.0.1:${port}/`);
         return port;
       }
       if (started?.occupied) break;
@@ -328,7 +330,7 @@ export async function callTool(name, args) {
     let session = newSession(repo, args.request);
     const registry = loadRegistry(repo);
     const coordinatorReadOnly = process.env.AITEAM_COORDINATOR_READ_ONLY === 'true';
-    const watchPort = await ensureWatchServer(repo);
+    const watchPort = await ensureWatchServer(repo, { openBrowser: true });
     session = patchSession(repo, { watchPort });
     const workflow = workflowStatus(session, repo);
     
@@ -399,25 +401,46 @@ export async function callTool(name, args) {
     return textResult(`${text}\n\nAutomatic first-stage execution disabled. Required next action: call aiteam_advance.`, startedContent);
   }
   if (name === 'aiteam_status') {
-    const session = readSession(repo);
+    let session = readSession(repo);
+    let watchPort = null;
+    let watcherStatus = 'offline';
+    try {
+      watchPort = await ensureWatchServer(repo, { openBrowser: false });
+      if (session && session.watchPort !== watchPort) {
+        session = patchSession(repo, { watchPort });
+      }
+      watcherStatus = 'active';
+    } catch {
+      watchPort = session?.watchPort || getWatchPort(repo);
+    }
     const git = gitSnapshot(repo);
     const workflow = workflowStatus(session, repo);
+    const watchUrl = `http://127.0.0.1:${watchPort}/`;
     const text = [
       coordinatorDirectiveText(session, { source: 'status' }),
       '',
+      `Watch Dashboard: ${watchUrl} (${watcherStatus === 'active' ? 'Active / Live' : 'Offline'})`,
       phaseLine(workflow),
       '',
-      JSON.stringify({ session, git }, null, 2)
+      JSON.stringify({ session, git, watchDashboard: watchUrl }, null, 2)
     ].join('\n');
     return textResult(text, {
       session,
       git,
-      workflow,
+      workflow: { ...workflow, watchDashboard: watchUrl },
+      watchDashboard: watchUrl,
+      watcher: {
+        url: watchUrl,
+        port: watchPort,
+        status: watcherStatus,
+        repository: repo
+      },
       nextAssignment: session?.status === 'ACTIVE' && !session.activeRun && !(session.pendingUserInput?.response == null && session.pendingUserInput?.questions?.length) ? getCurrentAssignment(repo) : null,
       coordinatorDirective: coordinatorDirective(session)
     });
   }
   if (name === 'aiteam_advance') {
+    ensureWatchServer(repo, { openBrowser: false }).catch(() => {});
     try {
       const result = await advanceWorkflow({
         repo,

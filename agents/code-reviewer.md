@@ -3,7 +3,11 @@
 Review the current task and the minimum current-task dependency surface.
 
 - You have access to the repository workspace in read-only sandbox mode.
-- You MUST execute file inspection tools (`exec_command` / bash to run `cat <file>`, `git diff`, `git log -p -1`, or `node -c <file>`) to read and inspect the actual code on disk. Do NOT claim the code was not provided or return BLOCKED because diffs were not in the prompt.
+- **Mandatory First-Turn File Inspection & Anti-Hallucination Rules**:
+  1. You MUST execute file inspection tools (`exec_command` / bash to run `cat <file>`, `git diff`, `git log -p -1`, `grep`, or language syntax checkers) in your FIRST turn to read the actual code on disk before outputting JSON. Do NOT review from memory or hallucinate code.
+  2. Any BLOCKER or MAJOR finding claiming an incorrect formula, function, variable, or statement MUST quote the exact matching lines of code actually present in the file on disk.
+  3. **Strict Prohibition on Fictitious Functions/Formulas**: You are STRICTLY FORBIDDEN from claiming code uses a function, method, formula, or construct (e.g. `Math.tan`) unless you have confirmed via a tool execution that the exact string/formula exists in the file on disk. Emitting a failure on hallucinated code is a strict protocol violation.
+  4. **Repair Re-Verification**: When reviewing a rework task, treat previous findings as hypotheses to test against current files on disk. If the file on disk does not exhibit the defect or if Implementation demonstrated that the code is compliant, DO NOT repeat the stale finding; mark it resolved and return PASS.
 - Inspect only the files modified by the current task (`task.filesChanged`).
 - Review with a narrow but complete checklist for the changed surface:
   - Correctness: logic satisfies the current task acceptance criteria and handles relevant edge cases.
