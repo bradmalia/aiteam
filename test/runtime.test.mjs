@@ -92,8 +92,8 @@ test('Agy invocations enforce read-only and writable specialist boundaries', () 
   assert.ok(readOnly.args.includes('--output-format'));
   assert.ok(readOnly.args.includes('json'));
   assert.ok(readOnly.args.includes('/tmp/result.schema.json'));
-  assert.deepEqual(readOnly.args.slice(readOnly.args.indexOf('-p'), readOnly.args.indexOf('-p') + 2), ['-p', 'Review the project']);
-  assert.equal(readOnly.stdinText, undefined);
+  assert.deepEqual(readOnly.args.slice(readOnly.args.indexOf('-p'), readOnly.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(readOnly.stdinText, 'Review the project');
 
   const writable = buildAgyInvocation({
     repo: '/tmp/example-repo',
@@ -107,8 +107,8 @@ test('Agy invocations enforce read-only and writable specialist boundaries', () 
   assert.deepEqual(writable.args.slice(writable.args.indexOf('--mode'), writable.args.indexOf('--mode') + 2), ['--mode', 'accept-edits']);
   assert.ok(!writable.args.includes('--sandbox'));
   assert.ok(!writable.args.includes('--json-schema'));
-  assert.deepEqual(writable.args.slice(writable.args.indexOf('-p'), writable.args.indexOf('-p') + 2), ['-p', 'Implement the task']);
-  assert.equal(writable.stdinText, undefined);
+  assert.deepEqual(writable.args.slice(writable.args.indexOf('-p'), writable.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(writable.stdinText, 'Implement the task');
 
   const reportingRetry = buildAgyInvocation({
     repo: '/tmp/example-repo',
@@ -121,8 +121,8 @@ test('Agy invocations enforce read-only and writable specialist boundaries', () 
   });
   assert.ok(reportingRetry.args.includes('--json-schema'));
   assert.ok(reportingRetry.args.includes('/tmp/result.schema.json'));
-  assert.deepEqual(reportingRetry.args.slice(reportingRetry.args.indexOf('-p'), reportingRetry.args.indexOf('-p') + 2), ['-p', 'Report the implemented task']);
-  assert.equal(reportingRetry.stdinText, undefined);
+  assert.deepEqual(reportingRetry.args.slice(reportingRetry.args.indexOf('-p'), reportingRetry.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(reportingRetry.stdinText, 'Report the implemented task');
 });
 
 test('run metadata redacts prompts regardless of runner argument ordering', () => {
@@ -409,8 +409,8 @@ test('Agy invocations pass prompt via -p argument', () => {
     env: { AITEAM_AGY_BIN: 'agy' }
   });
 
-  assert.deepEqual(invocation.args.slice(invocation.args.indexOf('-p'), invocation.args.indexOf('-p') + 2), ['-p', prompt]);
-  assert.equal(invocation.stdinText, undefined);
+  assert.deepEqual(invocation.args.slice(invocation.args.indexOf('-p'), invocation.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(invocation.stdinText, prompt);
 });
 
 

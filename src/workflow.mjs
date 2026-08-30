@@ -1526,45 +1526,10 @@ function screenMockups(uiDesign) {
 }
 
 function wireframeBody(kind, screen) {
-  if (kind === 'gameplay') {
-    return `
-      <div class="scorebar"><span>PLAYER 0</span><span>AI 0</span></div>
-      <div class="court">
-        <span class="center-line"></span>
-        <span class="paddle player"></span>
-        <span class="paddle ai"></span>
-        <span class="ball"></span>
-        <span class="trail t1"></span>
-        <span class="trail t2"></span>
-        <span class="hud-chip">MOUSE</span>
-      </div>
-      <button class="sound-dot" aria-label="Sound toggle">♪</button>`;
-  }
-  if (kind === 'victory') {
-    return `
-      <div class="court dimmed"><span class="center-line"></span><span class="paddle player"></span><span class="paddle ai"></span></div>
-      <div class="modal">
-        <strong>Winner</strong>
-        <span>Final score</span>
-        <button>Play Again</button>
-        <button>Change Difficulty</button>
-      </div>`;
-  }
-  if (kind === 'menu') {
-    const isStart = /start|difficulty/i.test(screen.name || '');
-    const menuButtons = isStart
-      ? ['Easy', 'Medium', 'Hard', 'Start Game']
-      : ['Resume Game', 'Change Difficulty', 'Sound: On', 'Restart'];
-    return `
-      <div class="screen-title">${escapeHtml(shortLabel(screen.name || 'Menu'))}</div>
-      <div class="button-stack">
-        ${menuButtons.map((btn) => `<button>${escapeHtml(btn)}</button>`).join('')}
-      </div>
-      <button class="sound-dot" aria-label="Sound toggle">♪</button>`;
-  }
+  const components = (screen.components || []).filter(Boolean);
   return `
-    <div class="screen-title">${escapeHtml(screen.name || 'Screen')}</div>
-    <div class="wire-list">${(screen.components || []).filter(Boolean).slice(0, 6).map((component) => `<span>${escapeHtml(shortLabel(component))}</span>`).join('')}</div>`;
+    <div class="screen-title">${escapeHtml(shortLabel(screen.name || 'Screen'))}</div>
+    ${components.length ? `<div class="wire-list">${components.slice(0, 8).map((component) => `<span>${escapeHtml(shortLabel(component))}</span>`).join('')}</div>` : ''}`;
 }
 
 function shortLabel(value) {
@@ -1651,23 +1616,8 @@ function documentShell({ title, subtitle, body }) {
     .wireframe::before { content:""; position:absolute; inset:0; background:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:28px 28px; opacity:.45; pointer-events:none; }
     .screen-title { position:relative; z-index:1; margin:26px auto 22px; text-align:center; font-weight:900; letter-spacing:.16em; font-size:26px; text-shadow:0 0 12px rgba(0,255,136,.7); }
     .button-stack { position:relative; z-index:1; display:grid; gap:12px; max-width:190px; margin:0 auto; }
-    .button-stack button, .modal button { border:1px solid #80ffd6; border-radius:999px; background:rgba(255,255,255,.08); color:#eafff8; padding:10px 14px; font-weight:700; }
-    .scorebar { position:relative; z-index:1; display:flex; justify-content:space-between; font-size:13px; letter-spacing:.08em; margin-bottom:12px; }
-    .court { position:relative; z-index:1; height:190px; border:1px solid rgba(234,255,248,.45); border-radius:10px; background:radial-gradient(circle at center,#142338,#080d16); }
-    .center-line { position:absolute; top:8%; bottom:8%; left:50%; border-left:2px dashed rgba(234,255,248,.45); }
-    .paddle { position:absolute; top:35%; width:8px; height:54px; border-radius:999px; box-shadow:0 0 16px currentColor; }
-    .paddle.player { left:18px; background:#00ff88; color:#00ff88; }
-    .paddle.ai { right:18px; background:#ff4466; color:#ff4466; }
-    .ball { position:absolute; left:58%; top:45%; width:14px; height:14px; border-radius:50%; background:white; box-shadow:0 0 14px white; }
-    .trail { position:absolute; border-radius:50%; background:#00ff88; opacity:.45; }
-    .trail.t1 { left:52%; top:47%; width:10px; height:10px; }
-    .trail.t2 { left:47%; top:49%; width:7px; height:7px; opacity:.25; }
-    .hud-chip { position:absolute; right:8px; bottom:8px; border:1px solid rgba(234,255,248,.4); border-radius:999px; padding:4px 8px; font-size:11px; }
-    .sound-dot { position:absolute; z-index:2; right:14px; top:14px; width:38px; height:38px; border-radius:50%; border:1px solid #80ffd6; background:rgba(255,255,255,.08); color:#eafff8; }
-    .dimmed { opacity:.45; }
-    .modal { position:absolute; z-index:2; inset:54px 42px auto; display:grid; gap:8px; justify-items:center; padding:18px; border:1px solid rgba(234,255,248,.55); border-radius:16px; background:rgba(5,9,15,.88); box-shadow:0 18px 50px rgba(0,0,0,.35); }
-    .wire-list { position:relative; z-index:1; display:grid; gap:10px; margin-top:20px; }
-    .wire-list span, .tags span { display:inline-block; border:1px solid #9ac2bd; border-radius:999px; padding:7px 10px; background:white; color:var(--ink); margin:4px 6px 4px 0; font-size:13px; }
+    .wire-list { position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; justify-content:center; }
+    .wire-list span, .tags span { display:inline-block; border:1px solid #9ac2bd; border-radius:999px; padding:7px 12px; background:rgba(255,255,255,0.9); color:var(--ink); font-size:13px; font-weight:600; }
     .mini-label { margin:12px 0 4px; color:var(--accent); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.08em; }
     .flow-cards, .task-list, .test-groups { display:grid; gap:18px; }
     .flow-card ol { display:grid; gap:8px; padding-left:26px; }
