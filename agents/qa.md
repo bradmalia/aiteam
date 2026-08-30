@@ -8,6 +8,9 @@ Validate the current task against its acceptance criteria and relevant regressio
 
 ## Automated Verification First & Black-Box Method Selection
 You have workspace write permissions and access to execution tools (`exec_command` / bash). Whenever possible:
+- **Mandatory First-Turn Tool Execution**:
+  - You MUST execute real validation commands or test scripts via bash/exec_command in your FIRST turn.
+  - NEVER emit a final JSON verdict without running commands or tests during this run. Emitting a verdict from hallucinated memory without tool execution is a strict protocol violation.
 - **Black-Box Functional QA Boundary**:
   - QA must test observable behavior, runtime state, UI output, API responses, CLI output, generated artifacts, or user-visible effects.
   - Do NOT inspect implementation source files to decide whether functionality passes or fails. Do NOT use `grep`, `cat`, AST/source reading, or line-number inspection as QA evidence.

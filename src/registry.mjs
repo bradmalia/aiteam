@@ -176,6 +176,7 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
 
       return [
         '# FINAL QA EXECUTION ORDER — READ THIS LAST',
+        '0. FIRST-TURN TOOL EXECUTION MANDATE: You MUST run real validation tools via bash (e.g. `python3 <test_script>`, Playwright browser runner, or project test suites) in your FIRST turn. Do NOT emit a final JSON verdict without executing commands first. Emitting a verdict from hallucinated memory without running tools is a strict protocol violation.',
         '1. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
         '2. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
         '2a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
