@@ -138,6 +138,7 @@ test('QA contract requires owned local test ports in manual checks', () => {
 test('programmer specialist contracts include language-specific validation expectations', () => {
   const expectations = [
     ['python', /Python-specific expectations/, /standard-library solutions/, /targeted unit tests/],
+    ['web-javascript', /Web \/ JavaScript-specific expectations/, /browser compatibility/, /runtime browser verification/],
     ['java', /Java-specific expectations/, /public method signatures/, /concurrency/],
     ['dotnet-csharp', /\.NET\/C#-specific expectations/, /nullable-reference-type policy/, /async\/await/],
     ['godot-gdscript', /Godot\/GDScript-specific expectations/, /scene tree/, /_physics_process/],
