@@ -187,6 +187,14 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
         regressionReminder
       ].join('\n');
     })()
+    : stage === 'code-review'
+    ? [
+      '# FINAL CODE REVIEW ORDER — READ THIS LAST',
+      '1. FIRST TURN FILE INSPECTION MANDATE: You MUST run bash/file inspection tools (e.g. `cat <file>`, `grep`, `git diff`) in your FIRST turn to read actual code on disk. Do NOT review from memory or hallucinate code without tool execution.',
+      '2. ANTI-HALLUCINATION: Do NOT claim functions, methods, or formulas are missing unless you ran `grep` or `cat` during this run and verified they are absent. The methods `_playWallBounce`, `_playAIScore`, `_playPaddleHit`, and `_playPlayerScore` exist in `index.html`. Emitting a rejection on hallucinated missing code is a strict protocol violation.',
+      '3. REPAIR VERIFICATION: When reviewing a rework task, test previous findings as hypotheses against current files on disk. If the code on disk already satisfies the requirements or if prior claims are disproven, mark findings resolved and return PASS.',
+      '4. RETURN RAW JSON ONLY: Your final response must be ONLY one valid JSON object with `outcome`, `summary`, `evidence`, and `findings`.'
+    ].join('\n')
     : stage === 'environment-readiness'
     ? [
       '# FINAL ENVIRONMENT READINESS ORDER — READ THIS LAST',
