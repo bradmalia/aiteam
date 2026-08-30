@@ -431,6 +431,7 @@ test('timeout terminates the full specialist process group', async () => {
 
   const saved = {};
   const replacements = {
+    AITEAM_RUNNER: 'codex',
     AITEAM_CODEX_BIN: wrapper,
     AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
     AITEAM_TEST_GRANDCHILD_PID: pidFile,
@@ -487,6 +488,7 @@ test('successful specialist completion terminates residual child processes', asy
 
   const saved = {};
   const replacements = {
+    AITEAM_RUNNER: 'codex',
     AITEAM_CODEX_BIN: wrapper,
     AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
     AITEAM_TEST_RESIDUAL_PID: pidFile,
