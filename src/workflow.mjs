@@ -68,6 +68,16 @@ For Environment Readiness, "outcome" may also be "AWAITING_USER". Return "capabi
   implementation: `${COMMON_SCHEMA}
 For Implementation, you MUST return outcome "PASS" with a NON-EMPTY "filesChanged" array. Never return outcome "FAIL" for your own implementation task.
 
+YOUR FINAL RESPONSE MUST BE ONLY THE RAW JSON OBJECT. DO NOT EMIT CONVERSATIONAL TEXT (e.g. "Here is my summary:", "All checks pass").
+Example required format:
+{
+  "outcome": "PASS",
+  "summary": "Implemented task acceptance criteria and verified in runtime.",
+  "evidence": ["PRD and TRD checked", "Verified acceptance criteria via automated testing."],
+  "filesChanged": ["index.html"],
+  "validations": [{"command": "python3 tests/test.py", "result": "all tests passed"}]
+}
+
 ALREADY IMPLEMENTED / VERIFICATION SCENARIOS:
 If the acceptance criteria for this task are already satisfied by existing code in the repository:
 1. Run inspection or test commands using your tools to verify the criteria.
