@@ -1053,7 +1053,7 @@ function completedDependencyTasksPromptView(session, task, repo) {
 }
 
 function currentTaskAttemptHistoryPromptView(task) {
-  return (task?.attemptHistory || []).slice(-8).map((entry) => ({
+  return (task?.attemptHistory || []).slice(-3).map((entry) => ({
     at: entry.at,
     stage: entry.stage,
     agentId: entry.agentId,
