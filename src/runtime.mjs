@@ -666,7 +666,7 @@ export function redactInvocationArgs(args, prompt) {
 export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
   const command = env.AITEAM_AGY_BIN || 'agy';
   const writable = agent.sandbox === 'workspace-write';
-  const args = ['--add-dir', repo, '--disable-slash-commands'];
+  const args = ['--add-dir', repo, '--disable-slash-commands', '--print-timeout', '30m'];
   if (writable) args.push('--dangerously-skip-permissions', '--mode', 'accept-edits');
   else args.push('--sandbox', '--mode', 'plan');
   const selectedModel = model || env.AITEAM_AGY_MODEL;

@@ -196,6 +196,21 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '3. REPAIR VERIFICATION: When reviewing a rework task, test previous findings as hypotheses against current files on disk. If the code on disk already satisfies the requirements or if prior claims are disproven, mark findings resolved and return PASS.',
       '4. RETURN RAW JSON ONLY: Your final response must be ONLY one valid JSON object with `outcome`, `summary`, `evidence`, and `findings`.'
     ].join('\n')
+    : stage === 'ui-design'
+    ? [
+      '# FINAL UI/UX DESIGN ORDER — READ THIS LAST',
+      '1. COMPREHENSIVE SCREEN MOCKUPS: For each distinct screen/view in the application (e.g. Lobby, Room Setup, Secret Deployment, Gameplay HUD, Modals), produce a complete entry in `screens`.',
+      '2. DETAILED COMPONENTS: In `components`, list each concrete UI component with its purpose and state (e.g. "24x24 Canvas Viewport: Crisp terrain rendering with pan/zoom", "Room Header: Shareable link, copy code button, match mode badge", "Chat Drawer: Collapsible panel for player messages").',
+      '3. PROJECT ALIGNMENT: Ground all screen names, layouts, and components in the actual product domain (e.g. Feudal board game terrain, medieval army trays, secret deployment). Never use generic placeholder components.',
+      '4. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+    ].join('\n')
+    : stage === 'planning'
+    ? [
+      '# FINAL PLANNING ORDER — READ THIS LAST',
+      '1. DECOMPOSE INTO TASKS: You must produce an array of implementation tasks in `tasks`.',
+      '2. OUTCOME: Set outcome to "PASS" and provide a non-empty summary and evidence array.',
+      '3. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+    ].join('\n')
     : stage === 'environment-readiness'
     ? [
       '# FINAL ENVIRONMENT READINESS ORDER — READ THIS LAST',

@@ -1196,19 +1196,27 @@ function stageContext(session, repo) {
   // Planning, QA test planning, and critical-review need the task ledger but not agent details.
   if (['planning', 'qa-planning', 'critical-review'].includes(stage)) {
     const registry = loadRegistry(repo).agents.map(({ id, role, sandbox, capabilities = [] }) => ({ id, role, sandbox, capabilities }));
+    const taskLedgerView = session.taskLedger?.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      specialistId: t.specialistId,
+      acceptanceCriteria: t.acceptanceCriteria,
+      dependencies: t.dependencies
+    }));
     return JSON.stringify({
       request: session.request,
       currentStage: stage,
       requirements: session.stageEvidence.intake?.result || null,
       architecture: architecturePromptView(session.stageEvidence.architecture?.result),
       uiDesign: session.stageEvidence['ui-design']?.result || null,
-      qaTestPlan: session.stageEvidence['qa-planning']?.result || null,
+      qaTestPlan: stage === 'planning' ? undefined : (session.stageEvidence['qa-planning']?.result || null),
       environmentProfile: session.environmentProfile || null,
       reviewArtifacts: reviewArtifactsPromptView(session),
-      plan: session.taskLedger?.length ? undefined : (session.stageEvidence.planning?.result || null),
+      plan: stage === 'planning' || session.taskLedger?.length ? undefined : (session.stageEvidence.planning?.result || null),
       lockedCriticalFindings: session.lockedCriticalFindings,
       pendingUserInput: session.pendingUserInput,
-      taskLedger: session.taskLedger,
+      taskLedger: taskLedgerView?.length ? taskLedgerView : session.taskLedger,
       availableAgents: registry
     }, null, 2);
   }
@@ -1505,7 +1513,7 @@ function svgFlow(title, steps) {
 }
 
 function screenMockups(uiDesign) {
-  const screens = (uiDesign?.screens || []).slice(0, 4);
+  const screens = (uiDesign?.screens || []).slice(0, 8);
   if (!screens.length) return '<p class="muted">No UI mockups yet. UI/UX Design has not run or the product is headless.</p>';
   return `<div class="mockups">${screens.map((screen) => {
     const name = String(screen.name || '').toLowerCase();
@@ -1528,8 +1536,20 @@ function screenMockups(uiDesign) {
 function wireframeBody(kind, screen) {
   const components = (screen.components || []).filter(Boolean);
   return `
-    <div class="screen-title">${escapeHtml(shortLabel(screen.name || 'Screen'))}</div>
-    ${components.length ? `<div class="wire-list">${components.slice(0, 8).map((component) => `<span>${escapeHtml(shortLabel(component))}</span>`).join('')}</div>` : ''}`;
+    <div class="screen-title">${escapeHtml(screen.name || 'Screen')}</div>
+    ${components.length ? `
+      <div class="wireframe-grid">
+        ${components.slice(0, 8).map((comp) => {
+          const parts = String(comp).split(/[:—–]/);
+          const title = parts[0].trim();
+          const desc = parts.slice(1).join(':').trim();
+          return `
+            <div class="wire-component">
+              <strong class="wire-comp-title">${escapeHtml(title)}</strong>
+              ${desc ? `<span class="wire-comp-desc">${escapeHtml(desc)}</span>` : ''}
+            </div>`;
+        }).join('')}
+      </div>` : ''}`;
 }
 
 function shortLabel(value) {
@@ -1615,9 +1635,11 @@ function documentShell({ title, subtitle, body }) {
     .wireframe { position:relative; min-height:260px; border:2px solid var(--accent); border-top:0; border-radius:0 0 14px 14px; padding:18px; background:#09131a; color:#eafff8; overflow:hidden; box-shadow:inset 0 0 50px rgba(0,255,136,.08); }
     .wireframe::before { content:""; position:absolute; inset:0; background:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px); background-size:28px 28px; opacity:.45; pointer-events:none; }
     .screen-title { position:relative; z-index:1; margin:26px auto 22px; text-align:center; font-weight:900; letter-spacing:.16em; font-size:26px; text-shadow:0 0 12px rgba(0,255,136,.7); }
-    .button-stack { position:relative; z-index:1; display:grid; gap:12px; max-width:190px; margin:0 auto; }
-    .wire-list { position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; justify-content:center; }
-    .wire-list span, .tags span { display:inline-block; border:1px solid #9ac2bd; border-radius:999px; padding:7px 12px; background:rgba(255,255,255,0.9); color:var(--ink); font-size:13px; font-weight:600; }
+    .wireframe-grid { position:relative; z-index:1; display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:14px; }
+    .wire-component { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:4px; box-shadow:0 4px 12px rgba(0,0,0,0.2); }
+    .wire-comp-title { font-size:13px; color:#80ffd6; font-weight:700; }
+    .wire-comp-desc { font-size:11px; color:#cbe3db; line-height:1.35; }
+    .wire-list span, .tags span { display:inline-block; border:1px solid #9ac2bd; border-radius:999px; padding:5px 10px; background:rgba(255,255,255,0.9); color:var(--ink); font-size:12px; font-weight:600; }
     .mini-label { margin:12px 0 4px; color:var(--accent); font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:.08em; }
     .flow-cards, .task-list, .test-groups { display:grid; gap:18px; }
     .flow-card ol { display:grid; gap:8px; padding-left:26px; }
