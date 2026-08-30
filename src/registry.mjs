@@ -145,6 +145,9 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
         '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
         '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
         'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
+        '6. MANDATORY OUTPUT FORMAT — RAW JSON ONLY:',
+        '   Your final answer must be ONLY one valid JSON object. Do NOT emit conversational markdown summaries (e.g. "Here is what I did...", "All fixes implemented...", "### Summary"). The workflow engine strictly parses your final message as JSON. Any surrounding prose or missing JSON keys will be rejected.',
+        '   Example final output: {"outcome": "PASS", "summary": "Implemented and verified acceptance criteria on disk.", "evidence": ["Checked PRD and TRD", "Ran python3 tests/test.py -> passed"], "filesChanged": ["index.html"], "validations": [{"command": "python3 tests/test.py", "result": "passed"}]}'
       ].join('\n');
     })()
     : stage === 'qa'
@@ -180,6 +183,7 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
         '4. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
         '5. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
         '6. RETURN ONLY OBSERVATIONS: Report test, expected result, actual result, and runtime evidence. Do not inspect implementation source or prescribe a fix.',
+        '6a. TEST HARNESS SANITY (AUDIO & UI): When testing Web Audio / AudioContext, trigger actions via simulated DOM user gestures (e.g. clicking `#playBtn`). Do not invoke synthetic `AudioContext.resume()` via `page.evaluate()` which violates browser autoplay policy. Distinguish machine-verifiable DOM/state checks from audible perception (use PASS_WITH_MANUAL_VALIDATION for human listening tests; never fail solely because headless has no speakers).',
         regressionReminder
       ].join('\n');
     })()

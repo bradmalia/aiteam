@@ -489,8 +489,8 @@ export function parseStageResult(stage, stdout) {
       return normalized;
     });
     const material = result.findings.some((finding) => ['BLOCKER', 'MAJOR'].includes(finding?.severity));
-    if (stage === 'code-review' && result.outcome === 'BLOCKED') {
-      throw new Error('Code review cannot return BLOCKED. You must inspect the modified files on disk and return PASS or FAIL with findings.');
+    if (material && result.outcome === 'PASS') {
+      throw new Error(`${stage} cannot PASS while BLOCKER or MAJOR findings exist.`);
     }
     if (stage === 'critical-review' && result.outcome !== 'FAIL' && !result.repairStage) result.repairStage = 'none';
     if (stage === 'critical-review' && result.outcome === 'FAIL' && !['architecture', 'planning', 'qa-planning'].includes(result.repairStage)) {
@@ -1828,10 +1828,33 @@ function recoverImplementationProseResult(repo, session, assignment, stdout) {
   const task = currentTask(session);
   const text = String(stdout || '');
 
-  const reportsSuccess = /all (?:qa |black-box )?(?:validations|acceptance criteria|criteria|checks|tests) (?:verified|pass|passed|satisfied)|(?:verified|passed) all (?:criteria|checks|tests)|checks verified passing/i.test(text);
+  const reportsSuccess = (
+    /all (?:qa |black-box )?(?:validations|acceptance criteria|criteria|checks|tests|fixes|changes|issues)\s*(?:are|have been)?\s*(?:implemented|fixed|verified|pass|passed|satisfied)/i.test(text) ||
+    /(?:verified|passed) all (?:criteria|checks|tests|fixes|validations)/i.test(text) ||
+    /acceptance criteria verified/i.test(text) ||
+    /checks verified passing/i.test(text) ||
+    /(?:validation results|test results):/i.test(text) && /\d+\/\d+\s*(?:passed|pass|ok|✅)/i.test(text) ||
+    /all \d+ (?:checks|tests|validations) pass/i.test(text)
+  );
   if (!reportsSuccess) return null;
 
-  let filesChanged = Array.isArray(task?.filesChanged) ? task.filesChanged.filter((f) => fs.existsSync(path.resolve(repo, f))) : [];
+  const extractedFiles = [];
+  const filesMatch = text.match(/\*\*(?:Files modified|Files changed):\*\*\s*([^\n]+)/i);
+  if (filesMatch) {
+    const rawFiles = filesMatch[1].match(/`([^`]+)`/g);
+    if (rawFiles) {
+      for (const rf of rawFiles) {
+        const clean = rf.replace(/`/g, '').trim();
+        if (clean && fs.existsSync(path.resolve(repo, clean))) {
+          extractedFiles.push(clean);
+        }
+      }
+    }
+  }
+
+  let filesChanged = extractedFiles.length
+    ? extractedFiles
+    : Array.isArray(task?.filesChanged) ? task.filesChanged.filter((f) => fs.existsSync(path.resolve(repo, f))) : [];
   if (!filesChanged.length && fs.existsSync(path.resolve(repo, 'index.html'))) {
     filesChanged = ['index.html'];
   }
