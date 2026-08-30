@@ -1816,7 +1816,7 @@ function recoverImplementationProseResult(repo, session, assignment, stdout) {
   const task = currentTask(session);
   const text = String(stdout || '');
 
-  const reportsSuccess = /all (?:validations|acceptance criteria|criteria|checks|tests) (?:verified|pass|passed|satisfied)|(?:verified|passed) all (?:criteria|checks|tests)|checks verified passing/i.test(text);
+  const reportsSuccess = /all (?:qa |black-box )?(?:validations|acceptance criteria|criteria|checks|tests) (?:verified|pass|passed|satisfied)|(?:verified|passed) all (?:criteria|checks|tests)|checks verified passing/i.test(text);
   if (!reportsSuccess) return null;
 
   let filesChanged = Array.isArray(task?.filesChanged) ? task.filesChanged.filter((f) => fs.existsSync(path.resolve(repo, f))) : [];
