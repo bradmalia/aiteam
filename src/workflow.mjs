@@ -1558,127 +1558,32 @@ function screenMockups(uiDesign) {
 }
 
 function wireframeBody(kind, screen) {
-  const name = String(screen.name || '').toLowerCase();
+  const components = screen.components || [];
+  const name = screen.name || 'Screen';
   
-  if (/menu|start|mode/.test(name)) {
-    return `
-      <div style="background:#16100c; border:2px solid #8c6f3d; border-radius:8px; padding:16px; text-align:center; color:#e6d3a3; font-family:Georgia, serif; box-shadow:inset 0 0 30px rgba(0,0,0,0.8);">
-        <div style="font-size:24px; font-weight:bold; letter-spacing:4px; color:#f3c649; text-shadow:0 2px 4px rgba(0,0,0,0.8); border-bottom:1px solid #8c6f3d; padding-bottom:8px; margin-bottom:14px;">👑 FEUDAL ⚔️</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
-          <div style="background:#2a1f18; border:1px solid #c9a96e; border-radius:6px; padding:12px 8px; font-weight:bold; cursor:pointer; color:#fff;">🏰 Online Realm</div>
-          <div style="background:#2a1f18; border:1px solid #8c6f3d; border-radius:6px; padding:12px 8px; font-weight:bold; color:#d8c7a3;">🤖 Solo vs AI</div>
-          <div style="background:#2a1f18; border:1px solid #8c6f3d; border-radius:6px; padding:12px 8px; font-weight:bold; color:#d8c7a3;">👥 Pass & Play</div>
-          <div style="background:#2a1f18; border:1px solid #8c6f3d; border-radius:6px; padding:12px 8px; font-weight:bold; color:#d8c7a3;">📜 Codex & Rules</div>
-        </div>
-        <div style="display:flex; justify-content:space-between; background:#1e1510; border-radius:4px; padding:8px 12px; font-size:11px; color:#a69375; border:1px solid #4a3622;">
-          <span>🛡️ Lord Brad</span>
-          <span>🔊 SFX: ON</span>
-          <span>🟢 Server: Online</span>
-        </div>
-      </div>`;
-  }
-  
-  if (/lobby|browser/.test(name)) {
-    return `
-      <div style="background:#16100c; border:2px solid #8c6f3d; border-radius:8px; padding:14px; color:#e6d3a3; font-family:Georgia, serif; font-size:12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #8c6f3d; padding-bottom:6px; margin-bottom:10px;">
-          <span style="font-weight:bold; color:#f3c649;">⚔️ Available Realms (Online Lobby)</span>
-          <span style="background:#8c6f3d; color:#fff; padding:2px 8px; border-radius:4px; font-size:10px;">+ Summon Realm</span>
-        </div>
-        <div style="display:flex; gap:6px; margin-bottom:10px;">
-          <input type="text" placeholder="Enter Room Code..." style="background:#2a1f18; border:1px solid #8c6f3d; color:#fff; padding:4px 8px; border-radius:4px; font-size:11px; flex:1;" value="REALM-4" readonly>
-          <button style="background:#c9a96e; color:#1a110b; border:none; font-weight:bold; padding:4px 10px; border-radius:4px; cursor:pointer;">Join</button>
-        </div>
-        <div style="background:#221812; border:1px solid #4a3622; border-radius:4px; overflow:hidden;">
-          <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; padding:6px 8px; background:#2a1f18; font-weight:bold; font-size:10px; color:#f3c649; border-bottom:1px solid #4a3622;">
-            <span>Realm Name</span><span>Mode</span><span>Players</span><span>Action</span>
-          </div>
-          <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; padding:6px 8px; align-items:center; border-bottom:1px solid #332319; font-size:11px;">
-            <span>🛡️ Avalon Clash</span><span>2v2 Teams</span><span>2/4</span><span style="background:#3d6b38; color:#fff; padding:2px 6px; border-radius:3px; font-size:10px;">Join</span>
-          </div>
-          <div style="display:grid; grid-template-columns:2fr 1fr 1fr auto; padding:6px 8px; align-items:center; font-size:11px;">
-            <span>⚔️ High Kingdom</span><span>4p FFA</span><span>3/4</span><span style="background:#3d6b38; color:#fff; padding:2px 6px; border-radius:3px; font-size:10px;">Join</span>
-          </div>
-        </div>
-      </div>`;
-  }
-  
-  if (/waiting|chamber|room/.test(name)) {
-    return `
-      <div style="background:#16100c; border:2px solid #8c6f3d; border-radius:8px; padding:14px; color:#e6d3a3; font-family:Georgia, serif; font-size:11px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #8c6f3d; padding-bottom:6px; margin-bottom:10px;">
-          <div><strong style="color:#f3c649;">Room: Avalon Clash</strong> <span style="color:#a69375;">(Code: #AVLN4)</span></div>
-          <span style="background:#2a1f18; border:1px solid #8c6f3d; color:#c9a96e; padding:2px 6px; border-radius:4px; font-size:10px;">📋 Copy Link</span>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
-          <div style="background:#1a2818; border:1px solid #4a8c44; border-radius:4px; padding:6px 8px;">
-            <div style="font-weight:bold; color:#7ee077;">🟢 Slot 1: Host (You)</div>
-            <div style="font-size:10px; color:#b5e8b2;">Faction: Blue Kingdom • READY</div>
-          </div>
-          <div style="background:#1a2818; border:1px solid #4a8c44; border-radius:4px; padding:6px 8px;">
-            <div style="font-weight:bold; color:#7ee077;">🟢 Slot 2: Sir Cedric</div>
-            <div style="font-size:10px; color:#b5e8b2;">Faction: Red Kingdom • READY</div>
-          </div>
-          <div style="background:#2a1f18; border:1px dashed #8c6f3d; border-radius:4px; padding:6px 8px; color:#a69375;">
-            <div>⚪ Slot 3: [Add Bot / Wait]</div>
-            <div style="font-size:10px;">Faction: Green Kingdom</div>
-          </div>
-          <div style="background:#2a1f18; border:1px dashed #8c6f3d; border-radius:4px; padding:6px 8px; color:#a69375;">
-            <div>⚪ Slot 4: [Open Slot]</div>
-            <div style="font-size:10px;">Faction: Gold Kingdom</div>
-          </div>
-        </div>
-        <div style="background:#110c09; border:1px solid #3d2b1c; border-radius:4px; padding:6px; margin-bottom:8px; height:45px; overflow:hidden; font-size:10px; color:#c4b394;">
-          <div><b style="color:#7ee077;">Sir Cedric:</b> Greetings! Ready for battle?</div>
-          <div><b style="color:#f3c649;">System:</b> Host may start game with 2+ players.</div>
-        </div>
-        <button style="width:100%; background:#f3c649; color:#1a110b; border:none; font-weight:bold; padding:8px; border-radius:4px; cursor:pointer; font-size:12px;">⚔️ Launch Deployment (2-4 Players)</button>
-      </div>`;
-  }
-  
-  // Board / Deployment View
   return `
-    <div style="background:#16100c; border:2px solid #8c6f3d; border-radius:8px; padding:12px; color:#e6d3a3; font-family:Georgia, serif; font-size:11px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <span style="font-weight:bold; color:#f3c649;">🛡️ 24x24 Kingdom Map (Quadrant View)</span>
-        <span style="font-size:10px; color:#80ffd6;">Turn 1: Blue Kingdom</span>
+    <div style="background:#0e171b; border:1px solid #28666e; border-radius:8px; padding:14px; color:#eafff8; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1c464c; padding-bottom:6px; margin-bottom:10px;">
+        <span style="font-weight:700; color:#80ffd6; font-size:13px;">${escapeHtml(name)}</span>
+        <span style="background:#1c464c; color:#a3e5d9; padding:2px 6px; border-radius:4px; font-size:10px; text-transform:uppercase;">${escapeHtml(kind)}</span>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 80px; gap:8px; margin-bottom:8px;">
-        <div style="background:#3a4b33; border:2px solid #283623; border-radius:4px; height:120px; position:relative; overflow:hidden; display:grid; grid-template-columns:repeat(6, 1fr); grid-template-rows:repeat(4, 1fr); gap:1px; padding:2px;">
-          <div style="background:#5a4d41; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">⛰️</div>
-          <div style="background:#5a4d41; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">⛰️</div>
-          <div style="background:#495d3e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🌲</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#4a90e2; font-weight:bold;">👑</div>
-          <div style="background:#2e4425; border:1px solid #7bc676; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:8px; color:#a1ff99;">🟩 Grn</div>
-          <div style="background:#6d635b; border:1px solid #c9a96e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🏰</div>
-          <div style="background:#495d3e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#4a90e2;">🏹</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#4a90e2;">🐎</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#4a90e2;">🗡️</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#4a90e2;">🗡️</div>
-          <div style="background:#495d3e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🌲</div>
-          <div style="background:#5a4d41; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">⛰️</div>
-          <div style="background:#35442d; border-radius:2px;"></div>
-          <div style="background:#35442d; border-radius:2px;"></div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#e24a4a;">🗡️</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#e24a4a;">🐎</div>
-          <div style="background:#495d3e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🌲</div>
-          <div style="background:#5a4d41; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">⛰️</div>
-          <div style="background:#5a4d41; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">⛰️</div>
-          <div style="background:#495d3e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🌲</div>
-          <div style="background:#6d635b; border:1px solid #c9a96e; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px;">🏰</div>
-          <div style="background:#2e4425; border:1px solid #7bc676; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:8px; color:#a1ff99;">🟩 Grn</div>
-          <div style="background:#35442d; border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#e24a4a; font-weight:bold;">👑</div>
-          <div style="background:#35442d; border-radius:2px;"></div>
+      ${components.length ? `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+          ${components.map((comp) => {
+            const parts = String(comp).split(/:\s*(.+)/);
+            const title = parts[0] || comp;
+            const desc = parts[1] || '';
+            return `
+              <div style="background:rgba(255,255,255,0.06); border:1px solid rgba(128,255,214,0.18); border-radius:6px; padding:8px 10px; display:flex; flex-direction:column; gap:3px;">
+                <span style="font-weight:600; color:#80ffd6; font-size:11px;">${escapeHtml(title)}</span>
+                ${desc ? `<span style="color:#b8dbd2; font-size:10px; line-height:1.35;">${escapeHtml(desc)}</span>` : ''}
+              </div>
+            `;
+          }).join('')}
         </div>
-        <div style="background:#221812; border:1px solid #4a3622; border-radius:4px; padding:6px; display:flex; flex-direction:column; justify-content:space-between; font-size:9px;">
-          <div><b>Units:</b><br>👑 King<br>🏹 Archer<br>🐎 Duke<br>🗡️ Pike (4)</div>
-          <button style="background:#f3c649; color:#1a110b; border:none; font-weight:bold; padding:4px; border-radius:3px; font-size:9px; cursor:pointer;">End Turn</button>
-        </div>
-      </div>
-      <div style="display:flex; justify-content:space-between; font-size:10px; color:#a69375;">
-        <span>🔍 Pan & Zoom / Touch Drag</span>
-        <span>🟩 Castle Green stops entry</span>
-      </div>
+      ` : `
+        <div style="padding:12px; text-align:center; color:#789c96;">${escapeHtml(screen.layout || 'Component overview')}</div>
+      `}
     </div>`;
 }
 
