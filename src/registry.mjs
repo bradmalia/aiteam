@@ -222,7 +222,15 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '5. HUMAN HANDOFF: If safe isolated preparation cannot provide a required capability, return AWAITING_USER with exact tool, reason, observed problem, alternatives, install steps, and verification command.',
       '6. PASS PROFILE: PASS only with VERIFIED capabilities, verified file operations, no missing tools, and concrete command evidence.'
     ].join('\n')
+    : stage === 'critical-review'
+    ? [
+      '# FINAL CRITICAL REVIEW ORDER — READ THIS LAST',
+      '1. REPAIR VERIFICATION ON QA PLANS: The AITEAM workflow server automatically populates `taskLedger[].blackBoxTestPlan` from the QA Test Planner artifact `qaTestPlan.taskTestPlans`. If all tasks have valid test plans in `qaTestPlan.taskTestPlans` (or `taskLedger`), mark finding CR-QA-001 as RESOLVED. Do NOT fail or repeat CR-QA-001 claiming the agent must mutate the session ledger.',
+      '2. PASS PROFILE: When existing findings are resolved and the plan/QA coverage is sound, return outcome "PASS" with `repairStage: "none"` and findings marked RESOLVED.',
+      '3. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+    ].join('\n')
     : stage === 'intake'
+
     ? [
       '# FINAL INTAKE ORDER — READ THIS LAST',
       '1. COMPREHENSIVE REQUIREMENTS: When the user requests game rules, piece movement rules, board dimensions, combat mechanics, and terrain restrictions (e.g. from markdown rule files or PDFs in the repo), you MUST include every single specific rule, piece count, movement rule per piece and terrain type, and victory condition as EXPLICIT, INDIVIDUAL entries in `requirements` and `acceptanceCriteria`. Do not condense or generalize them into high-level summaries.',
