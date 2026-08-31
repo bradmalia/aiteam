@@ -205,7 +205,16 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '3. PROJECT ALIGNMENT: Ground all screen names, layouts, and components in the actual product domain (e.g. Feudal board game terrain, medieval army trays, secret deployment). Never use generic placeholder components.',
       '4. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
     ].join('\n')
+    : stage === 'qa-planning'
+    ? [
+      '# FINAL QA PLANNING ORDER — READ THIS LAST',
+      '1. COMPLETE TASK COVERAGE: Provide an entry in `taskTestPlans` for every single task in `taskLedger` (e.g. task-01 through task-N).',
+      '2. EXACT ACCEPTANCE CRITERIA IN COVERS: Every single acceptance criterion from every task MUST be copied verbatim into at least one test\'s `covers` array for that task. Group related criteria into 2 to 4 tests per task so the entire plan fits within output limits, but do NOT leave any criterion out of `covers`.',
+      '3. OUTCOME: Return outcome "PASS" with non-empty summary, evidence, taskTestPlans, regressionStrategy, coverageNotes, and requiredCapabilities.',
+      '4. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+    ].join('\n')
     : stage === 'planning'
+
     ? [
       '# FINAL PLANNING ORDER — READ THIS LAST',
       '1. DECOMPOSE INTO TASKS: You must produce an array of implementation tasks in `tasks`.',
