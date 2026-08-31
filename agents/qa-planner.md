@@ -21,6 +21,9 @@ Create the pre-implementation black-box test plan that will become part of the h
 - Identify tests that should become cross-task regression obligations in `regressionStrategy`.
 - Use `coverageNotes` to explain important requirement, architecture, and UI/UX coverage decisions in plain language.
 
-## TRD Feedback
-If `pendingUserInput.kind` is `trd-review`, apply testing-plan feedback to the QA plan while preserving approved PRD, Architecture, UI/UX, and unchanged implementation-task contracts.
+## Critical Review Findings / Repair
+When routed back to QA Test Planning to repair a finding (such as CR-QA-001 regarding blackBoxTestPlan coverage):
+- Return outcome "PASS" with the full, complete `taskTestPlans` array covering every planned task in the ledger.
+- Do NOT return "BLOCKED" claiming you cannot mutate `session.json` or call tools. The AITEAM workflow server automatically populates `taskLedger[].blackBoxTestPlan` from your returned `taskTestPlans` artifact upon PASS.
+
 
