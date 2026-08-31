@@ -222,6 +222,13 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '5. HUMAN HANDOFF: If safe isolated preparation cannot provide a required capability, return AWAITING_USER with exact tool, reason, observed problem, alternatives, install steps, and verification command.',
       '6. PASS PROFILE: PASS only with VERIFIED capabilities, verified file operations, no missing tools, and concrete command evidence.'
     ].join('\n')
+    : stage === 'intake'
+    ? [
+      '# FINAL INTAKE ORDER — READ THIS LAST',
+      '1. COMPREHENSIVE REQUIREMENTS: When the user requests game rules, piece movement rules, board dimensions, combat mechanics, and terrain restrictions (e.g. from markdown rule files or PDFs in the repo), you MUST include every single specific rule, piece count, movement rule per piece and terrain type, and victory condition as EXPLICIT, INDIVIDUAL entries in `requirements` and `acceptanceCriteria`. Do not condense or generalize them into high-level summaries.',
+      '2. NO RE-CONFIRMATION LOOPS: When the user has answered the pending questions or provided rule source files, incorporate all rules immediately and return outcome "PASS" with `userConfirmed: true` and `questions: []`. Do NOT return "AWAITING_USER" asking for PRD approval — PRD Review is the subsequent server-enforced gate that handles document approval.',
+      '3. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+    ].join('\n')
     : null;
 
 

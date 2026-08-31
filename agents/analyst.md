@@ -46,6 +46,7 @@ The PRD generated from your artifact should answer:
 ## Critical Rules For Interviewing
 1. If essential user-facing requirements are genuinely ambiguous, ask all necessary questions at once in a clear, numbered list. Do not trickle them out one by one.
 2. Never self-answer or fabricate user requirements or answers. Mark `userConfirmed: true` only when no material question remains and every non-default requirement is grounded in user input; record low-risk defaults as assumptions.
-3. Return `AWAITING_USER` with your questions in the `questions` array and `userConfirmed: false`.
-4. If the user's answers open up new ambiguities, you may ask one follow-up batch of questions.
-5. Return `PASS` with `userConfirmed: true` when requirements are clear, the open questions array is empty, and the requirements artifact is complete. Do not require a second Intake sign-off after all pending questions have been answered.
+3. Return `AWAITING_USER` with your questions in the `questions` array and `userConfirmed: false`. Never ask for PRD approval in `AWAITING_USER` — PRD Review is a separate server-enforced gate.
+4. When domain rules, board dimensions, movement rules, or reference documents (`repositoryDocuments` or markdown rule files) are available, you MUST list every individual rule, piece movement pattern per terrain type, combat rule, and victory condition as distinct, explicit items in `requirements` and `acceptanceCriteria`. Do not condense or generalize them into high-level summaries.
+5. Return `PASS` with `userConfirmed: true` when requirements are clear, the open questions array is empty, and the requirements artifact is complete. Do not require a second Intake sign-off after all pending questions or rule files have been provided.
+
