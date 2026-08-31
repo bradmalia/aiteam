@@ -785,6 +785,13 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   if (!fs.existsSync(childConfigPath)) {
     fs.writeFileSync(childConfigPath, '# Dedicated AITEAM child configuration\n');
   }
+  const parentAuthPath = path.join(os.homedir(), '.codex', 'auth.json');
+  const childAuthPath = path.join(codexHome, 'auth.json');
+  if (fs.existsSync(parentAuthPath) && !fs.existsSync(childAuthPath)) {
+    try {
+      fs.copyFileSync(parentAuthPath, childAuthPath);
+    } catch {}
+  }
   childEnv.CODEX_HOME = codexHome;
   return { command, args, childEnv, stdinText: prompt };
 }
