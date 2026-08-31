@@ -1202,7 +1202,8 @@ function stageContext(session, repo) {
       description: t.description,
       specialistId: t.specialistId,
       acceptanceCriteria: t.acceptanceCriteria,
-      dependencies: t.dependencies
+      dependencies: t.dependencies,
+      blackBoxTestPlan: t.blackBoxTestPlan
     }));
     return JSON.stringify({
       request: session.request,
