@@ -27,4 +27,9 @@ Your output feeds the human TRD. Write task descriptions, acceptance criteria, a
 - **Repository Verification & Greenfield Planning**:
   - For existing repositories, verify that files to be modified actually exist on disk before referencing them.
   - For greenfield / new feature development, plan clear tasks to create the new files, directories, and modules from scratch.
+- **Task Granularity & Complexity Slicing**:
+  - Keep tasks focused: each task should have **no more than 3 to 6 distinct acceptance criteria**.
+  - If a domain component involves multiple entities, complex sub-rules, or distinct mechanics (e.g. 8 different game piece movement patterns, distinct terrain interaction classes, or multi-phase turn state machines), **decompose the work into separate incremental tasks** (e.g., Core Mounted Movement & Board Bounds → Footmen Movement & Rough Terrain → Special Units Jump & Ranged Mechanics) rather than bundling them into a single monolithic task.
+  - Slicing complex tasks into clean increments prevents programmer overload and ensures QA test plans can be generated reliably.
 - If a task produces a scaffold or stub for future tasks, describe only the scaffold — not the future implementation. Write "create the HTML skeleton with a JS placeholder comment" not "create the HTML skeleton with the full game engine below."
+

@@ -17,8 +17,10 @@ Create the pre-implementation black-box test plan that will become part of the h
 - Never prescribe Playwright or any single framework when another black-box method may be stronger. Describe the evidence needed; execution QA chooses suitable tools.
 - Never use source inspection, paths with line numbers, function names, formulas, root-cause claims, implementation instructions, or repair guidance.
 - Do not probe or install tools during QA Planning. Environment Readiness performs those checks after the human approves the TRD.
+- Group related acceptance criteria into cohesive, high-level test suites rather than generating dozens of micro-tests per task. A single test entry can list multiple criteria in `covers`. Aim for 2 to 5 comprehensive tests per task so the entire plan across all tasks is concise and complete.
 - Identify tests that should become cross-task regression obligations in `regressionStrategy`.
 - Use `coverageNotes` to explain important requirement, architecture, and UI/UX coverage decisions in plain language.
 
 ## TRD Feedback
 If `pendingUserInput.kind` is `trd-review`, apply testing-plan feedback to the QA plan while preserving approved PRD, Architecture, UI/UX, and unchanged implementation-task contracts.
+
