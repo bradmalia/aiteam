@@ -26,8 +26,9 @@ Also reject source material that would make the PRD/TRD incomplete as a source o
   - Verify that proposed coordinate math, clamping ranges, or formulas are mathematically coherent and do not contradict visual or physical requirements (e.g., verifying that paddle top edges at `minY` do not clip past boundaries).
   - Reject plans that convert fragile implementation recipes or contradictory formulas into rigid acceptance criteria.
 - **BLACK-BOX QA PLAN CHECK**:
-  - Treat the QA Test Planner artifact as the owner of the test plan; do not accept a plan attributed only to Planner.
-  - Reject plans where any implementation task lacks a non-empty `blackBoxTestPlan`.
+  - Treat the QA Test Planner artifact (`stageEvidence.['qa-planning'].result.taskTestPlans`) as the authoritative owner of the test plan; do not accept a plan attributed only to Planner.
+  - Verify that every planned task has a corresponding test plan in `taskTestPlans` (or `taskLedger[].blackBoxTestPlan`). Note: The AITEAM workflow engine automatically populates `taskLedger[].blackBoxTestPlan` from the QA Planner's `taskTestPlans` output upon QA stage completion. Do NOT flag a finding claiming the QA agent must directly mutate the session ledger.
+  - Reject QA plans where any planned implementation task lacks observable tests or fails to cover its acceptance criteria.
   - Reject QA plans that rely on source inspection, source line numbers, function names, implementation formulas, or repair instructions.
   - Reject architecture or QA plans whose required environment capabilities are missing, tied unnecessarily to one preferred product, lack reasonable alternatives, or cannot be verified with an observable functional probe.
   - Verify each planned QA test states the runtime action, expected observable result, and evidence method that QA can use later, and that the plan covers relevant acceptance criteria and non-functional requirements.
