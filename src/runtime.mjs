@@ -676,8 +676,8 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
     args.push('--output-format', 'json');
     args.push('--json-schema', effectiveSchema);
   }
-  args.push('-p', prompt);
-  return { command, args, childEnv: { ...env } };
+  args.push('-p', '-');
+  return { command, args, childEnv: { ...env }, stdinText: prompt };
 }
 
 export function detectRunner(env = process.env) {
@@ -777,9 +777,9 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-');
 
   const childEnv = { ...env };
-  // Child specialist runners should use an isolated CODEX_HOME so they don't inherit
-  // the parent Coordinator's MCP tools (like `aiteam_advance`) or loop indefinitely.
-  const codexHome = env.AITEAM_CHILD_CODEX_HOME || path.join(os.homedir(), '.aiteam-child-home');
+  const rawCodexHome = env.AITEAM_CODEX_HOME || inherited?.codexHome || env.CODEX_HOME || null;
+  const isDedicatedChildHome = rawCodexHome && rawCodexHome !== path.join(os.homedir(), '.codex');
+  const codexHome = isDedicatedChildHome ? rawCodexHome : (env.AITEAM_CHILD_CODEX_HOME || path.join(os.homedir(), '.aiteam-child-home'));
   fs.mkdirSync(codexHome, { recursive: true });
   const childConfigPath = path.join(codexHome, 'config.toml');
   if (!fs.existsSync(childConfigPath)) {
