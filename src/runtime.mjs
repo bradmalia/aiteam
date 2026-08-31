@@ -777,7 +777,9 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
   args.push('-');
 
   const childEnv = { ...env };
-  const codexHome = env.AITEAM_CODEX_HOME || inherited?.codexHome || env.CODEX_HOME || path.join(os.homedir(), '.aiteam-child-home');
+  // Child specialist runners should use an isolated CODEX_HOME so they don't inherit
+  // the parent Coordinator's MCP tools (like `aiteam_advance`) or loop indefinitely.
+  const codexHome = env.AITEAM_CHILD_CODEX_HOME || path.join(os.homedir(), '.aiteam-child-home');
   fs.mkdirSync(codexHome, { recursive: true });
   const childConfigPath = path.join(codexHome, 'config.toml');
   if (!fs.existsSync(childConfigPath)) {
