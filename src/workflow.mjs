@@ -2318,7 +2318,28 @@ function applyResult(repo, session, assignment, result, run) {
     next.lastFailure = null;
     appendEvent(repo, { type: 'environment_readiness_verified', runId: run.runId, capabilities: result.capabilities.map((capability) => capability.id) });
   } else if (stage === 'implementation') {
-    const missing = result.filesChanged.filter((file) => !fs.existsSync(path.resolve(repo, file)));
+    const declaredFiles = Array.isArray(result.filesChanged) ? result.filesChanged : [];
+    // Auto-discover legitimate companion repo files created in standard source/config/script directories
+    const potentialCompanionDirs = ['config', 'src', 'scripts', 'tests', 'lib'];
+    const autoDiscovered = [];
+    for (const dir of potentialCompanionDirs) {
+      const fullDir = path.resolve(repo, dir);
+      if (fs.existsSync(fullDir)) {
+        try {
+          const entries = fs.readdirSync(fullDir, { recursive: true, withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isFile()) {
+              const rel = path.relative(repo, path.join(entry.parentPath || fullDir, entry.name)).replaceAll(path.sep, '/');
+              if (!rel.includes('__pycache__') && !rel.endsWith('.pyc') && !rel.endsWith('.swp') && !declaredFiles.includes(rel)) {
+                autoDiscovered.push(rel);
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+    // Filter out missing files
+    const missing = declaredFiles.filter((file) => !fs.existsSync(path.resolve(repo, file)));
     if (missing.length) {
       throw new Error(
         `Implementation specialist did not write files to disk (missing: ${missing.join(', ')}). ` +
@@ -2327,6 +2348,8 @@ function applyResult(repo, session, assignment, result, run) {
         `Call aiteam_advance to retry so the specialist writes the files.`
       );
     }
+    const mergedFilesChanged = [...new Set([...declaredFiles, ...autoDiscovered])];
+    result.filesChanged = mergedFilesChanged;
     recordPostReviewAdvisories(repo, next, stage, result);
     const implementationFingerprint = fingerprintPaths(repo, result.filesChanged);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
