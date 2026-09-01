@@ -2149,16 +2149,19 @@ function applyResult(repo, session, assignment, result, run) {
       next.completedStages = next.completedStages.filter((item) => !['planning', 'qa-planning', 'critical-review'].includes(item));
       next.taskLedger = [];
       next.lastFailure = `QA Test Planning requires task-plan clarification: ${result.summary}`;
-    } else if (stage === 'code-review' || stage === 'qa') {
+    } else if (stage === 'code-review' || stage === 'qa' || stage === 'integration') {
       if (stage === 'code-review') {
         recordWorkflowAdvisory(repo, stage, result, () => validateCodeReviewMaterialFindings(result));
       }
       next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId
         ? stage === 'code-review'
           ? { ...task, status: 'needs-rework', review: null, 'code-reviewFailure': result, qa: null, qaFailure: null, qaFingerprint: null, completedAt: null, integration: null }
-          : { ...task, status: 'needs-rework', qa: null, qaFailure: result, qaFingerprint: null, completedAt: null, integration: null }
+          : stage === 'qa'
+            ? { ...task, status: 'needs-rework', qa: null, qaFailure: result, qaFingerprint: null, completedAt: null, integration: null }
+            : { ...task, status: 'needs-rework', review: null, qa: null, qaFailure: null, qaFingerprint: null, completedAt: null, integration: null }
         : task);
       next.currentStage = 'implementation';
+      next.lastFailure = result.summary || `Integration rejected task ${next.currentTaskId}`;
     } else if (stage === 'implementation') {
       rejectImplementationInspectionDeferral(result);
       rejectImplementationFalseAccessDeferral(result);
