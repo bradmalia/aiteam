@@ -102,6 +102,9 @@ function nonEmptyString(value, name) {
 }
 
 function stringArray(value, name, { nonEmpty = false } = {}) {
+  if (typeof value === 'string' && value.trim()) {
+    value = [value.trim()];
+  }
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
     throw new Error(`${name} must be an array of non-empty strings.`);
   }

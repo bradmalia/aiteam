@@ -2270,3 +2270,48 @@ test('parseStageResult unwraps agy envelope with structured_output or response',
   assert.deepEqual(parsed.goals, ['Test goal']);
 });
 
+test('parseStageResult normalizes single strings to string arrays for array fields', () => {
+  const readinessOutput = JSON.stringify({
+    outcome: 'AWAITING_USER',
+    summary: 'Need human assistance for missing credentials',
+    evidence: ['Observed tool probe failures.'],
+    capabilities: [{
+      id: 'oracle-db',
+      requiredBy: 'architecture',
+      selectedTool: 'sqlplus',
+      probeCommand: 'sqlplus /nolog',
+      status: 'VERIFIED',
+      version: '19.3',
+      executablePath: 'C:\\bin\\sqlplus.exe',
+      evidence: 'SQLPlus started.'
+    }],
+    fileOperations: {
+      workspaceWriteVerified: true,
+      tempDirectory: '.aiteam-probe',
+      writeMethod: 'fs write',
+      syntaxCheckVerified: true,
+      syntaxCheckCommand: 'node -c',
+      evidence: 'Write/read round trip verified.'
+    },
+    missingTools: [{
+      tool: 'Oracle DEV access',
+      capability: 'Database validation',
+      whyNeeded: 'Run PL/SQL tests',
+      detectedProblem: 'ORA-01017',
+      alternativesTried: 'Direct connection',
+      installInstructions: 'Grant user access',
+      verificationCommand: 'sqlplus user/pass@dev',
+      requiresHuman: true
+    }],
+    questions: 'Please grant user access to DEV database.'
+  });
+
+  const parsed = parseStageResult('environment-readiness', readinessOutput);
+  assert.equal(parsed.outcome, 'AWAITING_USER');
+  assert.deepEqual(parsed.capabilities[0].requiredBy, ['architecture']);
+  assert.deepEqual(parsed.missingTools[0].alternativesTried, ['Direct connection']);
+  assert.deepEqual(parsed.missingTools[0].installInstructions, ['Grant user access']);
+  assert.deepEqual(parsed.questions, ['Please grant user access to DEV database.']);
+});
+
+
