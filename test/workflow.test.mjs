@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { advanceWorkflow, completeWorkflow, getCurrentAssignment, normalizeTimeoutSeconds, parseStageResult } from '../src/workflow.mjs';
+import { advanceWorkflow, completeWorkflow, getCurrentAssignment, normalizeTimeoutSeconds, parseStageResult, processExists } from '../src/workflow.mjs';
 import { newSession, readSession, writeSession } from '../src/state.mjs';
 import { callTool } from '../src/server.mjs';
 import { getAgent } from '../src/registry.mjs';
@@ -1917,6 +1917,149 @@ test('implementation context includes completed dependency files and rejects fal
     ])
   }), /completed dependency files on disk: index\.html/);
 });
+
+test('processExists correctly identifies current and non-existent processes', () => {
+  assert.equal(processExists(process.pid), true);
+  assert.equal(processExists(0), false);
+  assert.equal(processExists(-1), false);
+  assert.equal(processExists(9999999), false);
+});
+
+test('concurrent advanceWorkflow calls join the single in-flight execution', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'intake',
+    stageEvidence: session.stageEvidence
+  });
+
+  let runnerCalls = 0;
+  const runner = async () => {
+    runnerCalls += 1;
+    await new Promise((r) => setTimeout(r, 100));
+    return {
+      runId: 'in-flight-run',
+      agentId: 'analyst',
+      role: 'analyst',
+      exitCode: 0,
+      timedOut: false,
+      completedAt: new Date().toISOString(),
+      stdout: result('PASS', { requirements: ['Feature requirement'], acceptanceCriteria: ['Requirement works'], questions: [], userConfirmed: true }),
+      stderr: '',
+      stdoutPath: '',
+      stderrPath: '',
+      metaPath: ''
+    };
+  };
+
+  const [res1, res2] = await Promise.all([
+    advanceWorkflow({ repo, runner, timeoutSeconds: 300 }),
+    advanceWorkflow({ repo, runner, timeoutSeconds: 300 })
+  ]);
+
+  assert.equal(runnerCalls, 1);
+  assert.equal(res1.result.outcome, 'PASS');
+  assert.equal(res2.result.outcome, 'PASS');
+  assert.equal(res1.run.runId, 'in-flight-run');
+  assert.equal(res2.run.runId, 'in-flight-run');
+  const finalSession = readSession(repo);
+  assert.equal(finalSession.currentStage, 'prd-review');
+  assert.equal(finalSession.activeRun, null);
+});
+
+test('orphaned activeRun lease from current process is recovered automatically', () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build feature');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'intake',
+    activeRun: {
+      agentId: 'analyst',
+      role: 'analyst',
+      stage: 'intake',
+      attempt: 1,
+      ownerPid: process.pid,
+      startedAt: new Date().toISOString()
+    }
+  });
+
+  const assignment = getCurrentAssignment(repo);
+  assert.equal(assignment.agentId, 'analyst');
+  assert.equal(assignment.stage, 'intake');
+  const recoveredSession = readSession(repo);
+  assert.equal(recoveredSession.activeRun, null);
+  assert.match(recoveredSession.lastFailure, /Recovered orphaned active-run lease/);
+});
+
+test('advanceWorkflow returns inProgress status cleanly when exceeding bounded maxWaitSeconds', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Long-running analysis');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'intake',
+    stageEvidence: session.stageEvidence
+  });
+
+  let resolveRunner;
+  const runnerPromise = new Promise((resolve) => {
+    resolveRunner = resolve;
+  });
+
+  const runner = async () => {
+    return await runnerPromise;
+  };
+
+  // First advance with 0.1s max wait -> should return inProgress: true
+  const firstCall = await advanceWorkflow({
+    repo,
+    runner,
+    maxWaitSeconds: 0.1,
+    timeoutSeconds: 300
+  });
+
+  assert.equal(firstCall.inProgress, true);
+  assert.equal(firstCall.assignment.stage, 'intake');
+  assert.equal(firstCall.assignment.agentId, 'analyst');
+  assert.equal(typeof firstCall.elapsedSeconds, 'number');
+
+  // Verify the activeRun is still recorded on disk
+  const midSession = readSession(repo);
+  assert.notEqual(midSession.activeRun, null);
+  assert.equal(midSession.activeRun.stage, 'intake');
+
+  // Complete the underlying runner
+  resolveRunner({
+    runId: 'long-run-1',
+    agentId: 'analyst',
+    role: 'analyst',
+    exitCode: 0,
+    timedOut: false,
+    completedAt: new Date().toISOString(),
+    stdout: result('PASS', { requirements: ['Req 1'], acceptanceCriteria: ['Works'], questions: [], userConfirmed: true }),
+    stderr: '',
+    stdoutPath: '',
+    stderrPath: '',
+    metaPath: ''
+  });
+
+  // Second advance with normal wait -> attaches and receives final completed result
+  const secondCall = await advanceWorkflow({
+    repo,
+    runner,
+    maxWaitSeconds: 2,
+    timeoutSeconds: 300
+  });
+
+  assert.equal(secondCall.inProgress, undefined);
+  assert.equal(secondCall.result.outcome, 'PASS');
+  assert.equal(secondCall.run.runId, 'long-run-1');
+  const finalSession = readSession(repo);
+  assert.equal(finalSession.currentStage, 'prd-review');
+  assert.equal(finalSession.activeRun, null);
+});
+
+
 
 
 test('structured stage schemas and timeout bounds are enforced', () => {

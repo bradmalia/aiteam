@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { newSession, readSession, patchSession, appendEvent } from './state.mjs';
 import { loadRegistry, coordinatorContract, registerScopedSpecialist } from './registry.mjs';
 import { activeProcesses, killActiveProcessTrees, killChildTree } from './runtime.mjs';
-import { gitSnapshot, ensureGitRepo } from './git.mjs';
+import { gitSnapshot, ensureGitRepo, pathsEqual } from './git.mjs';
 import { coordinatorDirective, coordinatorDirectiveText } from './coordinator-guidance.mjs';
 import { advanceWorkflow, completeWorkflow, confirmHumanReview, confirmManualQa, getCurrentAssignment, workflowStatus } from './workflow.mjs';
 
@@ -97,6 +97,26 @@ function phaseLine(workflow, suffix = '') {
 }
 
 export function advanceResultText(result) {
+  if (result.inProgress) {
+    const runningWorkflow = workflowStatus(result.session);
+    const line = phaseLine({
+      ...runningWorkflow,
+      agentId: result.assignment?.agentId,
+      agentRole: result.assignment?.role,
+      phase: result.assignment?.phase,
+      remainingPhases: runningWorkflow.remainingPhases
+    }, ' in progress');
+    const elapsed = result.elapsedSeconds ? ` (${result.elapsedSeconds}s elapsed)` : '';
+    const watchPort = result.session?.watchPort || (result.session?.repository ? getWatchPort(result.session.repository) : null);
+    const dashboardText = watchPort ? `\nLive Dashboard: http://127.0.0.1:${watchPort}/` : '';
+    return [
+      line,
+      `Specialist ${result.assignment?.role || result.assignment?.agentId || 'agent'} is actively executing in the background${elapsed}.`,
+      dashboardText,
+      'MANDATORY SAME-TURN ACTION: Call aiteam_advance immediately to continue monitoring the running specialist until it finishes.'
+    ].filter(Boolean).join('\n');
+  }
+
   const stateLabel = result.result.outcome === 'AWAITING_USER'
     ? 'awaiting user'
     : ['PASS', 'PASS_WITH_MANUAL_VALIDATION'].includes(result.result.outcome) ? 'finished' : 'failed';
@@ -198,6 +218,24 @@ function completedStageSummary(result) {
 }
 
 export function compactAdvanceResult(result) {
+  if (result.inProgress) {
+    const directive = coordinatorDirective(result.session);
+    const watchPort = result.session?.watchPort || (result.session?.repository ? getWatchPort(result.session.repository) : null);
+    return {
+      inProgress: true,
+      stage: result.assignment?.stage || null,
+      agentId: result.assignment?.agentId || null,
+      role: result.assignment?.role || null,
+      elapsedSeconds: result.elapsedSeconds || null,
+      workflow: workflowSummary(result.session, result.workflow),
+      watchDashboard: watchPort ? `http://127.0.0.1:${watchPort}/` : null,
+      requiredAction: {
+        tool: 'aiteam_advance',
+        instruction: 'Call aiteam_advance immediately in the same turn to continue awaiting the in-flight specialist.'
+      },
+      prohibitedActions: directive.prohibitedActions || []
+    };
+  }
   const directive = coordinatorDirective(result.session);
   return {
     completed: completedStageSummary(result),
@@ -243,10 +281,18 @@ export function getWatchPort(repo) {
 }
 
 function openBrowser(url) {
-  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+  if (isTestEnvironment()) return;
   try {
-    const child = spawn(cmd, [url], { detached: true, stdio: 'ignore' });
-    child.unref();
+    if (process.platform === 'darwin') {
+      const child = spawn('open', [url], { detached: true, stdio: 'ignore' });
+      child.unref();
+    } else if (process.platform === 'win32') {
+      const child = spawn('cmd.exe', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' });
+      child.unref();
+    } else {
+      const child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+      child.unref();
+    }
   } catch {}
 }
 
@@ -277,8 +323,16 @@ function watchHealth(port) {
   });
 }
 
+function isTestEnvironment() {
+  return process.env.NODE_ENV === 'test' ||
+    Boolean(process.env.NODE_TEST_CONTEXT) ||
+    process.env.AITEAM_SKIP_WATCH_SERVER === 'true' ||
+    process.execArgv.includes('--test') ||
+    process.argv.some((arg) => arg.includes('test'));
+}
+
 export async function ensureWatchServer(repo, { openBrowser: shouldOpen = false } = {}) {
-  if (process.env.NODE_ENV === 'test' || process.env.NODE_TEST_CONTEXT || process.env.AITEAM_SKIP_WATCH_SERVER === 'true') {
+  if (isTestEnvironment()) {
     return getWatchPort(repo);
   }
   const resolved = path.resolve(repo);
@@ -288,7 +342,7 @@ export async function ensureWatchServer(repo, { openBrowser: shouldOpen = false 
   for (let offset = 0; offset < 20; offset += 1) {
     const port = 1024 + ((basePort - 1024 + offset) % (65535 - 1024 + 1));
     const existing = await watchHealth(port);
-    if (existing?.repository === resolved) {
+    if (existing?.repository && pathsEqual(existing.repository, resolved)) {
       watchPorts.set(resolved, port);
       if (shouldOpen) openBrowser(`http://127.0.0.1:${port}/`);
       return port;
@@ -302,7 +356,7 @@ export async function ensureWatchServer(repo, { openBrowser: shouldOpen = false 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const started = await watchHealth(port);
-      if (started?.repository === resolved) {
+      if (started?.repository && pathsEqual(started.repository, resolved)) {
         watchPorts.set(resolved, port);
         if (shouldOpen) openBrowser(`http://127.0.0.1:${port}/`);
         return port;
@@ -508,7 +562,7 @@ export async function callTool(name, args) {
       if (!current.pendingUserInput?.questions?.length) throw new Error('No user validation or Analyst question is awaiting a response.');
       const requestedAt = new Date(current.pendingUserInput.requestedAt || new Date());
       const now = Date.now();
-      if (now - requestedAt.getTime() < 30000 && process.env.NODE_ENV !== 'test') {
+      if (now - requestedAt.getTime() < 30000 && !isTestEnvironment()) {
         throw new Error('STOP CALLING TOOLS. You are hallucinating the user response! You must WAIT for the real human user to reply in chat before calling this tool.');
       }
       const response = typeof patch.pendingUserInput === 'string'

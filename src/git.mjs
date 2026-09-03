@@ -15,6 +15,25 @@ function gitWithEnv(repo, args, env) {
   }).trim();
 }
 
+export function canonicalPath(p) {
+  if (!p) return '';
+  const resolved = path.resolve(p);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+export function pathsEqual(a, b) {
+  const normA = canonicalPath(a);
+  const normB = canonicalPath(b);
+  if (process.platform === 'win32') {
+    return normA.toLowerCase() === normB.toLowerCase();
+  }
+  return normA === normB;
+}
+
 export function ensureGitRepo(repo) {
   let root;
   try {
@@ -23,9 +42,8 @@ export function ensureGitRepo(repo) {
     git(repo, ['init']);
     root = git(repo, ['rev-parse', '--show-toplevel']);
   }
-  const expected = path.resolve(repo);
-  if (path.resolve(root) !== expected) {
-    throw new Error(`Repository boundary mismatch. Requested ${expected}, Git root is ${root}. Initialize Git in the project itself before using AITEAM.`);
+  if (!pathsEqual(root, repo)) {
+    throw new Error(`Repository boundary mismatch. Requested ${path.resolve(repo)}, Git root is ${root}. Initialize Git in the project itself before using AITEAM.`);
   }
 }
 
@@ -56,14 +74,15 @@ function validatedRepoPath(repo, candidate) {
   const value = String(candidate || '').trim();
   if (!value) throw new Error('Validated Git paths must be non-empty.');
   const absolute = path.resolve(repo, value);
-  const relative = path.relative(repo, absolute);
+  const relative = path.relative(path.resolve(repo), absolute);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error(`Validated path escapes the repository: ${value}`);
   }
-  if (relative === '.aiteam' || relative.startsWith(`.aiteam${path.sep}`) || relative === '.git' || relative.startsWith(`.git${path.sep}`)) {
+  const normalizedRelative = relative.replaceAll('\\', '/');
+  if (normalizedRelative === '.aiteam' || normalizedRelative.startsWith('.aiteam/') || normalizedRelative === '.git' || normalizedRelative.startsWith('.git/')) {
     throw new Error(`AITEAM control state cannot be integrated: ${value}`);
   }
-  return relative.replaceAll(path.sep, '/');
+  return normalizedRelative;
 }
 
 export function fingerprintPaths(repo, paths) {
@@ -72,21 +91,22 @@ export function fingerprintPaths(repo, paths) {
   const records = [];
   for (const candidate of validated) {
     const listed = git(repo, ['ls-files', '--cached', '--others', '--exclude-standard', '--', candidate]);
-    const files = listed ? listed.split('\n').filter(Boolean).sort() : [candidate];
+    const files = listed ? listed.split(/\r?\n/).filter(Boolean).sort() : [candidate];
     for (const relative of files) {
-      const absolute = path.join(repo, relative);
+      const normalizedRel = relative.replaceAll('\\', '/');
+      const absolute = path.join(repo, ...normalizedRel.split('/'));
       if (!fs.existsSync(absolute)) {
-        records.push([relative, 'missing']);
+        records.push([normalizedRel, 'missing']);
         continue;
       }
       try {
         const stat = fs.lstatSync(absolute);
-        if (stat.isSymbolicLink()) records.push([relative, 'symlink', fs.readlinkSync(absolute)]);
-        else if (stat.isFile()) records.push([relative, stat.mode, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')]);
-        else records.push([relative, 'non-file']);
+        if (stat.isSymbolicLink()) records.push([normalizedRel, 'symlink', fs.readlinkSync(absolute)]);
+        else if (stat.isFile()) records.push([normalizedRel, stat.mode, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')]);
+        else records.push([normalizedRel, 'non-file']);
       } catch (err) {
         if (err.code === 'EACCES' || err.code === 'EPERM') {
-          records.push([relative, 'unreadable', err.code]);
+          records.push([normalizedRel, 'unreadable', err.code]);
         } else {
           throw err;
         }

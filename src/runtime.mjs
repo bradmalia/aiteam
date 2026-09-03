@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -542,11 +542,13 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
   appendEvent(repo, { type: 'agent_started', agentId, stage, task, stdoutPath, stderrPath, schemaPath });
 
   return new Promise((resolve, reject) => {
+    const isCmdOrBat = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
     const child = spawn(command, args, {
       cwd: repo,
       env: childEnv,
       stdio: [stdinText == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32'
+      detached: process.platform !== 'win32',
+      shell: isCmdOrBat
     });
     if (stdinText != null) {
       child.stdin.on('error', (error) => {
@@ -634,8 +636,15 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 360000
 export function killChildTree(child, signal) {
   if (!child?.pid) return false;
   try {
-    if (process.platform !== 'win32') process.kill(-child.pid, signal);
-    else child.kill(signal);
+    if (process.platform !== 'win32') {
+      process.kill(-child.pid, signal);
+    } else {
+      try {
+        spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      } catch {
+        child.kill(signal);
+      }
+    }
     return true;
   } catch (error) {
     if (error?.code === 'ESRCH') return false;
@@ -660,7 +669,53 @@ function configString(value) {
 
 export function redactInvocationArgs(args, prompt) {
   const printPrompt = `-p=${prompt}`;
-  return args.map((arg) => arg === prompt || arg === printPrompt ? '<prompt omitted>' : arg);
+  const result = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === prompt || arg === printPrompt) {
+      result.push('<prompt omitted>');
+    } else if (arg === '-p' && i + 1 < args.length && args[i + 1] === prompt) {
+      result.push('-p', '<prompt omitted>');
+      i += 1;
+    } else {
+      result.push(arg);
+    }
+  }
+  return result;
+}
+
+export function buildCopilotInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
+  const command = env.AITEAM_COPILOT_BIN || 'copilot';
+  const prefixArgs = parseStringArray('AITEAM_COPILOT_PREFIX_ARGS_JSON', env.AITEAM_COPILOT_PREFIX_ARGS_JSON);
+  const args = [...prefixArgs, '-C', repo, '--no-ask-user', '--no-custom-instructions', '--silent'];
+
+  const requestedSandbox = agent.sandbox || 'read-only';
+  const writableSandbox = env.AITEAM_COPILOT_WRITABLE_SANDBOX || 'allow-all';
+  if (requestedSandbox === 'workspace-write') {
+    if (writableSandbox === 'allow-all') {
+      args.push('--allow-all');
+    } else {
+      args.push('--allow-all-tools');
+    }
+  } else {
+    const readOnlyMode = env.AITEAM_COPILOT_READ_ONLY_MODE || 'plan';
+    if (readOnlyMode === 'plan') {
+      args.push('--mode', 'plan');
+    }
+    args.push('--allow-tool=read');
+  }
+
+  const selectedModel = model || env.AITEAM_COPILOT_MODEL || null;
+  if (selectedModel) args.push('--model', selectedModel);
+
+  const reasoningEffort = env.AITEAM_COPILOT_REASONING_EFFORT || null;
+  if (reasoningEffort) args.push('--effort', reasoningEffort);
+
+  const contextTier = env.AITEAM_COPILOT_CONTEXT_TIER || null;
+  if (contextTier) args.push('--context', contextTier);
+
+  const childEnv = { ...env };
+  return { command, args, childEnv, stdinText: prompt };
 }
 
 export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
@@ -682,11 +737,12 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
 
 export function detectRunner(env = process.env) {
   if (env.AITEAM_RUNNER) {
-    if (!['agy', 'codex'].includes(env.AITEAM_RUNNER)) {
-      throw new Error('AITEAM_RUNNER must be either "agy" or "codex".');
+    if (!['agy', 'codex', 'copilot'].includes(env.AITEAM_RUNNER)) {
+      throw new Error('AITEAM_RUNNER must be "agy", "codex", or "copilot".');
     }
     return env.AITEAM_RUNNER;
   }
+  if (env.COPILOT_AGENT_SESSION_ID || env.COPILOT_CLI || env.COPILOT_CLI_BINARY_VERSION || env.COPILOT_LOADER_PID || env.GITHUB_COPILOT) return 'copilot';
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_PROJECT_ID || env.ANTIGRAVITY_LS_ADDRESS) return 'agy';
   if (env.AITEAM_CODEX_BIN || env.CODEX_HOME || env.CODEX_THREAD_ID) return 'codex';
   return 'codex';
@@ -694,6 +750,9 @@ export function detectRunner(env = process.env) {
 
 export function buildAgentInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env, parentCodexContext = undefined }) {
   const runner = detectRunner(env);
+  if (runner === 'copilot') {
+    return buildCopilotInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
+  }
   if (runner === 'agy') {
     return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
   }

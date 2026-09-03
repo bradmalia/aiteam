@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { appendEvent, patchSession, readSession, writeSession } from './state.mjs';
-import { commitValidatedPaths, fingerprintPaths, gitSnapshot } from './git.mjs';
+import { commitValidatedPaths, fingerprintPaths, gitSnapshot, canonicalPath } from './git.mjs';
 import { getAgent, loadRegistry, registerScopedSpecialist } from './registry.mjs';
 import { runAgent } from './runtime.mjs';
+
+const inFlightAdvances = new Map();
 
 const STAGE_LABELS = {
   intake: 'Intake',
@@ -962,7 +964,7 @@ function integrationSucceeded(task) {
   return Boolean(task?.integration?.committed || task?.integration?.reason === 'no_changes' || task?.integration?.integrated);
 }
 
-function processExists(pid) {
+export function processExists(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -1373,14 +1375,21 @@ export function getCurrentAssignment(repo, session = readSession(repo)) {
     throw new Error('Workflow gate rejected: Analyst Intake must produce a resolved, user-grounded requirements artifact before Architecture.');
   }
   if (session.activeRun) {
+    const repoKey = canonicalPath(repo);
+    const hasInFlightPromise = inFlightAdvances.has(repoKey);
     const age = Date.now() - Date.parse(session.activeRun.startedAt || 0);
     const staleRunMs = Number(process.env.AITEAM_STALE_RUN_MS) || 3 * 60 * 60 * 1000;
+    const isThisProcess = session.activeRun.ownerPid === process.pid;
     const ownerGone = Number.isInteger(session.activeRun.ownerPid) && !processExists(session.activeRun.ownerPid);
-    if (!ownerGone && Number.isFinite(age) && age < staleRunMs) {
+    const isOrphanedInThisProcess = isThisProcess && !hasInFlightPromise;
+
+    if (!ownerGone && !isOrphanedInThisProcess && Number.isFinite(age) && age < staleRunMs) {
       throw new Error(`AITEAM specialist ${session.activeRun.agentId} is already running for stage ${session.activeRun.stage}.`);
     }
     const staleRun = session.activeRun;
-    const recoveryReason = ownerGone
+    const recoveryReason = isOrphanedInThisProcess
+      ? 'Recovered orphaned active-run lease from current process.'
+      : ownerGone
       ? `Recovered active-run lease after owner process ${staleRun.ownerPid} exited.`
       : 'Recovered stale active-run lease after its timeout window elapsed.';
     session = writeSession(repo, { ...session, activeRun: null, lastFailure: recoveryReason });
@@ -2714,7 +2723,63 @@ function implementationRetryContext(repo, session, assignment, errorMessage) {
   ].join('\n');
 }
 
-export async function advanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
+const DEFAULT_MAX_WAIT_SECONDS = Number(process.env.AITEAM_CALL_MAX_WAIT_SECONDS) || 120;
+
+export async function advanceWorkflow(options) {
+  const repo = options?.repo;
+  const repoKey = canonicalPath(repo);
+  const maxWaitSeconds = options?.maxWaitSeconds !== undefined
+    ? Number(options.maxWaitSeconds)
+    : DEFAULT_MAX_WAIT_SECONDS;
+
+  let promise = inFlightAdvances.get(repoKey);
+  if (!promise) {
+    const execPromise = executeAdvanceWorkflow(options);
+    promise = execPromise;
+    inFlightAdvances.set(repoKey, execPromise);
+    execPromise.finally(() => {
+      inFlightAdvances.delete(repoKey);
+    });
+  }
+
+  if (!maxWaitSeconds || maxWaitSeconds <= 0 || options?.unbounded === true) {
+    return await promise;
+  }
+
+  let timerId;
+  const timeoutBarrier = new Promise((resolve) => {
+    timerId = setTimeout(() => resolve({ __timeout: true }), maxWaitSeconds * 1000);
+  });
+
+  try {
+    const outcome = await Promise.race([promise, timeoutBarrier]);
+    if (outcome && outcome.__timeout) {
+      const session = readSession(repo);
+      const assignment = session?.activeRun
+        ? {
+          stage: session.activeRun.stage,
+          agentId: session.activeRun.agentId,
+          role: session.activeRun.role,
+          phase: STAGE_LABELS[session.activeRun.stage] || session.activeRun.stage
+        }
+        : null;
+      const startedAt = session?.activeRun?.startedAt ? Date.parse(session.activeRun.startedAt) : Date.now();
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+      return {
+        inProgress: true,
+        assignment,
+        session,
+        workflow: workflowStatus(session, repo),
+        elapsedSeconds
+      };
+    }
+    return outcome;
+  } finally {
+    clearTimeout(timerId);
+  }
+}
+
+async function executeAdvanceWorkflow({ repo, timeoutSeconds, model = null, coordinatorContext = '', expectedAgentId = null, runner = runAgent }) {
   const currentSession = readSession(repo);
   if (currentSession && currentSession.pendingUserInput && currentSession.pendingUserInput.response == null) {
     throw new Error('Workflow is blocked awaiting user input. You MUST wait for the user to reply in chat, then call aiteam_update_session with their response before advancing.');

@@ -4,18 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, detectRunner, discoverParentCodexContext, outputSchemaPath, parseCodexSessionContext, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
+import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, buildCopilotInvocation, detectRunner, discoverParentCodexContext, outputSchemaPath, parseCodexSessionContext, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
 
 test('runner detection honors explicit selection and host markers', () => {
+  assert.equal(detectRunner({ AITEAM_RUNNER: 'copilot' }), 'copilot');
   assert.equal(detectRunner({ AITEAM_RUNNER: 'agy', CODEX_HOME: '/tmp/codex' }), 'agy');
   assert.equal(detectRunner({ AITEAM_RUNNER: 'codex', ANTIGRAVITY_AGENT: 'present' }), 'codex');
+  assert.equal(detectRunner({ COPILOT_CLI: '1' }), 'copilot');
+  assert.equal(detectRunner({ COPILOT_AGENT_SESSION_ID: 'session-123' }), 'copilot');
   assert.equal(detectRunner({ ANTIGRAVITY_AGENT: 'present' }), 'agy');
   assert.equal(detectRunner({ ANTIGRAVITY_PROJECT_ID: 'present' }), 'agy');
   assert.equal(detectRunner({ ANTIGRAVITY_LS_ADDRESS: 'present' }), 'agy');
   assert.equal(detectRunner({ AITEAM_CODEX_BIN: 'codex' }), 'codex');
   assert.equal(detectRunner({ CODEX_HOME: '/tmp/codex' }), 'codex');
   assert.equal(detectRunner({ CODEX_THREAD_ID: 'thread-id' }), 'codex');
-  assert.throws(() => detectRunner({ AITEAM_RUNNER: 'unknown' }), /must be either/);
+  assert.throws(() => detectRunner({ AITEAM_RUNNER: 'unknown' }), /must be/);
 });
 
 test('an unmarked MCP host defaults to Codex', () => {
@@ -44,7 +47,7 @@ test('an unmarked Codex invocation inherits the active parent session routing', 
   assert.equal(invocation.childEnv.CODEX_HOME, childHome);
 });
 
-test('parent Codex context is parsed from the active session descriptor', () => {
+test('parent Codex context is parsed from the active session descriptor', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-proc-'));
   const pid = 1234;
   const fdDir = path.join(root, String(pid), 'fd');
@@ -57,7 +60,15 @@ test('parent Codex context is parsed from the active session descriptor', () => 
     JSON.stringify({ type: 'event_msg', payload: { type: 'thread_settings_applied', thread_settings: { model: 'gpt-selected', model_provider_id: 'openai', reasoning_effort: 'high' } } }),
     JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-selected', effort: 'high', model_context_window: 258400 } })
   ].join('\n'));
-  fs.symlinkSync(sessionPath, path.join(fdDir, '7'));
+  try {
+    fs.symlinkSync(sessionPath, path.join(fdDir, '7'));
+  } catch (err) {
+    if (process.platform === 'win32' && err.code === 'EPERM') {
+      t.skip('Windows symlink creation requires elevated permissions or developer mode');
+      return;
+    }
+    throw err;
+  }
 
   assert.deepEqual(discoverParentCodexContext({ pid, procRoot: root }), {
     model: 'gpt-selected',
@@ -75,6 +86,48 @@ test('malformed session records cannot inject model or provider configuration', 
     JSON.stringify({ type: 'event_msg', payload: { thread_settings: { model: 'bad model;override=true', model_provider_id: 'bad.provider' } } })
   ].join('\n'), '/tmp/codex/sessions/run.jsonl');
   assert.equal(context, null);
+});
+
+test('Copilot invocations enforce read-only and writable specialist boundaries', () => {
+  const readOnly = buildCopilotInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'read-only' },
+    prompt: 'Review the project',
+    env: { AITEAM_COPILOT_BIN: 'copilot', AITEAM_COPILOT_MODEL: 'gpt-5.4' }
+  });
+  assert.equal(readOnly.command, 'copilot');
+  assert.ok(readOnly.args.includes('-C'));
+  assert.ok(readOnly.args.includes('/tmp/example-repo'));
+  assert.ok(readOnly.args.includes('--mode'));
+  assert.ok(readOnly.args.includes('plan'));
+  assert.ok(readOnly.args.includes('--allow-tool=read'));
+  assert.ok(readOnly.args.includes('--no-ask-user'));
+  assert.ok(readOnly.args.includes('--silent'));
+  assert.ok(readOnly.args.includes('--model'));
+  assert.ok(readOnly.args.includes('gpt-5.4'));
+  assert.ok(!readOnly.args.includes('-p'));
+  assert.equal(readOnly.stdinText, 'Review the project');
+
+  const writable = buildCopilotInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the task',
+    env: {
+      AITEAM_COPILOT_BIN: 'copilot',
+      AITEAM_COPILOT_REASONING_EFFORT: 'high',
+      AITEAM_COPILOT_CONTEXT_TIER: 'long_context'
+    }
+  });
+  assert.equal(writable.command, 'copilot');
+  assert.ok(writable.args.includes('--allow-all'));
+  assert.ok(writable.args.includes('--no-ask-user'));
+  assert.ok(!writable.args.includes('--mode'));
+  assert.ok(writable.args.includes('--effort'));
+  assert.ok(writable.args.includes('high'));
+  assert.ok(writable.args.includes('--context'));
+  assert.ok(writable.args.includes('long_context'));
+  assert.ok(!writable.args.includes('-p'));
+  assert.equal(writable.stdinText, 'Implement the task');
 });
 
 test('Agy invocations enforce read-only and writable specialist boundaries', () => {
@@ -358,8 +411,10 @@ test('response-only repair is read-only and receives a minimal formatter prompt'
   execFileSync('git', ['-C', repo, 'init', '--quiet']);
   const previousRunner = process.env.AITEAM_RUNNER;
   const previousBin = process.env.AITEAM_CODEX_BIN;
+  const previousPrefix = process.env.AITEAM_CODEX_PREFIX_ARGS_JSON;
   process.env.AITEAM_RUNNER = 'codex';
-  process.env.AITEAM_CODEX_BIN = 'true';
+  process.env.AITEAM_CODEX_BIN = process.execPath;
+  process.env.AITEAM_CODEX_PREFIX_ARGS_JSON = JSON.stringify(['-e', 'process.stdout.write(JSON.stringify({ outcome: "PASS", summary: "ok", evidence: ["fixed"] }))']);
   try {
     return runAgent({
       repo,
@@ -383,6 +438,8 @@ test('response-only repair is read-only and receives a minimal formatter prompt'
     else process.env.AITEAM_RUNNER = previousRunner;
     if (previousBin === undefined) delete process.env.AITEAM_CODEX_BIN;
     else process.env.AITEAM_CODEX_BIN = previousBin;
+    if (previousPrefix === undefined) delete process.env.AITEAM_CODEX_PREFIX_ARGS_JSON;
+    else process.env.AITEAM_CODEX_PREFIX_ARGS_JSON = previousPrefix;
   }
 });
 
@@ -413,6 +470,18 @@ test('Agy invocations pass prompt via -p argument', () => {
   assert.equal(invocation.stdinText, prompt);
 });
 
+test('Copilot invocations pass prompt via stdin', () => {
+  const prompt = 'Build a pong game';
+  const invocation = buildCopilotInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'read-only' },
+    prompt,
+    env: { AITEAM_COPILOT_BIN: 'copilot' }
+  });
+
+  assert.ok(!invocation.args.includes('-p'));
+  assert.equal(invocation.stdinText, prompt);
+});
 
 test('timeout terminates the full specialist process group', async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-process-group-'));
@@ -432,8 +501,8 @@ test('timeout terminates the full specialist process group', async () => {
   const saved = {};
   const replacements = {
     AITEAM_RUNNER: 'codex',
-    AITEAM_CODEX_BIN: wrapper,
-    AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
+    AITEAM_CODEX_BIN: process.execPath,
+    AITEAM_CODEX_PREFIX_ARGS_JSON: JSON.stringify([wrapper]),
     AITEAM_TEST_GRANDCHILD_PID: pidFile,
     AITEAM_CODEX_HOME: '',
     AITEAM_CODEX_MODEL: '',
@@ -489,8 +558,8 @@ test('successful specialist completion terminates residual child processes', asy
   const saved = {};
   const replacements = {
     AITEAM_RUNNER: 'codex',
-    AITEAM_CODEX_BIN: wrapper,
-    AITEAM_CODEX_PREFIX_ARGS_JSON: '[]',
+    AITEAM_CODEX_BIN: process.execPath,
+    AITEAM_CODEX_PREFIX_ARGS_JSON: JSON.stringify([wrapper]),
     AITEAM_TEST_RESIDUAL_PID: pidFile,
     AITEAM_CODEX_HOME: '',
     AITEAM_CODEX_MODEL: '',

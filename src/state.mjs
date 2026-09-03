@@ -132,8 +132,10 @@ export function lockSession(repo) {
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for session lock (${lock}). If no other AITEAM process is running, delete this file manually.`);
       }
-      // Synchronous sleep using execSync to avoid async complexity
-      try { execSync(`sleep 0.1`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      // Synchronous sleep using Atomics.wait to avoid subprocess execution on all platforms
+      try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);
+      } catch { /* ignore */ }
     }
   }
 }
@@ -179,7 +181,16 @@ export function writeSession(repo, session) {
 function atomicWrite(filePath, data) {
   const tmp = filePath + '.tmp';
   fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, filePath);
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    if (process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EEXIST')) {
+      fs.copyFileSync(tmp, filePath);
+      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    } else {
+      throw err;
+    }
+  }
 }
 
 export function patchSession(repo, patch) {

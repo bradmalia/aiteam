@@ -1,6 +1,6 @@
 # AITEAM
 
-AITEAM is a server-governed engineering team for Codex and other MCP-capable coding IDEs.
+AITEAM is a server-governed engineering team for GitHub Copilot, Codex, and other MCP-capable coding environments on Windows, Linux, and macOS.
 
 Invoke it from a Git repository with:
 
@@ -8,7 +8,7 @@ Invoke it from a Git repository with:
 Using AITEAM, I want to add ...
 ```
 
-The primary Codex conversation remains the user interface. The AITEAM MCP server owns workflow order, specialist routing, evidence gates, task state, and validated Git integration.
+The primary Copilot or Codex conversation remains the user interface. The AITEAM MCP server owns workflow order, specialist routing, evidence gates, task state, and validated Git integration.
 
 ## Enforced workflow
 
@@ -35,13 +35,64 @@ Architect identifies genuine capability gaps. Recruiter proposes a complete inli
 
 ## Install
 
-AITEAM has no npm runtime dependencies. Node.js 20+, Git, and Codex CLI are required.
+AITEAM has no npm runtime dependencies. Node.js 20+, Git, and GitHub Copilot CLI or Codex CLI are required.
+
+### Windows 11 / PowerShell
+
+Run from PowerShell:
+
+```powershell
+.\install.ps1
+```
+
+This installs `aiteam-mcp.cmd`, `aiteam-watch.cmd`, and PowerShell scripts into `~/.local/bin`.
+
+### Linux / macOS
 
 ```bash
 ./install.sh
 ```
 
-The installer creates `~/.local/bin/aiteam-mcp`. Add the delegation contract from `templates/AGENTS.aiteam.md` to the target project's `AGENTS.md`.
+The installer creates `~/.local/bin/aiteam-mcp` and `~/.local/bin/aiteam-watch`. Add the delegation contract from `templates/AGENTS.aiteam.md` to the target project's `AGENTS.md`.
+
+## GitHub Copilot Configuration
+
+AITEAM auto-detects GitHub Copilot from session environment variables (`COPILOT_AGENT_SESSION_ID`, `COPILOT_CLI`, `COPILOT_LOADER_PID`), or when configured with `AITEAM_RUNNER=copilot`.
+
+Add AITEAM to your Copilot MCP configuration (e.g. `~/.copilot/mcp-config.json` or VS Code MCP settings):
+
+```json
+{
+  "mcpServers": {
+    "aiteam": {
+      "command": "C:\\Users\\YOUR_USER\\.local\\bin\\aiteam-mcp.cmd",
+      "env": {
+        "AITEAM_RUNNER": "copilot"
+      }
+    }
+  }
+}
+```
+
+On Linux/macOS:
+
+```json
+{
+  "mcpServers": {
+    "aiteam": {
+      "command": "/home/YOUR_USER/.local/bin/aiteam-mcp",
+      "env": {
+        "AITEAM_RUNNER": "copilot"
+      }
+    }
+  }
+}
+```
+
+Copilot runner options can be customized via environment variables:
+- `AITEAM_COPILOT_BIN`: Path or name of the Copilot CLI binary (default: `copilot`)
+- `AITEAM_COPILOT_MODEL`: Override model passed to Copilot CLI via `--model`
+- `AITEAM_COPILOT_REASONING_EFFORT`: Override reasoning effort passed via `--effort`
 
 ## Codex MCP configuration
 
@@ -50,6 +101,7 @@ The installer creates `~/.local/bin/aiteam-mcp`. Add the delegation contract fro
 command = "/home/YOUR_USER/.local/bin/aiteam-mcp"
 env = { AITEAM_RUNNER = "codex" }
 env_vars = [
+  "AITEAM_RUNNER",
   "AITEAM_CODEX_BIN",
   "AITEAM_CODEX_PREFIX_ARGS_JSON",
   "AITEAM_CODEX_HOME",
@@ -72,7 +124,7 @@ tool_timeout_sec = 7200
 
 Restart Codex after changing MCP configuration.
 
-By default, AITEAM inherits the active parent Codex session's model, provider, reasoning effort, and Codex home on each specialist launch. Changing models in a long-running Codex session therefore changes subsequent AITEAM specialists too. Explicit `AITEAM_CODEX_MODEL` or `AITEAM_CODEX_PROVIDER` settings take precedence for intentionally pinned projects such as local V100 workflows. When parent-session discovery is unavailable, AITEAM omits model/provider overrides and lets the normal Codex configuration choose them.
+By default on Codex, AITEAM inherits the active parent Codex session's model, provider, reasoning effort, and Codex home on each specialist launch. Changing models in a long-running Codex session therefore changes subsequent AITEAM specialists too. Explicit `AITEAM_CODEX_MODEL` or `AITEAM_CODEX_PROVIDER` settings take precedence for intentionally pinned projects such as local V100 workflows. When parent-session discovery is unavailable, AITEAM omits model/provider overrides and lets the normal Codex configuration choose them.
 
 Writable Codex specialists default to `danger-full-access` so implementation and QA can launch browsers and other project tooling that the `workspace-write` process sandbox may block. Read-only planning and review agents remain sandboxed. Set `AITEAM_CODEX_WRITABLE_SANDBOX=workspace-write` in the MCP server environment to restore the stricter writable sandbox.
 

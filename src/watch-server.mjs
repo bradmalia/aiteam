@@ -185,7 +185,7 @@ export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}
   return server;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const repo = repoArgument();
     const port = portArgument();
