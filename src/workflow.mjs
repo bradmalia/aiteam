@@ -867,6 +867,9 @@ function validateQaBlockedEvidence(session, result) {
   }
 
   for (const [index, attempt] of attempts.entries()) {
+    if (/\b(?:aiteam|mcp|transport closed|specialist.*already running)\b/i.test(`${attempt.command} ${attempt.result} ${attempt.fallbackReason}`)) {
+      throw new Error(`QA cannot claim AITEAM workflow or MCP transport issues as black-box test commands. Execute real test scripts or validation commands against the repository files.`);
+    }
     if (!(attempt.covers || []).length) {
       throw new Error(`QA BLOCKED automationAttempts[${index}].covers must identify the planned tests or regression obligations attempted.`);
     }
@@ -1070,17 +1073,20 @@ function completedDependencyTasksPromptView(session, task, repo) {
 }
 
 function currentTaskAttemptHistoryPromptView(task) {
-  return (task?.attemptHistory || []).slice(-3).map((entry) => ({
-    at: entry.at,
-    stage: entry.stage,
-    agentId: entry.agentId,
-    runId: entry.runId,
-    outcome: entry.outcome,
-    summary: entry.summary,
-    rejection: entry.rejection,
-    filesChanged: entry.filesChanged || [],
-    validationCount: entry.validationCount || 0
-  }));
+  return (task?.attemptHistory || [])
+    .filter((entry) => !/\b(?:transport closed|already running|mcp request failed)\b/i.test(entry.summary || ''))
+    .slice(-3)
+    .map((entry) => ({
+      at: entry.at,
+      stage: entry.stage,
+      agentId: entry.agentId,
+      runId: entry.runId,
+      outcome: entry.outcome,
+      summary: entry.summary,
+      rejection: entry.rejection,
+      filesChanged: entry.filesChanged || [],
+      validationCount: entry.validationCount || 0
+    }));
 }
 
 function appendTaskAttemptHistory(session, taskId, entry) {
