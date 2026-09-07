@@ -8,7 +8,7 @@
     {"id":"critical-reviewer","role":"Critical Reviewer","contract":"agents/critical-reviewer.md","sandbox":"read-only","triggers":["critical review","plan review","repair verification"]},
     {"id":"environment-readiness","role":"Environment Readiness Specialist","contract":"agents/environment-readiness.md","sandbox":"workspace-write","triggers":["environment readiness","tool verification","runtime capability","installation handoff"]},
     {"id":"recruiter","role":"Recruiter","contract":"agents/recruiter.md","sandbox":"read-only","triggers":["specialist gap","new specialist"]},
-    {"id":"code-reviewer","role":"Code Reviewer","contract":"agents/code-reviewer.md","sandbox":"read-only","triggers":["code review","diff review"]},
+    {"id":"code-reviewer","role":"Code Reviewer","contract":"agents/code-reviewer.md","sandbox":"workspace-write","triggers":["code review","diff review"]},
     {"id":"qa","role":"QA","contract":"agents/qa.md","sandbox":"workspace-write","triggers":["qa","testing","validation"]},
     {"id":"maintainer","role":"Maintainer","contract":"agents/maintainer.md","sandbox":"read-only","triggers":["commit","merge","integration","git conflict"]},
     {"id":"ui-designer","role":"UI/UX Analyst and Designer","contract":"agents/ui-designer.md","sandbox":"read-only","triggers":["ui","ux","layout","styling","theme","visual","design","wireframe","frontend"]},

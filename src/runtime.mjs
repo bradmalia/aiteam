@@ -450,12 +450,13 @@ export function outputSchemaPath(repo, runBase, stage = null) {
   } else if (stage === 'qa') {
     baseProperties.checks = {
       type: 'array',
+      description: 'Validation checks. You MUST include one check for each planned test in currentTask.blackBoxTestPlan with its exact name verbatim.',
       items: {
         type: 'object',
         required: ['name', 'status', 'expected', 'actual', 'evidence'],
         properties: {
-          name: { type: 'string' },
-          status: { type: 'string' },
+          name: { type: 'string', description: 'Exact test name from currentTask.blackBoxTestPlan or prior regression obligation ID' },
+          status: { type: 'string', description: 'Status of the check (e.g. PASS, FAIL, INFO)' },
           expected: { type: 'string' },
           actual: { type: 'string' },
           evidence: { type: 'string' }
@@ -471,7 +472,7 @@ export function outputSchemaPath(repo, runBase, stage = null) {
         properties: {
           command: { type: 'string' },
           result: { type: 'string' },
-          covers: { type: 'array', items: { type: 'string' } },
+          covers: { type: 'array', items: { type: 'string' }, description: 'Array of exact planned test names from currentTask.blackBoxTestPlan or prior regression IDs covered by this attempt' },
           fallbackReason: { type: 'string' }
         },
         additionalProperties: false
@@ -524,7 +525,7 @@ function responseOnlyPrompt(task, context) {
   ].join('\n\n');
 }
 
-export function runAgent({ repo, agentId, task, context = '', timeoutMs = 3600000, model = null, stage = null, enforceSchema = false, responseOnly = false }) {
+export function runAgent({ repo, agentId, task, context = '', timeoutMs = 8 * 3600000, model = null, stage = null, enforceSchema = false, responseOnly = false }) {
   const agent = getAgent(agentId, repo);
   if (!agent) throw new Error(`Unknown AITEAM agent: ${agentId}`);
   const invocationAgent = responseOnly ? { ...agent, sandbox: 'read-only' } : agent;
@@ -735,14 +736,34 @@ export function buildAgyInvocation({ repo, agent, prompt, model = null, outputSc
   return { command, args, childEnv: { ...env }, stdinText: prompt };
 }
 
+export function buildQwenInvocation({ repo, agent, prompt, model = null, outputSchemaPath: schemaPath = null, stage = null, enforceSchema = false, env = process.env }) {
+  const command = env.AITEAM_QWEN_BIN || 'qwen';
+  const writable = agent.sandbox === 'workspace-write';
+  const args = ['--safe-mode'];
+  if (writable) {
+    args.push('--approval-mode', 'yolo');
+  } else {
+    args.push('--approval-mode', 'plan', '--sandbox');
+  }
+  const selectedModel = model || env.AITEAM_QWEN_MODEL || env.AITEAM_CODEX_MODEL;
+  if (selectedModel) args.push('--model', selectedModel);
+  const effectiveSchema = stage === 'implementation' && !enforceSchema ? null : schemaPath;
+  if (effectiveSchema) {
+    args.push('--json-schema', `@${effectiveSchema}`);
+  }
+  args.push('-p', '-');
+  return { command, args, childEnv: { ...env }, stdinText: prompt };
+}
+
 export function detectRunner(env = process.env) {
   if (env.AITEAM_RUNNER) {
-    if (!['agy', 'codex', 'copilot'].includes(env.AITEAM_RUNNER)) {
-      throw new Error('AITEAM_RUNNER must be "agy", "codex", or "copilot".');
+    if (!['agy', 'codex', 'copilot', 'qwen'].includes(env.AITEAM_RUNNER)) {
+      throw new Error('AITEAM_RUNNER must be "agy", "codex", "copilot", or "qwen".');
     }
     return env.AITEAM_RUNNER;
   }
   if (env.COPILOT_AGENT_SESSION_ID || env.COPILOT_CLI || env.COPILOT_CLI_BINARY_VERSION || env.COPILOT_LOADER_PID || env.GITHUB_COPILOT) return 'copilot';
+  if (env.QWEN_CODE || env.QWEN_SESSION_ID || env.AITEAM_QWEN_BIN) return 'qwen';
   if (env.ANTIGRAVITY_AGENT || env.ANTIGRAVITY_PROJECT_ID || env.ANTIGRAVITY_LS_ADDRESS) return 'agy';
   if (env.AITEAM_CODEX_BIN || env.CODEX_HOME || env.CODEX_THREAD_ID) return 'codex';
   return 'codex';
@@ -752,6 +773,9 @@ export function buildAgentInvocation({ repo, agent, prompt, model = null, output
   const runner = detectRunner(env);
   if (runner === 'copilot') {
     return buildCopilotInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
+  }
+  if (runner === 'qwen') {
+    return buildQwenInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
   }
   if (runner === 'agy') {
     return buildAgyInvocation({ repo, agent, prompt, model, outputSchemaPath: schemaPath, stage, enforceSchema, env });
@@ -852,5 +876,10 @@ export function buildCodexInvocation({ repo, agent, prompt, model = null, output
     } catch {}
   }
   childEnv.CODEX_HOME = codexHome;
+  if (!childEnv.RUST_LOG) {
+    childEnv.RUST_LOG = 'codex_models_manager=off';
+  } else if (!childEnv.RUST_LOG.includes('codex_models_manager')) {
+    childEnv.RUST_LOG += ',codex_models_manager=off';
+  }
   return { command, args, childEnv, stdinText: prompt };
 }

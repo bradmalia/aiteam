@@ -271,3 +271,69 @@ test('aiteam_status provides Watch Dashboard URL and watcher status in structure
   assert.ok(['active', 'offline'].includes(status.structuredContent.watcher.status));
   assert.match(status.content[0].text, /Watch Dashboard: http:\/\/127\.0\.0\.1:\d+\//);
 });
+
+test('aiteam_status text output is compact and avoids bloating coordinator context', async () => {
+  const repo = createRepository();
+  await callTool('aiteam_start', { repository: repo, request: 'Build a complex system', auto_advance: false });
+  const status = await callTool('aiteam_status', { repository: repo });
+  const text = status.content[0].text;
+  assert.ok(text.length < 15_000, `Expected status text to be compact, got length ${text.length}`);
+  const parsed = JSON.parse(text.split('\n\n').slice(-1)[0]);
+  assert.ok(parsed.session);
+  assert.equal(parsed.session.request, 'Build a complex system');
+  assert.ok(!parsed.session.stageEvidence, 'Should omit stageEvidence from compact status text');
+});
+
+test('inProgress advance result includes live execution telemetry and log snippet', () => {
+  const repo = createRepository();
+  const runsDir = path.join(repo, '.aiteam', 'runs');
+  fs.mkdirSync(runsDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.writeFileSync(
+    path.join(runsDir, `${stamp}-code-reviewer.stderr.txt`),
+    'executing test suite...\nPASS test/sample.test.js\nTests: 10 passed, 10 total\nAll checks completed.\n'
+  );
+
+  const mockResult = {
+    inProgress: true,
+    elapsedSeconds: 45,
+    assignment: {
+      agentId: 'code-reviewer',
+      role: 'Code Reviewer',
+      stage: 'code-review',
+      phase: 'Code Review'
+    },
+    session: {
+      repository: repo,
+      status: 'ACTIVE',
+      currentStage: 'code-review',
+      currentTaskId: 't8',
+      phasePlan: ['implementation', 'code-review', 'qa', 'integration'],
+      activeRun: {
+        agentId: 'code-reviewer',
+        role: 'Code Reviewer',
+        stage: 'code-review',
+        ownerPid: 12345,
+        startedAt: new Date().toISOString()
+      }
+    },
+    workflow: {
+      status: 'ACTIVE',
+      stage: 'code-review',
+      phase: 'Code Review',
+      remainingPhases: ['QA']
+    }
+  };
+
+  const text = advanceResultText(mockResult);
+  assert.match(text, /\[PID: 12345\]/);
+  assert.match(text, /45s elapsed/);
+  assert.match(text, /Recent Specialist Output:/);
+  assert.match(text, /PASS test\/sample\.test\.js/);
+
+  const compact = compactAdvanceResult(mockResult);
+  assert.equal(compact.inProgress, true);
+  assert.equal(compact.activeRun.pid, 12345);
+  assert.equal(compact.activeRun.agentId, 'code-reviewer');
+  assert.match(compact.logSnippet, /All checks completed/);
+});

@@ -228,6 +228,9 @@ test('server-owned workflow enforces every gate and commits only QA-approved pat
   assert.equal(ready.status, 'READY_TO_COMPLETE');
   assert.equal(ready.taskLedger[0].status, 'qa-passed');
   assert.equal(ready.integration.committed, true);
+  assert.equal(ready.stageEvidence['implementation:feature-task'].result.pruned, true);
+  assert.equal(ready.stageEvidence['code-review:feature-task'].result.pruned, true);
+  assert.equal(ready.stageEvidence['qa:feature-task'].result.pruned, true);
   assert.match(execFileSync('git', ['-C', repo, 'show', '--name-only', '--format=', 'HEAD'], { encoding: 'utf8' }), /app\.py/);
   assert.doesNotMatch(execFileSync('git', ['-C', repo, 'show', '--name-only', '--format=', 'HEAD'], { encoding: 'utf8' }), /unrelated\.txt/);
   assert.match(execFileSync('git', ['-C', repo, 'status', '--short'], { encoding: 'utf8' }), /^A  unrelated\.txt$/m);
@@ -611,6 +614,53 @@ test('code review records advisory for unsupported material formula findings', a
   assert.match(repairReviewAssignment.task, /prior findings are hypotheses, not authoritative facts/);
   assert.match(repairReviewAssignment.task, /representative boundary and midpoint inputs/);
   assert.match(repairReviewAssignment.task, /Apply the same inputs to the proposed replacement/);
+});
+
+test('code review rejects procedural or tool-denial claims', async () => {
+  const repo = createRepository();
+  const session = newSession(repo, 'Build test feature');
+  fs.writeFileSync(path.join(repo, 'index.html'), '<script>console.log("ok");</script>\n');
+  writeSession(repo, {
+    ...session,
+    currentStage: 'code-review',
+    currentTaskId: 'task-1',
+    completedStages: ['intake', 'architecture', 'planning', 'critical-review'],
+    stageEvidence: { ...session.stageEvidence, intake: { result: { userConfirmed: true } } },
+    taskLedger: [{
+      id: 'task-1',
+      title: 'Task 1',
+      description: 'Implement task 1',
+      specialistId: 'python',
+      acceptanceCriteria: ['Feature works'],
+      dependencies: [],
+      status: 'implemented',
+      filesChanged: ['index.html'],
+      validations: [{ command: 'npm test', result: 'All passed' }],
+      review: null,
+      qa: null,
+      blackBoxTestPlan: [{ name: 'Smoke', action: 'Load page', expected: 'OK', evidenceMethod: 'Console' }]
+    }]
+  });
+
+  await assert.rejects(
+    advanceWorkflow({
+      repo,
+      timeoutSeconds: 300,
+      runner: queuedRunner(repo, [
+        { stdout: result('FAIL', {
+          summary: 'Cannot complete review: all exec_command calls were denied by harness as "Exec denied: tool execution was stopped"',
+          findings: [{
+            id: 'CR-PROC-001',
+            severity: 'BLOCKER',
+            location: 'Review process (no file/line available)',
+            impact: 'Zero file contents observed because exec was denied.',
+            recommendation: 'Re-run in environment where exec_command is permitted.'
+          }]
+        }) }
+      ])
+    }),
+    /Code Review cannot FAIL on procedural limits, tool denial claims, or inspection completeness/
+  );
 });
 
 test('architecture capability gaps must pass through Recruiter provenance before use', async () => {
@@ -2113,10 +2163,10 @@ test('structured stage schemas and timeout bounds are enforced', () => {
   const localhostQa = parseStageResult('qa', result('PASS_WITH_MANUAL_VALIDATION', { evidence: ['Runtime smoke passed; visual check remains.'], checks: [{ name: 'runtime smoke', status: 'PASS', expected: 'The app starts.', actual: 'The app started.', evidence: 'Runtime command exited 0.' }], automationAttempts: [{ command: 'start server with port 0, then playwright smoke', result: 'Server selected an available port; served page identity verified by title and content; server is still running and available for the human.', covers: ['runtime smoke'], fallbackReason: '' }], manualChecks: ['Human-only because final visual inspection is subjective: open http://127.0.0.1:43210/ and inspect the game.'] }));
   assert.match(localhostQa.manualChecks[0], /127\.0\.0\.1/);
   assert.throws(() => parseStageResult('qa', result('FAIL', { evidence: ['Runtime assertion failed.'], checks: [{ name: 'audio toggle', status: 'FAIL', expected: 'Audio should mute after clicking the toggle.', actual: 'src/audio.js line 49 should call toggleMute().', evidence: 'Source inspection found missing call.' }], automationAttempts: [], manualChecks: [] })), /black-box behavior only/);
-  assert.equal(normalizeTimeoutSeconds(1), 3600);
-  assert.equal(normalizeTimeoutSeconds(300), 3600);
-  assert.equal(normalizeTimeoutSeconds(9000), 3600);
-  assert.equal(normalizeTimeoutSeconds(undefined), 3600);
+  assert.equal(normalizeTimeoutSeconds(1), 28800);
+  assert.equal(normalizeTimeoutSeconds(300), 28800);
+  assert.equal(normalizeTimeoutSeconds(9000), 28800);
+  assert.equal(normalizeTimeoutSeconds(undefined), 28800);
   assert.throws(() => normalizeTimeoutSeconds('not-a-number'), /finite number/);
 });
 

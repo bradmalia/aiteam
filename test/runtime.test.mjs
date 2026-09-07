@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, buildCopilotInvocation, detectRunner, discoverParentCodexContext, outputSchemaPath, parseCodexSessionContext, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
+import { buildAgentInvocation, buildAgyInvocation, buildCodexInvocation, buildCopilotInvocation, buildQwenInvocation, detectRunner, discoverParentCodexContext, outputSchemaPath, parseCodexSessionContext, redactInvocationArgs, runAgent } from '../src/runtime.mjs';
 
 test('runner detection honors explicit selection and host markers', () => {
   assert.equal(detectRunner({ AITEAM_RUNNER: 'copilot' }), 'copilot');
@@ -12,6 +12,10 @@ test('runner detection honors explicit selection and host markers', () => {
   assert.equal(detectRunner({ AITEAM_RUNNER: 'codex', ANTIGRAVITY_AGENT: 'present' }), 'codex');
   assert.equal(detectRunner({ COPILOT_CLI: '1' }), 'copilot');
   assert.equal(detectRunner({ COPILOT_AGENT_SESSION_ID: 'session-123' }), 'copilot');
+  assert.equal(detectRunner({ AITEAM_RUNNER: 'qwen', CODEX_HOME: '/tmp/codex' }), 'qwen');
+  assert.equal(detectRunner({ QWEN_CODE: '1' }), 'qwen');
+  assert.equal(detectRunner({ QWEN_SESSION_ID: 'session-123' }), 'qwen');
+  assert.equal(detectRunner({ AITEAM_QWEN_BIN: 'qwen' }), 'qwen');
   assert.equal(detectRunner({ ANTIGRAVITY_AGENT: 'present' }), 'agy');
   assert.equal(detectRunner({ ANTIGRAVITY_PROJECT_ID: 'present' }), 'agy');
   assert.equal(detectRunner({ ANTIGRAVITY_LS_ADDRESS: 'present' }), 'agy');
@@ -174,6 +178,52 @@ test('Agy invocations enforce read-only and writable specialist boundaries', () 
   });
   assert.ok(reportingRetry.args.includes('--json-schema'));
   assert.ok(reportingRetry.args.includes('/tmp/result.schema.json'));
+  assert.deepEqual(reportingRetry.args.slice(reportingRetry.args.indexOf('-p'), reportingRetry.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(reportingRetry.stdinText, 'Report the implemented task');
+});
+
+test('Qwen invocations enforce read-only and writable specialist boundaries', () => {
+  const readOnly = buildQwenInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'read-only' },
+    prompt: 'Review the project',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'architecture',
+    env: { AITEAM_QWEN_BIN: 'qwen' }
+  });
+  assert.ok(readOnly.args.includes('--sandbox'));
+  assert.deepEqual(readOnly.args.slice(readOnly.args.indexOf('--approval-mode'), readOnly.args.indexOf('--approval-mode') + 2), ['--approval-mode', 'plan']);
+  assert.ok(!readOnly.args.includes('yolo'));
+  assert.ok(readOnly.args.includes('--json-schema'));
+  assert.ok(readOnly.args.includes('@/tmp/result.schema.json'));
+  assert.deepEqual(readOnly.args.slice(readOnly.args.indexOf('-p'), readOnly.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(readOnly.stdinText, 'Review the project');
+
+  const writable = buildQwenInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the task',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'implementation',
+    env: { AITEAM_QWEN_BIN: 'qwen' }
+  });
+  assert.deepEqual(writable.args.slice(writable.args.indexOf('--approval-mode'), writable.args.indexOf('--approval-mode') + 2), ['--approval-mode', 'yolo']);
+  assert.ok(!writable.args.includes('--sandbox'));
+  assert.ok(!writable.args.includes('--json-schema'));
+  assert.deepEqual(writable.args.slice(writable.args.indexOf('-p'), writable.args.indexOf('-p') + 2), ['-p', '-']);
+  assert.equal(writable.stdinText, 'Implement the task');
+
+  const reportingRetry = buildQwenInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Report the implemented task',
+    outputSchemaPath: '/tmp/result.schema.json',
+    stage: 'implementation',
+    enforceSchema: true,
+    env: { AITEAM_QWEN_BIN: 'qwen' }
+  });
+  assert.ok(reportingRetry.args.includes('--json-schema'));
+  assert.ok(reportingRetry.args.includes('@/tmp/result.schema.json'));
   assert.deepEqual(reportingRetry.args.slice(reportingRetry.args.indexOf('-p'), reportingRetry.args.indexOf('-p') + 2), ['-p', '-']);
   assert.equal(reportingRetry.stdinText, 'Report the implemented task');
 });
@@ -404,6 +454,17 @@ test('implementation retries can enforce structured output after tool-using work
   assert.equal(initial.stdinText, 'Implement the assigned task');
   assert.equal(reportingRetry.args.at(-1), '-');
   assert.equal(reportingRetry.stdinText, 'Report the implemented task');
+  assert.equal(initial.childEnv.RUST_LOG, 'codex_models_manager=off');
+});
+
+test('buildCodexInvocation preserves existing RUST_LOG while disabling codex_models_manager', () => {
+  const invocation = buildCodexInvocation({
+    repo: '/tmp/example-repo',
+    agent: { sandbox: 'workspace-write' },
+    prompt: 'Implement the assigned task',
+    env: { RUST_LOG: 'info' }
+  });
+  assert.equal(invocation.childEnv.RUST_LOG, 'info,codex_models_manager=off');
 });
 
 test('response-only repair is read-only and receives a minimal formatter prompt', () => {

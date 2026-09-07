@@ -96,6 +96,41 @@ function phaseLine(workflow, suffix = '') {
   return `AITEAM | Agent: ${identity}${suffix} | Phase: ${workflow.phase || 'Complete'} | Remaining: ${remaining}`;
 }
 
+function getActiveLogTail(repo, activeRun, maxLines = 8) {
+  if (!repo) return null;
+  const runsDir = path.join(repo, '.aiteam', 'runs');
+  try {
+    if (!fs.existsSync(runsDir)) return null;
+    const outputFiles = fs.readdirSync(runsDir).filter((file) => /\.(?:stdout|stderr)\.txt$/.test(file));
+    const matchingFiles = activeRun
+      ? outputFiles.filter((file) => file.includes(activeRun.agentId || ''))
+      : outputFiles;
+    const latestBase = matchingFiles
+      .map((file) => file.replace(/\.(?:stdout|stderr)\.txt$/, ''))
+      .sort()
+      .at(-1);
+    if (!latestBase) return null;
+    const stderrPath = path.join(runsDir, `${latestBase}.stderr.txt`);
+    const stdoutPath = path.join(runsDir, `${latestBase}.stdout.txt`);
+    const stderrContent = fs.existsSync(stderrPath) ? fs.readFileSync(stderrPath, 'utf8').trim() : '';
+    const stdoutContent = fs.existsSync(stdoutPath) ? fs.readFileSync(stdoutPath, 'utf8').trim() : '';
+    const codexProgress = /# Response|\bthinking\b|\bexec\b|mcp startup:/i.test(stderrContent);
+    const rawContent = codexProgress ? stderrContent : (stdoutContent || stderrContent);
+    if (!rawContent) return null;
+    const lines = rawContent.split(/\r?\n/).filter((line) => {
+      const trimmed = line.trim();
+      return trimmed &&
+        !trimmed.startsWith('mcp startup:') &&
+        !trimmed.startsWith('warning: Model metadata') &&
+        !trimmed.startsWith('Defaulting to fallback metadata');
+    });
+    if (!lines.length) return null;
+    return lines.slice(-maxLines).join('\n');
+  } catch {
+    return null;
+  }
+}
+
 export function advanceResultText(result) {
   if (result.inProgress) {
     const runningWorkflow = workflowStatus(result.session);
@@ -107,11 +142,16 @@ export function advanceResultText(result) {
       remainingPhases: runningWorkflow.remainingPhases
     }, ' in progress');
     const elapsed = result.elapsedSeconds ? ` (${result.elapsedSeconds}s elapsed)` : '';
+    const pid = result.session?.activeRun?.ownerPid ? ` [PID: ${result.session.activeRun.ownerPid}]` : '';
     const watchPort = result.session?.watchPort || (result.session?.repository ? getWatchPort(result.session.repository) : null);
     const dashboardText = watchPort ? `\nLive Dashboard: http://127.0.0.1:${watchPort}/` : '';
+    const repo = result.session?.repository;
+    const logTail = getActiveLogTail(repo, result.session?.activeRun);
+    const logSnippet = logTail ? `\nRecent Specialist Output:\n${logTail}` : '';
     return [
       line,
-      `Specialist ${result.assignment?.role || result.assignment?.agentId || 'agent'} is actively executing in the background${elapsed}.`,
+      `Specialist ${result.assignment?.role || result.assignment?.agentId || 'agent'} is actively executing in the background${elapsed}${pid}.`,
+      logSnippet,
       dashboardText,
       'MANDATORY SAME-TURN ACTION: Call aiteam_advance immediately to continue monitoring the running specialist until it finishes.'
     ].filter(Boolean).join('\n');
@@ -221,12 +261,21 @@ export function compactAdvanceResult(result) {
   if (result.inProgress) {
     const directive = coordinatorDirective(result.session);
     const watchPort = result.session?.watchPort || (result.session?.repository ? getWatchPort(result.session.repository) : null);
+    const repo = result.session?.repository;
+    const logTail = getActiveLogTail(repo, result.session?.activeRun, 5);
     return {
       inProgress: true,
       stage: result.assignment?.stage || null,
       agentId: result.assignment?.agentId || null,
       role: result.assignment?.role || null,
       elapsedSeconds: result.elapsedSeconds || null,
+      activeRun: result.session?.activeRun ? {
+        pid: result.session.activeRun.ownerPid || null,
+        agentId: result.session.activeRun.agentId || null,
+        stage: result.session.activeRun.stage || null,
+        startedAt: result.session.activeRun.startedAt || null
+      } : null,
+      logSnippet: logTail || null,
       workflow: workflowSummary(result.session, result.workflow),
       watchDashboard: watchPort ? `http://127.0.0.1:${watchPort}/` : null,
       requiredAction: {
@@ -257,6 +306,38 @@ function compactAdvanceError(error, session, workflow) {
     pendingUserInput: pendingUserInputSummary(session),
     requiredAction: directive.requiredNextAction || null,
     prohibitedActions: directive.prohibitedActions || []
+  };
+}
+
+export function compactSessionSummary(session) {
+  if (!session) return null;
+  return {
+    id: session.id || null,
+    status: session.status || null,
+    currentStage: session.currentStage || null,
+    currentTaskId: session.currentTaskId || null,
+    request: session.request || null,
+    completedStages: session.completedStages || [],
+    activeRun: session.activeRun ? {
+      agentId: session.activeRun.agentId || null,
+      stage: session.activeRun.stage || null,
+      taskId: session.activeRun.taskId || null,
+      runId: session.activeRun.runId || null,
+      startedAt: session.activeRun.startedAt || null
+    } : null,
+    pendingUserInput: pendingUserInputSummary(session),
+    taskLedger: (session.taskLedger || []).map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      specialistId: t.specialistId,
+      filesChanged: t.filesChanged || [],
+      integration: t.integration ? {
+        committed: t.integration.committed,
+        commit: t.integration.commit,
+        integrated: t.integration.integrated
+      } : null
+    }))
   };
 }
 
@@ -476,7 +557,7 @@ export async function callTool(name, args) {
       `Watch Dashboard: ${watchUrl} (${watcherStatus === 'active' ? 'Active / Live' : 'Offline'})`,
       phaseLine(workflow),
       '',
-      JSON.stringify({ session, git, watchDashboard: watchUrl }, null, 2)
+      JSON.stringify({ session: compactSessionSummary(session), git, watchDashboard: watchUrl }, null, 2)
     ].join('\n');
     return textResult(text, {
       session,

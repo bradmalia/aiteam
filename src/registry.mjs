@@ -117,6 +117,51 @@ export function readContract(relativePath) {
   return fs.readFileSync(path.join(SOURCE_ROOT, relativePath), 'utf8');
 }
 
+function extractJsonObject(text) {
+  if (!text || typeof text !== 'string') return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    try {
+      const firstBrace = text.indexOf('{');
+      if (firstBrace === -1) return null;
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let endIdx = -1;
+      for (let i = firstBrace; i < text.length; i++) {
+        const char = text[i];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (!inString) {
+          if (char === '{') depth++;
+          else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+              endIdx = i;
+              break;
+            }
+          }
+        }
+      }
+      if (endIdx !== -1) {
+        return JSON.parse(text.slice(firstBrace, endIdx + 1));
+      }
+    } catch {}
+  }
+  return null;
+}
+
 export function buildAgentPrompt(agent, task, context = '', stage = null) {
   const base = readContract('agents/base.md');
   const role = agent.contractText || readContract(agent.contract);
@@ -127,7 +172,7 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
     ? (() => {
       let writeMethodDirective = '3a. If coordinator context contains `environmentProfile`, reuse its verified tools, executable paths, syntax checker, and write method instead of rediscovering or reinstalling them. Do not experiment with alternative shell redirection unless the primary method fails.';
       try {
-        const parsed = JSON.parse(context);
+        const parsed = extractJsonObject(context);
         const method = parsed?.environmentProfile?.fileOperations?.writeMethod;
         if (method) {
           writeMethodDirective = `3a. PROVEN FILE-WRITING METHOD FOR THIS ENVIRONMENT: ${method}. Use this proven method; do not experiment with alternative shell redirection unless this method is not working.`;
@@ -140,12 +185,13 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
         '3. Steps: (1) use a direct edit tool if exposed, otherwise run one literal quoted heredoc such as `cat > filename <<\'AITEAM_EOF\'`, (2) verify with `ls -la filename` and the language syntax checker/compiler, (3) ONLY THEN emit outcome "PASS" with filesChanged.',
         writeMethodDirective,
         '4. Do NOT output JSON without first writing the files. Do NOT return "FAIL" claiming sandbox restrictions — you have full write access to the repository.',
-        '5. ESCAPING DISCIPLINE: Do not search for unavailable editing tools or generate source through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed repairs. Keep source text in a literal quoted heredoc.',
+        '5. ESCAPING & COMMAND DISCIPLINE: Do not search for unavailable editing tools or generate source through nested `bash -lc`, `python -c`, base64, long echo chains, temporary `/tmp` mutator scripts, or repeated sed repairs. Keep source text in literal quoted heredocs. NEVER run commands with `rm -f` or `rm -rf` as the process security policy strictly rejects them.',
         'LARGE FILE WARNING: exec_command truncates heredocs at ~200 lines. For files >150 lines, write in chunks:',
         '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
         '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
         'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
-        '6. MANDATORY OUTPUT FORMAT — RAW JSON ONLY:',
+        '6. MOCK FIXTURE INTEGRITY: When writing unit tests with mock game states, ensure the mock boards are structurally complete (e.g. active teams have living royalty pieces unless testing extinction win conditions). Incomplete mock boards cause global win/loss checks to trigger prematurely.',
+        '7. MANDATORY OUTPUT FORMAT — RAW JSON ONLY:',
         '   Your final answer must be ONLY one valid JSON object. Do NOT emit conversational markdown summaries (e.g. "Here is what I did...", "All fixes implemented...", "### Summary"). The workflow engine strictly parses your final message as JSON. Any surrounding prose or missing JSON keys will be rejected.',
         '   Example final output: {"outcome": "PASS", "summary": "Implemented and verified acceptance criteria on disk.", "evidence": ["Checked PRD and TRD", "Ran python3 tests/test.py -> passed"], "filesChanged": ["index.html"], "validations": [{"command": "python3 tests/test.py", "result": "passed"}]}'
       ].join('\n');
@@ -153,40 +199,86 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
     : stage === 'qa'
     ? (() => {
       let regressionIds = [];
-      try {
-        const parsed = JSON.parse(context);
-        if (Array.isArray(parsed?.completedPriorTasks)) {
-          for (const priorTask of parsed.completedPriorTasks) {
-            if (Array.isArray(priorTask.regressionTests)) {
-              for (const test of priorTask.regressionTests) {
-                if (test?.id) regressionIds.push(test.id);
-              }
+      let plannedTestNames = [];
+      const parsed = extractJsonObject(context);
+      const parsedTask = extractJsonObject(task);
+
+      if (Array.isArray(parsed?.completedPriorTasks)) {
+        for (const priorTask of parsed.completedPriorTasks) {
+          if (Array.isArray(priorTask.regressionTests)) {
+            for (const test of priorTask.regressionTests) {
+              if (test?.id) regressionIds.push(test.id);
             }
           }
         }
-      } catch {
-        // Context may not be pure JSON or may be empty; fallback
       }
+
+      const planSources = [
+        parsed?.currentTask?.blackBoxTestPlan,
+        parsedTask?.blackBoxTestPlan
+      ];
+      for (const plan of planSources) {
+        if (Array.isArray(plan)) {
+          for (const test of plan) {
+            if (test?.name && !plannedTestNames.includes(test.name)) {
+              plannedTestNames.push(test.name);
+            }
+          }
+        }
+      }
+
+      const plannedTestReminder = plannedTestNames.length
+        ? [
+          '7. MANDATORY PLANNED TEST NAMES FOR CURRENT TASK: Your structured output MUST include test entries in `checks` or `automationAttempts[].covers` for each of the following planned test names verbatim:',
+          ...plannedTestNames.map((name) => `   - "${name}"`)
+        ].join('\n')
+        : '7. MANDATORY PLANNED TESTS: Every currentTask.blackBoxTestPlan[].name is mandatory. Include each exact planned test name in checks or automationAttempts[].covers.';
+
       const regressionReminder = regressionIds.length
         ? [
-          '7. MANDATORY PRIOR REGRESSION TEST IDS: Your structured output MUST include test entries in `checks` or `automationAttempts[].covers` for each of the following prior test IDs:',
+          '8. MANDATORY PRIOR REGRESSION TEST IDS: Your structured output MUST include test entries in `checks` or `automationAttempts[].covers` for each of the following prior test IDs:',
           ...regressionIds.map((id) => `   - ${id}`)
         ].join('\n')
-        : '7. CROSS-TASK REGRESSION: Include checks or automationAttempts for all prior task regression IDs listed in your context.';
+        : '8. CROSS-TASK REGRESSION: Include checks or automationAttempts for all prior task regression IDs listed in your context.';
+
+      const formatReminder = [
+        '9. MANDATORY OUTPUT FORMAT — RAW JSON ONLY:',
+        '   Your final answer must be ONLY one valid JSON object. In `checks` and `automationAttempts[].covers`, you MUST include entries matching each of the mandatory planned test names above verbatim.',
+        '   Example checks format:',
+        '   "checks": [',
+        ...(plannedTestNames.length ? plannedTestNames.map((name) => `     {"name": "${name}", "status": "PASS", "expected": "...", "actual": "...", "evidence": "..."}`) : ['     {"name": "<exact planned test name>", "status": "PASS", "expected": "...", "actual": "...", "evidence": "..."}']),
+        '   ],',
+        '   Example automationAttempts format:',
+        '   "automationAttempts": [',
+        `     {"command": "<test command>", "result": "PASS", "covers": ${JSON.stringify(plannedTestNames.length ? plannedTestNames : ['<exact planned test name>'])}, "fallbackReason": "none"}`,
+        '   ]'
+      ].join('\n');
+
+      const taskId = parsedTask?.id || parsed?.currentTask?.id || '';
+      const taskTitle = parsedTask?.title || parsed?.currentTask?.title || '';
+      const activeTaskHeader = taskId
+        ? [
+          `0. ACTIVE TASK UNDER TEST: You are validating task "${taskId}" ("${taskTitle}").`,
+          `   You MUST run the specific test scripts and validations for THIS task (e.g. \`python3 -m unittest tests/test_artifact_resolver.py\` or validations from currentTask). Do NOT run generic host setup scripts when task-specific test suites exist.`
+        ].join('\n')
+        : '0. ACTIVE TASK UNDER TEST: Execute the specific validations for the current task.';
 
       return [
         '# FINAL QA EXECUTION ORDER — READ THIS LAST',
-        '0. FIRST-TURN TOOL EXECUTION MANDATE: You MUST run real validation tools via bash (e.g. `python3 <test_script>`, Playwright browser runner, or project test suites) in your FIRST turn. Do NOT emit a final JSON verdict without executing commands first. Emitting a verdict from hallucinated memory without running tools is a strict protocol violation.',
-        '1. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
-        '2. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
-        '2a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
-        '2b. CONTAINER BROWSER LAUNCH: Always launch Playwright Chromium with `p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])`. Never claim browser is missing or return BLOCKED when bundled Chromium is available.',
-        '3. DO NOT INSTALL CASUALLY: Install only after a direct capability check fails. Never use `--break-system-packages`, modify product dependency manifests for QA setup, or perform a system-wide install.',
-        '4. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
-        '5. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
-        '6. STRICT BLACK-BOX OBSERVATIONS ONLY: Report ONLY: test performed, expected result, actual result, and runtime evidence. NEVER mention "root cause", source file paths (e.g. `index.html:123`), function names, line numbers, or code snippets in `summary` or `checks`. Violating this will cause immediate server rejection.',
-        '6a. TEST HARNESS SANITY (AUDIO, UI & PUBLIC INTERFACES): Trigger actions via simulated DOM user gestures (e.g. clicking `#playBtn`, moving mouse, arrow keys) and observe DOM/canvas changes. Do NOT invoke private/synthetic JS methods (e.g. guessing `audioManager.playScore()` or `this.context`) via `page.evaluate()`. If a guessed internal method returns undefined or null, that is a TEST SCRIPT ERROR, not a product failure. Distinguish machine-verifiable DOM/state checks from audible perception (use PASS_WITH_MANUAL_VALIDATION for human listening tests; never fail solely because headless has no speakers).',
-        regressionReminder
+        activeTaskHeader,
+        plannedTestReminder,
+        regressionReminder,
+        formatReminder,
+        '1. FIRST-TURN TOOL EXECUTION MANDATE: You MUST run real validation tools via bash (e.g. `python3 <test_script>`, Playwright browser runner, or project test suites) in your FIRST turn. Do NOT emit a final JSON verdict without executing commands first. Emitting a verdict from hallucinated memory without running tools is a strict protocol violation.',
+        '2. RUN BEFORE WRITING: Execute applicable existing test runners and commands from `currentTask.validations` first. Do not create a duplicate test merely to make it your own.',
+        '3. PROVE TOOL AVAILABILITY DIRECTLY: Test the actual import/command. Keep browser discovery commands independent; never infer that Playwright is missing because a chained `which ... && ...` command stopped early.',
+        '3a. If `environmentProfile` is present, start with its verified black-box runner and executable paths. Re-probe only when the recorded command now fails.',
+        '3b. CONTAINER BROWSER LAUNCH: Always launch Playwright Chromium with `p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])`. Never claim browser is missing or return BLOCKED when bundled Chromium is available.',
+        '4. DO NOT INSTALL CASUALLY: Install only after a direct capability check fails. Never use `--break-system-packages`, modify product dependency manifests for QA setup, or perform a system-wide install.',
+        '5. WRITE ONLY IF UNAVOIDABLE: Prefer no new file. If a temporary helper is required, use one literal quoted heredoc in temporary storage, syntax-check it immediately, and clean it up. Never generate it through nested `bash -lc`, `python -c`, base64, long echo chains, or repeated sed escaping repairs.',
+        '6. STOP ESCAPE LOOPS: After two helper-writing or syntax failures, stop rewriting the helper. Use an existing runner or a different reasonable black-box interface and record the concrete attempt.',
+        '7. STRICT BLACK-BOX OBSERVATIONS ONLY: Report ONLY: test performed, expected result, actual result, and runtime evidence. NEVER mention "root cause", source file paths (e.g. `index.html:123`), function names, line numbers, or code snippets in `summary` or `checks`. Violating this will cause immediate server rejection.',
+        '7a. TEST HARNESS SANITY (AUDIO, UI & PUBLIC INTERFACES): Trigger actions via simulated DOM user gestures (e.g. clicking `#playBtn`, moving mouse, arrow keys) and observe DOM/canvas changes. Do NOT invoke private/synthetic JS methods (e.g. guessing `audioManager.playScore()` or `this.context`) via `page.evaluate()`. If a guessed internal method returns undefined or null, that is a TEST SCRIPT ERROR, not a product failure. Distinguish machine-verifiable DOM/state checks from audible perception (use PASS_WITH_MANUAL_VALIDATION for human listening tests; never fail solely because headless has no speakers).'
       ].join('\n');
     })()
     : stage === 'code-review'
@@ -200,10 +292,16 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
     : stage === 'ui-design'
     ? [
       '# FINAL UI/UX DESIGN ORDER — READ THIS LAST',
-      '1. COMPREHENSIVE SCREEN MOCKUPS: For each distinct screen/view in the application (e.g. Lobby, Room Setup, Secret Deployment, Gameplay HUD, Modals), produce a complete entry in `screens`.',
-      '2. DETAILED COMPONENTS: In `components`, list each concrete UI component with its purpose and state (e.g. "24x24 Canvas Viewport: Crisp terrain rendering with pan/zoom", "Room Header: Shareable link, copy code button, match mode badge", "Chat Drawer: Collapsible panel for player messages").',
-      '3. PROJECT ALIGNMENT: Ground all screen names, layouts, and components in the actual product domain (e.g. Feudal board game terrain, medieval army trays, secret deployment). Never use generic placeholder components.',
-      '4. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
+      '1. COMPREHENSIVE SCREEN MOCKUPS: For each distinct screen/view in the application (e.g. Lobby, Room Setup, Secret Deployment, Gameplay HUD, Combat Animation Overlay, Victory/Defeat Modal), produce a complete entry in `screens`.',
+      '2. SPATIAL COMPONENT REGIONS: In `components`, structure every component with an explicit spatial tag and concrete widget details:',
+      '   - `[HEADER]` Navigation, turn indicators, game status, top-bar buttons (e.g. "[HEADER] Turn Indicator: Pulsing Blue badge, Team A active")',
+      '   - `[CANVAS]` or `[MAIN]` The central viewport, 24x24 game grid, terrain rendering, and move targets (e.g. "[CANVAS] Board Grid: 24x24 tiles with highlighted legal moves in center")',
+      '   - `[TRAY]` or `[SIDEBAR]` Army tray, piece racks, inventory shelves, or side drawers (e.g. "[TRAY] Army Shelf: 15 circular piece slots with draggable tokens")',
+      '   - `[CONTROLS]` or `[BUTTON]` Action buttons, zoom toggles, and minimap controls (e.g. "[BUTTON] Confirm Deploy: Primary Green pill button, bottom right")',
+      '   - `[OVERLAY]` or `[MODAL]` Popups, damage text, combat animations, and dialogs (e.g. "[OVERLAY] Hit Burst: Radial Orange explosion at impact tile")',
+      '3. SPATIAL LAYOUT: In `layout`, describe the visual hierarchy and screen dimensions (e.g. "Top 10% HUD header, Center 65% interactive game canvas with pan/zoom, Bottom 25% docked army tray and action bar").',
+      '4. PROJECT ALIGNMENT: Ground all screen names, layouts, and components in the actual product domain. Never use generic placeholder components.',
+      '5. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
     ].join('\n')
     : stage === 'qa-planning'
     ? [

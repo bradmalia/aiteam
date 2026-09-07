@@ -20,9 +20,13 @@ function repoArgument() {
 }
 
 function portArgument() {
-  const port = Number(argument('--port', '4317'));
+  const port = Number(argument('--port', process.env.AITEAM_WATCH_PORT || '4317'));
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be an integer between 1024 and 65535.');
   return port;
+}
+
+function hostArgument() {
+  return argument('--host', process.env.AITEAM_WATCH_HOST || '0.0.0.0');
 }
 
 function readJson(file) {
@@ -160,7 +164,7 @@ function sendArtifact(response, repo, pathname) {
   return response.end(fs.readFileSync(artifactPath));
 }
 
-export function createWatchServer({ repo, port = 4317, host = '127.0.0.1' } = {}) {
+export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) {
   let activeRepo = path.resolve(repo);
   const server = http.createServer((request, response) => {
     const url = new URL(request.url || '/', `http://${host}:${port}`);
@@ -189,8 +193,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const repo = repoArgument();
     const port = portArgument();
-    const server = createWatchServer({ repo, port });
-    server.once('listening', () => process.stdout.write(`AITEAM watch: http://127.0.0.1:${port}/\nRepository: ${repo}\n`));
+    const host = hostArgument();
+    const server = createWatchServer({ repo, port, host });
+    server.once('listening', () => process.stdout.write(`AITEAM watch: http://${host}:${port}/\nRepository: ${repo}\n`));
     server.on('error', (error) => { process.stderr.write(`AITEAM watch failed: ${error.message}\n`); process.exitCode = 1; });
   } catch (error) {
     process.stderr.write(`AITEAM watch failed: ${error.message}\n`);

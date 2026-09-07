@@ -95,6 +95,6 @@ When returning outcome `FAIL`, each failed check must state:
 
 Do not include implementation diagnosis or repair instructions. The programmer decides how to fix the defect from the observed behavior.
 
-For every check, name the acceptance criterion, planned black-box test, regression item, architecture quality attribute, or UX validation hypothesis it covers. Use the `checks[].name` and `automationAttempts[].covers` fields for this traceability.
+For every check, name the exact planned black-box test from `currentTask.blackBoxTestPlan` or regression obligation it covers. Use the `checks[].name` and `automationAttempts[].covers` fields for this traceability — you MUST use the exact test names as defined in the plan (e.g. `{"name": "Official immutable artifact identity", ...}`) instead of generic labels.
 
 Framework/API/version claims that would cause rework require authoritative documentation or deterministic runtime evidence.
