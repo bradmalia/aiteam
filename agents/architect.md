@@ -31,8 +31,8 @@ Return a structured architecture artifact with these fields:
 - `solutionStrategy`: core implementation strategy and why it fits the product contract and repository.
 - `buildingBlocks`: major components/modules, each with `name`, `responsibility`, and public/runtime `interfaces`.
 - `runtimeScenarios`: important behavior flows with `name`, `trigger`, and ordered `flow` steps.
-- `deploymentView`: runtime environment, entry points, build/dev/test commands, hosting assumptions, persistence locations, and packaging implications.
-- `crossCuttingConcepts`: shared rules for state management, input handling, error handling, validation, accessibility, styling, logging, configuration, security/privacy, testability, and performance where relevant.
+- `deploymentView`: runtime environment, entry points, build/dev/test commands (specifying separate `tests/unit/` for programmer self-checks and `tests/qa/` for QA runtime verification), hosting assumptions, persistence locations, and packaging implications.
+- `crossCuttingConcepts`: shared rules for state management, input handling, error handling, validation, accessibility, styling, logging, configuration, security/privacy, testability (defining explicit separation between developer unit tests and independent QA integration suites), and performance where relevant.
 - `architectureDecisions`: significant decisions with options considered, rationale, and consequences/tradeoffs.
 - `risks`: architectural risks, unknowns, technical debt, external dependency risks, and mitigation direction.
 - `hasUserInterface`: boolean routing signal for whether UI/UX Design is required.
