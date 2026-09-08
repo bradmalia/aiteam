@@ -573,8 +573,10 @@ function normalizeBlackBoxTestPlan(plan, name) {
 }
 
 function rejectBlackBoxTestPlanImplementationGuidance(test, name) {
-  const text = Object.values(test).join('\n');
-  const forbidden = /\b(?:src|lib|app|components|scripts)\/[^\s:]+:\d+|(?:^|\s)line\s+\d+\b|root cause|replacement lines?|code snippet|copy-paste|should\s+(?:call|use|create|set|replace|import|export)\b|must\s+(?:call|use|create|set|replace|import|export)\b|\b(?:grep|cat)\b/i;
+  // Check only test action, expected, and evidenceMethod. Do NOT test covers[],
+  // which copies task acceptance criteria verbatim (and may contain phrases like "root cause").
+  const text = [test.action, test.expected, test.evidenceMethod].filter(Boolean).join('\n');
+  const forbidden = /\b(?:src|lib|app|components|scripts)\/[^\s:]+:\d+|(?:^|\s)line\s+\d+\b|\broot[\s-]cause\s+(?:analysis|diagnosis|fix|claim)|\breplacement lines?|\bcode snippet|\bcopy-paste|\bshould\s+(?:call|use|create|set|replace|import|export)\b|\bmust\s+(?:call|use|create|set|replace|import|export)\b|\b(?:grep|cat)\b/i;
   if (forbidden.test(text)) {
     throw new Error(`${name} must be a black-box test plan only: runtime action, expected observable result, and evidence method. Do not include source-line evidence, root-cause analysis, or fix instructions.`);
   }
