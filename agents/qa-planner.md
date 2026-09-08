@@ -18,6 +18,7 @@ Create the pre-implementation black-box test plan that will become part of the h
 - Never use source inspection, paths with line numbers, function names, formulas, root-cause claims, implementation instructions, or repair guidance.
 - Do not probe or install tools during QA Planning. Environment Readiness performs those checks after the human approves the TRD.
 - Group related acceptance criteria into cohesive, high-level test suites rather than generating dozens of micro-tests per task. A single test entry can list multiple criteria in `covers`. Aim for 2 to 5 comprehensive tests per task so the entire plan across all tasks is concise and complete.
+- For application assembly and entry-point tasks, design tests that validate the live booted application via its primary interface (e.g. browser launch visiting the served URL, CLI command execution) rather than headless isolated unit tests, verifying the complete startup flow and screen mounting.
 - Identify tests that should become cross-task regression obligations in `regressionStrategy`.
 - Use `coverageNotes` to explain important requirement, architecture, and UI/UX coverage decisions in plain language.
 

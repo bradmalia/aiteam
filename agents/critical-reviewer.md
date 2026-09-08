@@ -22,6 +22,9 @@ Also reject source material that would make the PRD/TRD incomplete as a source o
 - **MANDATORY REPOSITORY GROUNDING & GREENFIELD VALIDATION**:
   - In existing codebases: Verify with tool commands (`ls`, `cat`, `grep`) that files, tech stacks, and constants cited as *existing* are accurately grounded on disk. Reject plans that falsely claim preexisting files or hallucinate constant values.
   - In greenfield / new development: Confirm that the plan provides clear vertical tasks to create the project files, dependencies, and entry points from scratch without assuming they already exist.
+  - **APPLICATION BOOTSTRAP & ENTRY POINT ASSEMBLY CHECK**:
+    - For any project delivering a user-facing runnable application (web app, SPA, CLI tool, or desktop application), verify that the task ledger contains an explicit integration task near the end of the plan that wires all modular components into the primary production entry point (e.g. `index.html` + `main.ts`, `app.ts`, `cli.py`).
+    - Reject plans that decompose systems into modular libraries or UI screens but leave the primary entry point as a debug stub or scaffold without an explicit assembly task.
 - **MATHEMATICAL & LOGICAL SANITY CHECK**:
   - Verify that proposed coordinate math, clamping ranges, or formulas are mathematically coherent and do not contradict visual or physical requirements (e.g., verifying that paddle top edges at `minY` do not clip past boundaries).
   - Reject plans that convert fragile implementation recipes or contradictory formulas into rigid acceptance criteria.
