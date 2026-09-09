@@ -11,10 +11,14 @@ Verify that the approved implementation and black-box testing plan can be execut
 ## Required Verification
 
 1. Run direct, independent probes. Do not combine optional discovery checks with `&&` in a way that skips the actual package/import check.
-2. Record the selected command, resolved executable or interpreter path, version when available, and observed output.
-3. For browser capability, prove an actual browser can start and close through the selected automation interface. Package import alone is not enough.
-4. Verify file operations with a harmless create, read, syntax-check where applicable, and delete round trip in a writable system temporary directory. If that cannot prove repository writing, use one clearly named `.aiteam-readiness-probe` scratch directory in the repository and remove it completely. Do not modify `.aiteam` state or leave scratch files behind.
-5. Prefer existing project runners and already-installed tools. Do not duplicate a working runner.
+2. **Brownfield / Established Workspace Fast-Path**:
+   - In an established project where project manifests (e.g. `package.json`, `requirements.txt`, `pom.xml`, `.csproj`), toolchains, and existing test suites already exist and have run in prior tasks/sessions, do NOT spend multiple tool turns running redundant exploratory probe scripts.
+   - Run quick version/capability checks against the existing project runner in your first turn (e.g. `node -v && npx tsc -v && npx jest -v`, or `python3 -V && pytest --version`).
+   - Map all required capabilities from architecture and QA planning directly to the verified existing project tools and emit `PASS` immediately.
+3. Record the selected command, resolved executable or interpreter path, version when available, and observed output.
+4. For browser capability, prove an actual browser can start and close through the selected automation interface. Package import alone is not enough.
+5. Verify file operations with a harmless create, read, syntax-check where applicable, and delete round trip in a writable system temporary directory. If that cannot prove repository writing, use one clearly named `.aiteam-readiness-probe` scratch directory in the repository and remove it completely. Do not modify `.aiteam` state or leave scratch files behind.
+6. Prefer existing project runners and already-installed tools. Do not duplicate a working runner.
 
 ## Installation Boundary
 
