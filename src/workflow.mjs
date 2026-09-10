@@ -2050,6 +2050,21 @@ function writeReviewArtifact(repo, session, filename, html) {
   const dir = path.join(repo, '.aiteam', 'docs');
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, filename);
+  if (fs.existsSync(filePath)) {
+    const ext = path.extname(filename);
+    const base = path.basename(filename, ext);
+    const stat = fs.statSync(filePath);
+    const stamp = new Date(stat.mtimeMs).toISOString().replace(/[:.]/g, '-');
+    const backupName = `${base}.bak-${stamp}${ext}`;
+    const backupPath = path.join(dir, backupName);
+    if (!fs.existsSync(backupPath)) {
+      try {
+        fs.copyFileSync(filePath, backupPath);
+      } catch {
+        // ignore backup failures and continue writing
+      }
+    }
+  }
   fs.writeFileSync(filePath, html);
   return { path: filePath, url: artifactUrl(session, filename), fileUrl: pathToFileURL(filePath).href };
 }
