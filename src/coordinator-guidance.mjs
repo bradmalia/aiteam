@@ -78,6 +78,10 @@ export function coordinatorDirective(session = null) {
           'infer_qa_pass_from_code',
           'fabricate_qa_confirmation',
           'mark_checks_passed_without_user'
+        ] : humanReview ? [
+          'auto_approve_prd_or_trd',
+          'simulate_user_approval',
+          'advance_review_gate_without_real_user'
         ] : [
           'skip_intake_confirmation',
           'answer_intake_questions_yourself',
@@ -146,6 +150,8 @@ export function coordinatorDirectiveText(session = null, { source = 'start' } = 
     : directive.requiredNextAction.tool === 'aiteam_update_session'
       ? (session.pendingUserInput?.kind === 'qa-manual'
         ? 'STOP CALLING TOOLS. You MUST paste the QA manual checks into chat for the real user to physically perform. Do NOT approve them yourself, infer pass from the code, or fabricate a confirmation. Wait for the user\'s actual reply, then call aiteam_update_session with their exact response before advancing to Integration.'
+        : ['prd-review', 'trd-review'].includes(session.pendingUserInput?.kind)
+        ? 'STOP CALLING TOOLS. Human review of the PRD/TRD document is strictly required. You MUST paste the document link into chat and ask the real user to review and reply. NEVER approve the PRD or TRD on the user\'s behalf, even if instructed earlier to proceed, and do NOT submit "approved" until the user explicitly sends that exact confirmation in the current turn.'
         : 'STOP CALLING TOOLS AND DO NOT EXPLORE THE CODEBASE. You are the Facilitator. Present these exact questions directly to the human user in your chat response and wait. DO NOT read or explore repository files to answer them yourself, and DO NOT guess user intent. Only after the user replies in chat, submit their exact words via aiteam_update_session and immediately loop aiteam_advance.')
     : isImplFail
       ? 'CRITICAL: The implementation specialist returned FAIL without calling exec_command or bash to write files. This is NOT a real sandbox restriction — the specialist has full workspace-write access. Do NOT output code in chat, do NOT tell the user to copy-paste or save files manually. Call aiteam_advance immediately to retry. The specialist will write the files to disk on the next invocation.'

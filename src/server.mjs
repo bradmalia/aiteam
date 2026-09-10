@@ -59,7 +59,7 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_update_session',
-    description: 'Persist coordinator notes or pending user input only. Workflow status, stage, task ledger, evidence, and gates are server-owned and cannot be patched.',
+    description: 'Persist coordinator notes or pending user input only. Workflow status, stage, task ledger, evidence, and gates are server-owned and cannot be patched. For prd-review, trd-review, or manual QA gates, you MUST NOT approve or submit answers autonomously; you must wait for the actual human user to reply in chat with their decision.',
     inputSchema: { type: 'object', properties: { repository: { type: 'string' }, patch: { type: 'object', description: 'To pass the user response back, provide exactly: { "pendingUserInput": "the user string here" }' } }, required: ['patch'] }
   },
   {
@@ -710,9 +710,9 @@ function buildInitInstructions(repo = process.cwd()) {
       `2. Remind the user: "Active session in progress. You can monitor live progress on the [AITEAM Watch Dashboard](http://127.0.0.1:${session.watchPort || getWatchPort(repo)}/)."`,
       `3. Call aiteam_advance immediately to continue advancing the workflow gates.`,
       `   - Progress updates are not stopping points. After every result update, call aiteam_advance again in the same assistant turn while no real human input is pending.`,
-      `4. If questions or manual QA checks are pending for the user:`,
-      `   - Present the exact questions / checks directly to the user in chat.`,
-      `   - DO NOT answer questions yourself, do NOT guess user preferences, and do NOT self-approve manual QA.`,
+      `4. If questions, PRD/TRD reviews, or manual QA checks are pending for the user:`,
+      `   - Present the exact questions, PRD/TRD document URL, or QA checks directly to the user in chat.`,
+      `   - DO NOT answer questions yourself, do NOT guess user preferences, and NEVER approve a PRD, TRD, or manual QA yourself.`,
       `   - Wait for the user to reply in chat, then call aiteam_update_session(patch: { pendingUserInput: "<user response>" }).`,
       `   - Immediately call aiteam_advance to re-enter the execution loop.`,
       `5. Continue looping aiteam_advance in the same assistant turn until real human input is required, the project reaches COMPLETED, or the user explicitly pauses/cancels.`
