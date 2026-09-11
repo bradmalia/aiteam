@@ -999,7 +999,7 @@ function validateQaManualCheckAutomation(result) {
 }
 
 function validateQaManualCheckScope(session, result) {
-  if (result.outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
+  if (result.outcome !== 'PASS_WITH_MANUAL_VALIDATION' && (!Array.isArray(result.manualChecks) || !result.manualChecks.length)) return;
   const task = currentTask(session);
   const taskIndex = session.taskLedger.findIndex((item) => item.id === task?.id);
   if (!task || taskIndex < 0) return;
@@ -2746,7 +2746,7 @@ function applyResult(repo, session, assignment, result, run) {
     validateQaRegressionCoverage(next, result);
     recordPostReviewAdvisories(repo, next, stage, result);
     validateQaManualCheckScope(next, result);
-    const manual = result.outcome === 'PASS_WITH_MANUAL_VALIDATION';
+    const manual = result.outcome === 'PASS_WITH_MANUAL_VALIDATION' || (result.outcome === 'PASS' && Array.isArray(result.manualChecks) && result.manualChecks.length > 0);
     next.taskLedger = next.taskLedger.map((task) => task.id === next.currentTaskId ? {
       ...task,
       status: manual ? 'qa-awaiting-manual' : 'qa-passed',
