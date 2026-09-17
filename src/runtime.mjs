@@ -568,6 +568,28 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 8 * 36
     child.stdout.pipe(stdoutStream);
     child.stderr.pipe(stderrStream);
 
+    const maxTurnsEnv = Number(process.env.AITEAM_MAX_TURNS || 0);
+    const maxTurns = maxTurnsEnv > 0 ? maxTurnsEnv : (stage === 'implementation' ? 30 : 0);
+    let turns = 0;
+    let turnLimitExceeded = false;
+
+    if (maxTurns > 0) {
+      child.stderr.on('data', (chunk) => {
+        const text = chunk.toString('utf8');
+        // Match command executions in Codex/Qwen/Copilot/Agy stderr (e.g. /bin/bash -lc, $ <cmd>, or [exec])
+        const matches = text.match(/\/bin\/(?:bash|sh)\s+-lc|\$\s+[a-zA-Z0-9_./-]|\[(?:exec|command)\]/g);
+        if (matches) {
+          turns += matches.length;
+          if (turns >= maxTurns && !turnLimitExceeded) {
+            turnLimitExceeded = true;
+            killChildTree(child, 'SIGTERM');
+            forceKillTimer = setTimeout(() => killChildTree(child, 'SIGKILL'), 5000);
+            forceKillTimer.unref();
+          }
+        }
+      });
+    }
+
     let timedOut = false;
     let forceKillTimer = null;
     let residualProcessCleanup = false;
@@ -618,6 +640,8 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 8 * 36
         exitCode: code,
         signal,
         timedOut,
+        turnLimitExceeded,
+        turns,
         residualProcessCleanup,
         enforceSchema,
         responseOnly,

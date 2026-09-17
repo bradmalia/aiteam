@@ -1399,11 +1399,11 @@ function assignmentText(stage, session) {
   const qaPlannedTestRule =
     'Every currentTask.blackBoxTestPlan[].name is mandatory. Include each exact planned test name in checks or automationAttempts[].covers. Re-run that planned black-box test unless it is no longer valid; if obsolete, include a check with that exact name, status INFO, and a clear reason it is obsolete/no-longer-applicable.';
   const qaStartupRule =
-    'For browser/UI/game/canvas work, attach pageerror and console-error listeners before navigation/startup. Any page error, JavaScript console error, failed navigation, or missing primary UI root is a FAIL. PASS requires concrete automation evidence that startup had no page or console errors.';
+    'For browser/UI/game/canvas/DOM work, you MUST execute a real browser test (e.g. Playwright / headless Chromium script) against the running application. You are STRICTLY FORBIDDEN from relying solely on Jest, unit test runners, or simulated jsdom to validate UI tasks. Attach pageerror and console-error listeners before navigation/startup. Any page error, JavaScript console error, failed navigation, or missing primary UI root is a FAIL. PASS requires concrete automation evidence that real browser execution loaded the app and observed zero page or console errors.';
   const qaManualValidationRule =
     'Before returning PASS_WITH_MANUAL_VALIDATION, every manualChecks[] item must either be listed exactly or by a clear short label in automationAttempts[].covers, or be explicitly marked "Human-only because ..." with the reason it cannot be automated. Manual checks must target only the current task or completed-prior-task regression scope; never ask the human to validate future planned tasks.';
   const qaMethodSelectionRule =
-    'Choose the strongest available black-box method for each observable interface. Browser automation, system browsers, CLI execution, HTTP/API requests, simulated user input, public-interface harnesses, and existing project test runners are examples; no specific framework or fixed tool order is mandatory. Every claimed command must be recorded in automationAttempts with its actual result and covered test names. BLOCKED requires at least one concrete executed attempt, non-empty covers/fallbackReason on every attempt, and exact coverage of all planned-test names and prior regression IDs.';
+    'Choose the strongest available black-box method for each observable interface. For UI/game/DOM tasks, you MUST physically execute browser automation (e.g. Playwright or system browser); programmer unit test suites (e.g. Jest unit tests) are NOT a substitute for end-to-end browser execution. Every claimed command must be recorded in automationAttempts with its actual executed command string and output. BLOCKED requires at least one concrete executed attempt, non-empty covers/fallbackReason on every attempt, and exact coverage of all planned-test names and prior regression IDs.';
   const codeReviewProofRule =
     'For any proposed BLOCKER or MAJOR finding involving formulas, normalization, geometry, boundaries, signs, units, state transitions, or algorithms, substitute representative boundary and midpoint inputs into the ACTUAL current code and show intermediate/final values. Apply the same inputs to the proposed replacement. Do not emit a material finding unless this proves that current behavior violates an exact acceptance criterion or approved PRD/TRD requirement and that the correction direction satisfies it. An alternative implementation preference is not a defect.';
   const details = {
@@ -1427,11 +1427,14 @@ function assignmentText(stage, session) {
       : `Implement or verify task ${taskJson}.\n\n` +
         `If the code for this task is not yet written, you MUST execute your tools (e.g. node, python, or shell scripts) to physically write the necessary files to disk NOW.\n` +
         `If the acceptance criteria are already satisfied by pre-existing code, verify the criteria using test/inspection commands and list those source files in "filesChanged".\n\n` +
-        `CRITICAL SCOPE BOUNDARY:\nImplement ONLY the acceptanceCriteria of THIS task.\nDo NOT implement features or subsystems belonging to other tasks. Focus strictly on fulfilling the criteria of THIS task.\n\n` +
+        `CRITICAL SCOPE BOUNDARY:\nImplement ONLY the acceptanceCriteria of THIS task.\n` +
+        `Do NOT implement features or subsystems belonging to other tasks. Do NOT redesign or rewrite existing working subsystems (e.g. server session protocols, chat drawers, or other screens) unless explicitly required by an acceptance criterion.\n\n` +
+        `FILE INSPECTION & TURN EFFICIENCY MANDATE:\n` +
+        `Do NOT paginated-read large files using dozens of small sed -n or head/tail chunks. Use grep -n / rg -n to find target line numbers directly. Consolidate your edits, run tests, and return your result within a budget of fewer than 20 tool turns.\n\n` +
         `Return outcome "PASS" with "filesChanged" containing the non-empty repository-relative paths containing the implementation. Do not commit.`,
     'code-review': task?.['code-reviewFailure']
-      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Use file inspection tools to read the files directly from disk. Re-derive each prior finding from the current code; prior findings are hypotheses, not authoritative facts. If deterministic implementation evidence disproves a prior finding, do not repeat it.\n\n${codeReviewProofRule}`
-      : `Review only the current task and its changed paths: ${taskJson}.\n\nYou MUST use file inspection tools to read and inspect the code files directly from disk before returning your review findings.\n\n${codeReviewProofRule}`,
+      ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous review failed with the following findings:\n${JSON.stringify(task['code-reviewFailure'].findings, null, 2)}\n\nYou MUST perform a FULL review of the entire task and all its changed paths: verify that the previous findings are resolved AND that all acceptanceCriteria are still completely met without regressions or scope creep. Inspect ONLY the files listed in task.filesChanged. Do NOT audit unrelated files outside this list. Re-derive each prior finding from the current code; prior findings are hypotheses, not authoritative facts. If deterministic implementation evidence disproves a prior finding, do not repeat it.\n\n${codeReviewProofRule}`
+      : `Review only the current task and its changed paths: ${taskJson}.\n\nEFFICIENCY & SCOPE MANDATE: Inspect ONLY the files listed in task.filesChanged against the specific acceptanceCriteria of THIS task. Do NOT traverse or audit unrelated subsystems outside task.filesChanged. Complete your inspection in 1-2 turns and return your JSON review object immediately.\n\n${codeReviewProofRule}`,
     qa: task?.qaFailure
       ? `This is a REPAIR VERIFICATION for task ${taskJson}.\nThe previous QA validation failed with:\n${JSON.stringify(task.qaFailure, null, 2)}\n\nYou MUST execute a FULL black-box regression test suite covering ALL acceptanceCriteria of this task. Verify specifically that the previously failed observable behavior is resolved AND that all previously passing acceptance criteria still pass without regressions. Also verify that no completed prior tasks were broken. Return a verified check in "checks" for every acceptance criterion. Each check must report test performed, expected result, actual result, and runtime evidence. Do NOT inspect source code and DO NOT tell the programmer how to fix defects.\n\n${qaMethodSelectionRule}\n\n${browserFallbackRule}\n\n${qaPlannedTestRule}\n\n${qaRegressionRule}\n\n${qaStartupRule}\n\n${qaManualValidationRule}\n\n${qaRuntimeSafety}`
       : `Validate the current task against its acceptance criteria: ${taskJson}.\n\n` +
@@ -2683,24 +2686,32 @@ function applyResult(repo, session, assignment, result, run) {
     if (declaredFiles.length === 0 && Array.isArray(task?.filesChanged) && task.filesChanged.length > 0) {
       declaredFiles = task.filesChanged.filter((file) => fs.existsSync(path.resolve(repo, file)));
     }
-    // Auto-discover legitimate companion repo files created in standard source/config/script directories
-    const potentialCompanionDirs = ['config', 'src', 'scripts', 'tests', 'lib'];
+    // Auto-discover legitimate companion repo files: only add files that were actually modified or untracked
     const autoDiscovered = [];
-    for (const dir of potentialCompanionDirs) {
-      const fullDir = path.resolve(repo, dir);
-      if (fs.existsSync(fullDir)) {
-        try {
-          const entries = fs.readdirSync(fullDir, { recursive: true, withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isFile()) {
-              const rel = path.relative(repo, path.join(entry.parentPath || fullDir, entry.name)).replaceAll(path.sep, '/');
-              if (!rel.includes('__pycache__') && !rel.endsWith('.pyc') && !rel.endsWith('.swp') && !declaredFiles.includes(rel)) {
-                autoDiscovered.push(rel);
-              }
-            }
-          }
-        } catch {}
+    try {
+      const gitOut = execFileSync('git', ['-C', repo, 'status', '--porcelain', '-uall'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+      for (const line of gitOut.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const candidate = trimmed.slice(2).trim().replaceAll(path.sep, '/');
+        if (
+          candidate &&
+          !candidate.startsWith('.aiteam/') &&
+          !candidate.startsWith('.git/') &&
+          !candidate.includes('__pycache__') &&
+          !candidate.endsWith('.pyc') &&
+          !candidate.endsWith('.swp') &&
+          !declaredFiles.includes(candidate) &&
+          fs.existsSync(path.resolve(repo, candidate))
+        ) {
+          autoDiscovered.push(candidate);
+        }
       }
+    } catch {
+      // If git is not available or uninitialized, trust declaredFiles without sweeping the filesystem
     }
     // Filter out missing files
     const missing = declaredFiles.filter((file) => !fs.existsSync(path.resolve(repo, file)));
@@ -3191,12 +3202,17 @@ async function executeAdvanceWorkflow({ repo, timeoutSeconds, model = null, coor
       appendEvent(repo, { type: 'workflow_stage_failed', stage: assignment.stage, agentId: assignment.agentId, error: String(error?.message || error) });
       throw error;
     }
-    if (run.exitCode !== 0 || run.timedOut) {
-      lastError = new Error(`Specialist ${assignment.agentId} failed with exit code ${run.exitCode}${run.timedOut ? ' after timeout' : ''}.`);
+    if (run.exitCode !== 0 || run.timedOut || run.turnLimitExceeded) {
+      const reason = run.turnLimitExceeded
+        ? ` after exceeding maximum turn budget (${run.turns} turns)`
+        : run.timedOut
+          ? ' after timeout'
+          : '';
+      lastError = new Error(`Specialist ${assignment.agentId} failed with exit code ${run.exitCode}${reason}.`);
       if (attempt < maxAttempts) {
         patchSession(repo, { activeRun: null, lastFailure: lastError.message });
         appendEvent(repo, { type: 'workflow_stage_retry', stage: assignment.stage, agentId: assignment.agentId, attempt, error: lastError.message });
-        retryContext = `${coordinatorContext}\n\nThe previous specialist attempt exited without a valid result. Retry now and return only the required JSON object.`;
+        retryContext = `${coordinatorContext}\n\nThe previous specialist attempt exited without a valid result${reason}. Consolidate your actions, avoid excessive tool calls, and return only the required JSON object.`;
         continue;
       }
       patchSession(repo, { activeRun: null, lastFailure: lastError.message });
