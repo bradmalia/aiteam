@@ -3,10 +3,10 @@
   "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Agentic engineering team for GitHub Copilot, Codex, and MCP-capable coding environments",
+  "description": "Lightweight, skill-based agentic engineering team and live progress dashboard",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/server.mjs && node --check src/runtime.mjs && node --check src/state.mjs && node --check src/registry.mjs && node --check src/coordinator-guidance.mjs && node --check src/workflow.mjs && node --check src/git.mjs && node --check src/watch-server.mjs"
+    "check": "node --check src/watch-server.mjs && node --check skill/lib/state-bridge.mjs && node --check skill/lib/runner-adapter.mjs && node --check skill/lib/fingerprint.mjs"
   },
   "engines": {
     "node": ">=20"
