@@ -190,7 +190,7 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
         '  chunk 1: `cat > filename <<\'AITEAM_EOF\'` … ~100 lines … `AITEAM_EOF`',
         '  chunk 2+: `cat >> filename <<\'AITEAM_EOF\'` … next ~100 lines … `AITEAM_EOF`  (>> appends)',
         'Then verify: `wc -l filename` plus the language syntax checker/compiler. Never write a large file in a single heredoc or it will be silently truncated.',
-        '6. MOCK FIXTURE INTEGRITY: When writing unit tests with mock game states, ensure the mock boards are structurally complete (e.g. active teams have living royalty pieces unless testing extinction win conditions). Incomplete mock boards cause global win/loss checks to trigger prematurely.',
+        '6. TEST SCOPE & MOCK INTEGRITY: Only write focused unit tests for core domain logic if needed. DO NOT author complex dual-client mock harnesses, simulated browser sessions, or end-to-end UI test suites in unit test runners (e.g. Jest/jsdom) — end-to-end and UI flow verification is owned by QA via browser automation. If writing mock game states, ensure mock boards are structurally complete (active teams have royalty pieces) so global win/loss checks do not trigger prematurely.',
         '7. MANDATORY OUTPUT FORMAT — RAW JSON ONLY:',
         '   Your final answer must be ONLY one valid JSON object. Do NOT emit conversational markdown summaries (e.g. "Here is what I did...", "All fixes implemented...", "### Summary"). The workflow engine strictly parses your final message as JSON. Any surrounding prose or missing JSON keys will be rejected.',
         '   Example final output: {"outcome": "PASS", "summary": "Implemented and verified acceptance criteria on disk.", "evidence": ["Checked PRD and TRD", "Ran python3 tests/test.py -> passed"], "filesChanged": ["index.html"], "validations": [{"command": "python3 tests/test.py", "result": "passed"}]}'
@@ -312,10 +312,9 @@ export function buildAgentPrompt(agent, task, context = '', stage = null) {
       '4. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
     ].join('\n')
     : stage === 'planning'
-
     ? [
       '# FINAL PLANNING ORDER — READ THIS LAST',
-      '1. DECOMPOSE INTO TASKS: You must produce an array of implementation tasks in `tasks`.',
+      '1. DECOMPOSE INTO TASKS: You must produce an array of implementation tasks in `tasks`. Focus task descriptions on application and domain features; do NOT mandate complex multi-client integration test harnesses in unit test files, as end-to-end integration and flow testing is owned by the QA stage.',
       '2. OUTCOME: Set outcome to "PASS" and provide a non-empty summary and evidence array.',
       '3. RAW JSON ONLY: Your final response must be ONLY one valid JSON object.'
     ].join('\n')

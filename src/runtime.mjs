@@ -569,7 +569,7 @@ export function runAgent({ repo, agentId, task, context = '', timeoutMs = 8 * 36
     child.stderr.pipe(stderrStream);
 
     const maxTurnsEnv = Number(process.env.AITEAM_MAX_TURNS || 0);
-    const maxTurns = maxTurnsEnv > 0 ? maxTurnsEnv : (stage === 'implementation' ? 30 : 0);
+    const maxTurns = maxTurnsEnv > 0 ? maxTurnsEnv : 0;
     let turns = 0;
     let turnLimitExceeded = false;
 

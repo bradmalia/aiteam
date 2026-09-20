@@ -1282,10 +1282,10 @@ function stageContext(session, repo) {
       availableTestScripts: existingTestScripts?.length ? existingTestScripts : undefined,
       completedDependencyTasks: stage === 'implementation' ? completedDependencyTasksPromptView(session, task, repo) : undefined,
       completedPriorTasks: completedPriorTasks?.length ? completedPriorTasks : undefined,
-      architectureDesignOverview: arch ? arch.design : null,
-      architectureOverview: architecturePromptView(arch),
-      uiDesign: uiDesignPromptView(session.stageEvidence['ui-design']?.result),
-      environmentProfile: session.environmentProfile || null,
+      architectureDesignOverview: stage === 'implementation' && arch ? arch.design : null,
+      architectureOverview: stage === 'implementation' ? architecturePromptView(arch) : undefined,
+      uiDesign: stage === 'implementation' ? uiDesignPromptView(session.stageEvidence['ui-design']?.result) : undefined,
+      environmentProfile: stage === 'code-review' ? null : (session.environmentProfile || null),
       reviewArtifacts: reviewArtifactsPromptView(session),
       pendingUserInput: session.pendingUserInput
     }, null, 2);
@@ -1428,7 +1428,8 @@ function assignmentText(stage, session) {
         `If the code for this task is not yet written, you MUST execute your tools (e.g. node, python, or shell scripts) to physically write the necessary files to disk NOW.\n` +
         `If the acceptance criteria are already satisfied by pre-existing code, verify the criteria using test/inspection commands and list those source files in "filesChanged".\n\n` +
         `CRITICAL SCOPE BOUNDARY:\nImplement ONLY the acceptanceCriteria of THIS task.\n` +
-        `Do NOT implement features or subsystems belonging to other tasks. Do NOT redesign or rewrite existing working subsystems (e.g. server session protocols, chat drawers, or other screens) unless explicitly required by an acceptance criterion.\n\n` +
+        `Do NOT implement features or subsystems belonging to other tasks. Do NOT redesign or rewrite existing working subsystems (e.g. server session protocols, chat drawers, or other screens) unless explicitly required by an acceptance criterion. ` +
+        `Do NOT author complex multi-client integration test harnesses in unit test files (e.g. Jest); keep existing tests passing with syntax and regression checks, while QA owns end-to-end flow validation.\n\n` +
         `FILE INSPECTION & TURN EFFICIENCY MANDATE:\n` +
         `Do NOT paginated-read large files using dozens of small sed -n or head/tail chunks. Use grep -n / rg -n to find target line numbers directly. Consolidate your edits, run tests, and return your result within a budget of fewer than 20 tool turns.\n\n` +
         `Return outcome "PASS" with "filesChanged" containing the non-empty repository-relative paths containing the implementation. Do not commit.`,
