@@ -33,26 +33,18 @@ rm -rf "$skill_target"
 ln -sf "$aiteam_home/skill" "$skill_target"
 echo "Linked skill to $skill_target -> $aiteam_home/skill"
 
-# 4. Provide AGENTS.md instructions if not present
+# 4. Provide AGENTS.md instructions with quick-trigger rules
 agents_md="$target_repo/AGENTS.md"
+template_md="$aiteam_home/skill/templates/AGENTS.skill.md"
+
 if [ ! -f "$agents_md" ]; then
-  cat > "$agents_md" << 'AITEAM_EOF'
-# Project Agent Instructions
-
-When developing or executing tasks in this repository using AITeam:
-1. Activate the `aiteam` skill (`.agents/skills/aiteam/SKILL.md`).
-2. Follow the multi-stage quality gates (Analyst -> Architect -> Planner -> Programmer -> Reviewer -> QA -> Maintainer).
-3. All authoritative state is preserved in `.aiteam/session.json`.
-AITEAM_EOF
-  echo "Created initial $agents_md"
+  cp "$template_md" "$agents_md"
+  echo "Created initial $agents_md from template"
 else
-  if ! grep -q "AITeam" "$agents_md"; then
-    cat >> "$agents_md" << 'AITEAM_EOF'
-
-## AITeam Instructions
-When asked to build or execute tasks using AITeam, activate the `aiteam` skill located at `.agents/skills/aiteam/SKILL.md`. Follow the 4-gate per-task cycle (Implementation -> Code Review -> QA -> Maintainer).
-AITEAM_EOF
-    echo "Appended AITeam instructions to $agents_md"
+  if ! grep -q "resume aiteam" "$agents_md"; then
+    echo "" >> "$agents_md"
+    cat "$template_md" >> "$agents_md"
+    echo "Appended AITeam quick-trigger instructions to $agents_md"
   fi
 fi
 
