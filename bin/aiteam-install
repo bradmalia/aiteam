@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# AITeam Skill Project Installer
+# Links the AITeam Skill into any repository, creates .aiteam state directory,
+# and configures git exclusion.
+
+target_repo="${1:-$PWD}"
+target_repo="$(cd "$target_repo" && pwd)"
+aiteam_home="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "=== Installing AITeam Skill into $target_repo ==="
+
+# 1. Ensure .aiteam state directory exists
+mkdir -p "$target_repo/.aiteam/runs"
+mkdir -p "$target_repo/.aiteam/docs"
+
+# 2. Configure .git/info/exclude so .aiteam/ is never committed
+if [ -d "$target_repo/.git" ]; then
+  exclude_file="$target_repo/.git/info/exclude"
+  mkdir -p "$(dirname "$exclude_file")"
+  touch "$exclude_file"
+  if ! grep -q "^\.aiteam/" "$exclude_file"; then
+    echo ".aiteam/" >> "$exclude_file"
+    echo "Added .aiteam/ to $exclude_file"
+  fi
+fi
+
+# 3. Create .agents/skills/aiteam link or copy
+mkdir -p "$target_repo/.agents/skills"
+skill_target="$target_repo/.agents/skills/aiteam"
+rm -rf "$skill_target"
+ln -sf "$aiteam_home/skill" "$skill_target"
+echo "Linked skill to $skill_target -> $aiteam_home/skill"
+
+# 4. Provide AGENTS.md instructions if not present
+agents_md="$target_repo/AGENTS.md"
+if [ ! -f "$agents_md" ]; then
+  cat > "$agents_md" << 'AITEAM_EOF'
+# Project Agent Instructions
+
+When developing or executing tasks in this repository using AITeam:
+1. Activate the `aiteam` skill (`.agents/skills/aiteam/SKILL.md`).
+2. Follow the multi-stage quality gates (Analyst -> Architect -> Planner -> Programmer -> Reviewer -> QA -> Maintainer).
+3. All authoritative state is preserved in `.aiteam/session.json`.
+AITEAM_EOF
+  echo "Created initial $agents_md"
+else
+  if ! grep -q "AITeam" "$agents_md"; then
+    cat >> "$agents_md" << 'AITEAM_EOF'
+
+## AITeam Instructions
+When asked to build or execute tasks using AITeam, activate the `aiteam` skill located at `.agents/skills/aiteam/SKILL.md`. Follow the 4-gate per-task cycle (Implementation -> Code Review -> QA -> Maintainer).
+AITEAM_EOF
+    echo "Appended AITeam instructions to $agents_md"
+  fi
+fi
+
+echo "=== AITeam Skill successfully installed into $target_repo ==="
+echo "Launch the live watcher anytime with:"
+echo "  $aiteam_home/bin/aiteam-watch \"$target_repo\" --port 22924"
