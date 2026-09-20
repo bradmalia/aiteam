@@ -7,7 +7,8 @@ set -Eeuo pipefail
 
 target_repo="${1:-$PWD}"
 target_repo="$(cd "$target_repo" && pwd)"
-aiteam_home="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_path="$(realpath "${BASH_SOURCE[0]}")"
+aiteam_home="$(cd "$(dirname "$script_path")/.." && pwd)"
 
 echo "=== Installing AITeam Skill into $target_repo ==="
 

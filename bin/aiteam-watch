@@ -2,4 +2,6 @@
 set -Eeuo pipefail
 repo="${1:-$PWD}"
 port="${AITEAM_WATCH_PORT:-4317}"
-exec node "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/watch-server.mjs" --repo "$repo" --port "$port"
+script_path="$(realpath "${BASH_SOURCE[0]}")"
+aiteam_home="$(cd "$(dirname "$script_path")/.." && pwd)"
+exec node "$aiteam_home/src/watch-server.mjs" --repo "$repo" --port "$port"
