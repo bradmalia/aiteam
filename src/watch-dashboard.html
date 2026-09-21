@@ -137,11 +137,11 @@
 
     $('gates').innerHTML = gatesHtml;
     
-    const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-awaiting-manual':'qa (manual validation)', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
-    const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'qa-awaiting-manual' ? 'waiting' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
+    const taskGate = (status) => ({ planned:'planned', implemented:'code-review', 'review-passed':'qa', 'qa-auto-passed':'qa (awaiting sign-off)', 'qa-awaiting-manual':'qa (manual validation)', 'qa-passed':'complete', 'needs-rework':'implementation' }[status] || '—');
+    const taskClass = (status) => status === 'qa-passed' ? 'passed' : status === 'needs-rework' ? 'failed' : status === 'qa-auto-passed' || status === 'qa-awaiting-manual' ? 'waiting' : status === 'implemented' || status === 'review-passed' ? 'running' : '';
     
     const taskPhases = ['planned', 'implementation', 'code-review', 'qa', 'complete'];
-    const taskPhaseIndex = (status) => taskPhases.indexOf(status === 'implemented' ? 'code-review' : status === 'review-passed' ? 'qa' : status === 'qa-passed' ? 'complete' : status === 'needs-rework' ? 'implementation' : 'planned');
+    const taskPhaseIndex = (status) => taskPhases.indexOf(status === 'implemented' ? 'code-review' : (status === 'review-passed' || status === 'qa-auto-passed') ? 'qa' : status === 'qa-passed' ? 'complete' : status === 'needs-rework' ? 'implementation' : 'planned');
     
     // Preserve open details state across 1.5s poll re-renders
     const openSet = new Set();
@@ -188,7 +188,8 @@
       }
 
       const isCurrentActive = task.id === currentTaskId;
-      const displayStatus = (isCurrentActive && task.status === 'planned') ? (session.currentStage || 'in-progress') : (task.status || 'planned');
+      const statusLabel = (s) => ({ 'qa-auto-passed': 'awaiting QA sign-off', 'qa-awaiting-manual': 'awaiting sign-off', 'needs-rework': 'needs rework', 'qa-passed': 'complete', 'review-passed': 'awaiting QA' }[s]) || s || 'planned';
+      const displayStatus = (isCurrentActive && task.status === 'planned') ? (session.currentStage || 'in-progress') : statusLabel(task.status);
       const pillClass = (isCurrentActive && task.status === 'planned') ? 'running' : taskClass(task.status);
 
       let durationStr = '';

@@ -12,7 +12,8 @@ import {
   startStage,
   completeStage,
   updateTaskLedger,
-  writeActiveLog
+  writeActiveLog,
+  recordApproval
 } from '../skill/lib/state-bridge.mjs';
 import { computeFingerprint, verifyFingerprint } from '../skill/lib/fingerprint.mjs';
 
@@ -45,6 +46,12 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
     updateTaskLedger(tmpRepo, tasks);
     let current = readSession(tmpRepo);
     assert.equal(current.taskLedger.length, 2);
+
+    // 2b. Approve the two up-front human gates (PRD + TRD) — required before task execution
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'PRD approved' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'TRD approved' });
+    assert.equal(readSession(tmpRepo).approvals.prd.decision, 'APPROVED');
+    assert.equal(readSession(tmpRepo).approvals.trd.decision, 'APPROVED');
 
     // 3. Start implementation on Task 1
     const run = startStage(tmpRepo, 'implementation', 'task-1-canvas', 'programmer', 'Programmer');
@@ -91,7 +98,8 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
     current = readSession(tmpRepo);
     assert.equal(current.taskLedger[0].status, 'review-passed');
 
-    // 7. QA testing pass with fingerprint verification
+    // 7. QA testing pass — automated QA passes, task is held in qa-auto-passed with the
+    //    human sign-off gate open. Integration must be hard-blocked until the user signs off.
     startStage(tmpRepo, 'qa', 'task-1-canvas', 'qa', 'QA');
     completeStage(tmpRepo, 'qa', 'task-1-canvas', {
       outcome: 'PASS',
@@ -101,8 +109,22 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
     });
 
     current = readSession(tmpRepo);
+    assert.equal(current.taskLedger[0].status, 'qa-auto-passed');
+    assert.equal(current.pendingUserInput?.kind, 'qa-manual');
+    assert.equal(current.pendingUserInput?.response, null);
+    assert.ok(!current.completedTasks.includes('task-1-canvas'));
+    assert.throws(
+      () => startStage(tmpRepo, 'integration', 'task-1-canvas', 'maintainer', 'Maintainer'),
+      /AITEAM_GATE_BLOCKED/
+    );
+
+    // 8. Human QA sign-off promotes the task to qa-passed and unblocks integration.
+    recordApproval(tmpRepo, { gate: 'qa', taskId: 'task-1-canvas', decision: 'approved', response: 'PASS: verified in browser' });
+    current = readSession(tmpRepo);
     assert.equal(current.taskLedger[0].status, 'qa-passed');
     assert.ok(current.taskLedger[0].qaFingerprint);
+    assert.ok(current.completedTasks.includes('task-1-canvas'));
+    assert.equal(current.approvals['qa:task-1-canvas'].decision, 'APPROVED');
     assert.ok(verifyFingerprint(tmpRepo, ['index.html'], current.taskLedger[0].qaFingerprint));
 
     // Verify tamper detection
@@ -130,6 +152,8 @@ test('AITeam Skill: Watcher Dashboard compatibility test', async (t) => {
       { id: 't1', title: 'Task One', status: 'implemented' },
       { id: 't2', title: 'Task Two', status: 'planned' }
     ]);
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'ok' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'ok' });
     const run = startStage(tmpRepo, 'code-review', 't1', 'code-reviewer', 'Code Reviewer');
     writeActiveLog(tmpRepo, 'Reviewing files for task t1...');
 
@@ -191,6 +215,39 @@ test('AITeam Skill: Watcher Dashboard compatibility test', async (t) => {
     if (watchProcess) {
       watchProcess.kill('SIGTERM');
     }
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
+test('AITeam Skill: PRD/TRD gates hard-block downstream stages until approved', (t) => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-gate-test-'));
+
+  try {
+    initSession(tmpRepo, 'gate enforcement test');
+
+    // Complete intake -> auto-opens the PRD approval gate.
+    completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD drafted' });
+    let s = readSession(tmpRepo);
+    assert.equal(s.pendingUserInput?.gate, 'prd');
+    assert.equal(s.pendingUserInput?.response, null);
+
+    // Architecture is hard-blocked until the PRD gate is approved.
+    assert.throws(() => startStage(tmpRepo, 'architecture'), /AITEAM_GATE_BLOCKED/);
+
+    // Approving the PRD unblocks architecture.
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'looks good' });
+    startStage(tmpRepo, 'architecture', null, 'architect', 'Architect');
+
+    // Planning is blocked until the TRD gate is approved too.
+    assert.throws(() => startStage(tmpRepo, 'planning'), /AITEAM_GATE_BLOCKED/);
+
+    // Requesting changes on the TRD does NOT unblock it.
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'changes', response: 'add caching section' });
+    assert.throws(() => startStage(tmpRepo, 'planning'), /AITEAM_GATE_BLOCKED/);
+
+    s = readSession(tmpRepo);
+    assert.equal(s.approvals.trd.decision, 'CHANGES_REQUESTED');
+  } finally {
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }
 });

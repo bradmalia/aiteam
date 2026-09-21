@@ -1,6 +1,6 @@
 {
   "name": "aiteam",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Lightweight, skill-based agentic engineering team and live progress dashboard",
