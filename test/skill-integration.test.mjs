@@ -251,3 +251,39 @@ test('AITeam Skill: PRD/TRD gates hard-block downstream stages until approved', 
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }
 });
+
+test('AITeam Skill: Brownfield projects automatically archive existing PRD/TRD docs', (t) => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-brownfield-test-'));
+
+  try {
+    initSession(tmpRepo, 'initial milestone');
+    const docsDir = path.join(tmpRepo, '.aiteam', 'docs');
+    const prdPath = path.join(docsDir, 'prd.html');
+    const trdPath = path.join(docsDir, 'trd.html');
+
+    // Create existing v1 documents
+    fs.writeFileSync(prdPath, '<h1>PRD v1</h1>', 'utf8');
+    fs.writeFileSync(trdPath, '<h1>TRD v1</h1>', 'utf8');
+
+    // Starting intake archives the existing PRD
+    startStage(tmpRepo, 'intake', null, 'analyst', 'Analyst');
+    const archiveDir = path.join(docsDir, 'archive');
+    assert.ok(fs.existsSync(archiveDir));
+    const archivedPrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('prd-') && f.endsWith('.html'));
+    assert.equal(archivedPrds.length, 1);
+    assert.equal(fs.readFileSync(path.join(archiveDir, archivedPrds[0]), 'utf8'), '<h1>PRD v1</h1>');
+
+    // Approve PRD and start architecture
+    completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD v2 drafted' });
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'PRD v2 approved' });
+    
+    // Starting architecture archives the existing TRD
+    startStage(tmpRepo, 'architecture', null, 'architect', 'Architect');
+    const archivedTrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('trd-') && f.endsWith('.html'));
+    assert.equal(archivedTrds.length, 1);
+    assert.equal(fs.readFileSync(path.join(archiveDir, archivedTrds[0]), 'utf8'), '<h1>TRD v1</h1>');
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+

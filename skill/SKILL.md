@@ -72,22 +72,28 @@ node /home/brad/aiteam/skill/lib/state-bridge.mjs request-approval --repo "$PWD"
 When asked to build or maintain a project using AITeam:
 
 1. **Verify or Initialize State**:
-   Ensure `.aiteam/session.json` exists in the target repository.
+   Check if `.aiteam/session.json` already exists in the target repository.
+   - **New run**:
+     ```bash
+     node /home/brad/aiteam/skill/lib/state-bridge.mjs init --repo "$PWD" --request "<user-request>"
+     ```
+   - **Resumed run**: Inspect the existing `.aiteam/session.json` to identify current stage and status.
+
+2. **Auto-Launch Watcher & Communicate URL (Mandatory)**:
+   Always check if the watcher is running on the project. If not running, start it in the background:
    ```bash
-   node /home/brad/aiteam/skill/lib/state-bridge.mjs init --repo "$PWD" --request "<user-request>"
+   nohup /home/brad/aiteam/bin/aiteam-watch "$PWD" --port 4317 >/dev/null 2>&1 &
    ```
-2. **Launch the Live Watcher Dashboard** (Optional but Recommended):
-   ```bash
-   /home/brad/aiteam/bin/aiteam-watch "$PWD" --port 22924
-   ```
-   Open `http://localhost:22924` to monitor real-time task progress, logs, and artifacts.
+   *(Or specify an alternative free port such as 22924).*
+   **Rule:** Whether starting a new run or resuming an existing session, **always proactively report the watcher URL** (e.g. `http://localhost:4317`) in your initial response to the user so they can observe progress.
 
 ---
 
 ## 2. Core Workflow Stages
 
 ### Stage 1: Analyst Intake & PRD
-- Collect requirements and generate `.aiteam/docs/prd.html`.
+- **Brownfield Safety**: If `.aiteam/docs/prd.html` already exists from a prior milestone, `stage-start --stage intake` automatically archives it into `.aiteam/docs/archive/prd-<timestamp>.html` so historic specifications are preserved.
+- Collect requirements and generate the new `.aiteam/docs/prd.html`.
 - Confirm MVP scope, user stories, constraints, and acceptance criteria.
 - Record the PRD as complete — this **auto-opens the PRD approval gate**:
   ```bash
@@ -100,6 +106,7 @@ When asked to build or maintain a project using AITeam:
   architecture` returns `AITEAM_GATE_BLOCKED` otherwise.
 
 ### Stage 2: Architecture & Technical Design
+- **Brownfield Safety**: If `.aiteam/docs/trd.html` already exists, `stage-start --stage architecture` automatically archives it into `.aiteam/docs/archive/trd-<timestamp>.html`.
 - Define component boundaries, state machines, and data models in `.aiteam/docs/trd.html`.
 - Document quality attributes and cross-cutting concepts.
 - Record the TRD as complete — this **auto-opens the TRD approval gate**:

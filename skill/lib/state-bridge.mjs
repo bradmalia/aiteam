@@ -29,12 +29,14 @@ export const GATE_STAGE_FOR_GATE = {
   qa: 'qa-manual'
 };
 
-function defaultGateQuestions(gate, taskId) {
+function defaultGateQuestions(gate, taskId, doc = null) {
   if (gate === 'prd') {
-    return ['Review the PRD at .aiteam/docs/prd.html (scope, user stories, acceptance criteria). Reply APPROVED to proceed, or describe the changes you want.'];
+    const target = doc || '.aiteam/docs/prd.html';
+    return [`Review the PRD at ${target} (scope, user stories, acceptance criteria). Reply APPROVED to proceed, or describe the changes you want.`];
   }
   if (gate === 'trd') {
-    return ['Review the TRD at .aiteam/docs/trd.html (architecture, components, data models). Reply APPROVED to proceed, or describe the changes you want.'];
+    const target = doc || '.aiteam/docs/trd.html';
+    return [`Review the TRD at ${target} (architecture, components, data models). Reply APPROVED to proceed, or describe the changes you want.`];
   }
   if (gate === 'qa') {
     return [`Automated QA PASSED for ${taskId || 'this task'}. Confirm the behavior works in the running app/environment, then reply "PASS: ..." to proceed to commit, or "FAIL: <defects>" to route the task back to the programmer.`];
@@ -93,7 +95,7 @@ function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions 
     gateId,
     taskId: taskId ?? null,
     doc: doc || null,
-    questions: questions || defaultGateQuestions(gate, taskId),
+    questions: questions || defaultGateQuestions(gate, taskId, doc),
     response: null,
     openedAt: now
   };
@@ -164,7 +166,39 @@ export function ensureStateDir(repo) {
   const dir = stateDir(repo);
   fs.mkdirSync(path.join(dir, 'runs'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'docs', 'archive'), { recursive: true });
   return dir;
+}
+
+export function docsDir(repo) {
+  return path.join(stateDir(repo), 'docs');
+}
+
+export function docsArchiveDir(repo) {
+  return path.join(docsDir(repo), 'archive');
+}
+
+export function archiveDocIfPresent(repo, docRelPath) {
+  ensureStateDir(repo);
+  const baseName = path.basename(docRelPath);
+  const sourcePath = path.isAbsolute(docRelPath) ? docRelPath : path.join(repo, docRelPath);
+  if (!fs.existsSync(sourcePath)) return null;
+
+  const ext = path.extname(baseName);
+  const stem = path.basename(baseName, ext);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const archivedName = `${stem}-${timestamp}${ext}`;
+  const destPath = path.join(docsArchiveDir(repo), archivedName);
+
+  fs.copyFileSync(sourcePath, destPath);
+  const archiveRelPath = path.relative(repo, destPath);
+  appendEvent(repo, {
+    type: 'doc_archived',
+    source: docRelPath,
+    archivedPath: archiveRelPath,
+    archivedAt: new Date().toISOString()
+  });
+  return archiveRelPath;
 }
 
 export function sessionPath(repo) {
@@ -252,6 +286,14 @@ export function startStage(repo, stage, taskId = null, agentId = null, role = nu
 
   // Hard human-approval gate: cannot enter a stage until its prerequisite gates are approved.
   enforceApprovals(session, stage, taskId);
+
+  // In brownfield projects, if a previous PRD or TRD exists when re-entering
+  // intake or architecture, archive it so it is never overwritten or lost.
+  if (stage === 'intake') {
+    archiveDocIfPresent(repo, '.aiteam/docs/prd.html');
+  } else if (stage === 'architecture') {
+    archiveDocIfPresent(repo, '.aiteam/docs/trd.html');
+  }
 
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${agentId || stage}`;
   const activeRun = {
@@ -470,11 +512,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const text = getArg('--text', '');
     writeActiveLog(repo, text);
     console.log(JSON.stringify({ ok: true }));
+  } else if (cmd === 'archive-doc') {
+    const doc = getArg('--doc');
+    if (!doc) {
+      console.error('Usage: state-bridge.mjs archive-doc --doc <relative-path> [--repo <repo>]');
+      process.exit(1);
+    }
+    const archivedPath = archiveDocIfPresent(repo, doc);
+    console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
   } else if (cmd === 'status') {
     const sess = readSession(repo);
     console.log(JSON.stringify(sess || { status: 'NO_SESSION' }, null, 2));
   } else {
-    console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|request-approval|record-approval|log|status> [options]');
+    console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|request-approval|record-approval|archive-doc|log|status> [options]');
     process.exit(1);
   }
 }
