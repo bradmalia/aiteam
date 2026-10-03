@@ -71,12 +71,14 @@ node /home/brad/aiteam/skill/lib/state-bridge.mjs request-approval --repo "$PWD"
 
 When asked to build or maintain a project using AITeam:
 
-1. **Verify or Initialize State**:
-   Check if `.aiteam/session.json` already exists in the target repository.
-   - **New run**:
+1. **Verify or Initialize State (FIRST ACTION - DO NOT SKIP)**:
+   - **New run / New milestone / Brownfield feature**:
+     You MUST execute `state-bridge init` and `stage-start --stage intake` in your very first turn BEFORE asking questions, researching, or writing PRD:
      ```bash
      node /home/brad/aiteam/skill/lib/state-bridge.mjs init --repo "$PWD" --request "<user-request>"
+     node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-start --repo "$PWD" --stage intake
      ```
+     *Do NOT jump directly into questions or planning without this step; failing to run init leaves the watcher dashboard pointing at previous runs.*
    - **Resumed run**: Inspect the existing `.aiteam/session.json` to identify current stage and status.
 
 2. **Auto-Launch Watcher & Communicate URL (Mandatory)**:
