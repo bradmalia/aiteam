@@ -5,18 +5,24 @@ A lightweight, skill-based agentic software engineering team for AI coding envir
 AITeam coordinates an automated development workflow through structured quality gates—from PRD intake and task breakdown to implementation, code review, black-box QA, and git integration—while streaming live progress to a local dashboard.
 
 ```
-Request ──► Intake/PRD ──► Architecture ──► Task Planning
-                                                  │
-                 ┌────────────────────────────────┴────────────────────────┐
-                 ▼                                                         ▼
-        [Task N: Implementation]                                [Next Task 1..N]
+Request ──► Intake/PRD ──► 🛑 PRD APPROVAL ──► Architecture ──► 🛑 TRD APPROVAL
+                                                                       │
+                                                                       ▼
+                                                                  Task Planning
+                                                                       │
+                 ┌─────────────────────────────────────────────────────┴────────┐
+                 ▼                                                              ▼
+        [Task N: Implementation]                                       [Next Task 1..N]
                  │
                  ▼
         [Code Review Gate]  ── (Fail) ──► Needs Rework
                  │ (Pass)
                  ▼
         [QA Black-Box Gate] ── (Fail) ──► Needs Rework
-                 │ (Pass)
+                 │ (auto-pass)
+                 ▼
+        🛑 QA SIGN-OFF (per-task)
+                 │ (approved)
                  ▼
         [Maintainer Git Commit]
 ```
@@ -26,8 +32,10 @@ Request ──► Intake/PRD ──► Architecture ──► Task Planning
 ## Features
 
 - **Lightweight & Skill-Native**: Zero heavy runtime dependencies. Operates as an agent skill (`SKILL.md`) with explicit prompt contracts in `skill/contracts/`.
-- **4-Gate Quality Loop**: Every task passes Implementation, static Code Review, automated black-box QA, and SHA-256 verified Git integration.
-- **Real-Time Live Dashboard**: Lightweight HTTP/WebSocket watcher server (`bin/aiteam-watch`) visualizing task status, active logs, phase progress, and generated artifacts in your browser.
+- **Enforced Human-Approval Gates**: Hard stops for PRD, TRD, and per-task QA sign-off enforced by the state bridge (`AITEAM_GATE_BLOCKED`)—preventing autonomous code commits without explicit user approval.
+- **4-Gate Quality Loop**: Every task passes Implementation, static Code Review, automated black-box QA, human QA sign-off, and SHA-256 verified Git integration.
+- **Brownfield Safety**: Automatically archives existing PRD and TRD documents when starting new milestone iterations to preserve prior project specifications.
+- **Real-Time Live Dashboard**: Lightweight HTTP/WebSocket watcher server (`bin/aiteam-watch`) visualizing task status, active logs, phase progress, gate prompts/approvals, and generated artifacts in your browser.
 - **State Bridge**: Clean CLI & programmatic bridge (`skill/lib/state-bridge.mjs`) tracking `.aiteam/session.json` and `.aiteam/events.jsonl` without process locks or daemon overhead.
 
 ---
