@@ -29,6 +29,12 @@
     <div class="panel"><div class="label">Task</div><div id="activeTask" class="value">—</div></div>
     <div class="panel"><div class="label">Elapsed</div><div id="elapsed" class="value">—</div></div>
     <div class="panel wide"><div class="label">Repository</div><div id="repo" class="value">—</div></div>
+    <div class="panel wide" id="docsPanel">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">📑 Artifacts & Design Documents</h2>
+        <div id="docsList" style="display:flex; gap:12px; flex-wrap:wrap;"></div>
+      </div>
+    </div>
     <div class="panel wide"><h2>Gate Progress</h2><div id="gates" class="muted">—</div></div>
     <div class="panel wide" id="questionsPanel" hidden><h2>User Input Required</h2><ol id="questions"></ol></div>
     <div class="panel wide" id="liveActivityPanel" hidden>
@@ -90,6 +96,22 @@
       ? `${formatDuration(data.activeRunElapsedSeconds)} (session: ${formatDuration(data.sessionElapsedSeconds)})`
       : formatDuration(data.sessionElapsedSeconds);
     $('elapsed').textContent = elapsedText;
+    
+    // Render Documentation & Artifact Links
+    const docs = data.docs || [];
+    const docsListEl = $('docsList');
+    if (docs.length === 0) {
+      docsListEl.innerHTML = '<span class="empty" style="font-size:13px;">No documents generated yet.</span>';
+    } else {
+      docsListEl.innerHTML = docs.map((d) => {
+        const color = d.type === 'PRD' ? 'var(--cyan)' : d.type === 'TRD' ? 'var(--amber)' : 'var(--text)';
+        const bg = d.type === 'PRD' ? 'rgba(87,230,237,0.1)' : d.type === 'TRD' ? 'rgba(255,209,102,0.1)' : 'rgba(255,255,255,0.05)';
+        const border = d.type === 'PRD' ? 'rgba(87,230,237,0.3)' : d.type === 'TRD' ? 'rgba(255,209,102,0.3)' : 'var(--border)';
+        return `<a href="${esc(d.path)}" target="_blank" style="display:inline-flex; align-items:center; gap:6px; background:${bg}; border:1px solid ${border}; color:${color}; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:600; font-size:13px; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">` +
+          `<span>📄</span> <span>${esc(d.name)}</span> <span style="font-size:10px; background:#0004; padding:1px 5px; border-radius:3px; font-weight:normal; color:var(--muted);">${Math.round(d.size / 1024)} KB</span> <span>↗</span>` +
+          `</a>`;
+      }).join('');
+    }
     
     const plan = session?.phasePlan || [];
     const completed = new Set(session?.completedStages || []);

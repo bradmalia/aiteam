@@ -128,6 +128,26 @@ function snapshot(repo) {
     }
   } catch {}
 
+  const docsDir = path.join(repo, '.aiteam', 'docs');
+  const availableDocs = [];
+  try {
+    if (fs.existsSync(docsDir)) {
+      const files = fs.readdirSync(docsDir);
+      for (const f of files) {
+        if (/\.html$/i.test(f)) {
+          const stat = fs.statSync(path.join(docsDir, f));
+          availableDocs.push({
+            name: f,
+            path: `/artifacts/${f}`,
+            type: f.toLowerCase().includes('prd') ? 'PRD' : f.toLowerCase().includes('trd') ? 'TRD' : 'DOC',
+            updatedAt: stat.mtime.toISOString(),
+            size: stat.size
+          });
+        }
+      }
+    }
+  } catch {}
+
   return {
     repository: repo,
     version: packageJson?.version || 'unknown',
@@ -135,6 +155,7 @@ function snapshot(repo) {
     session,
     activeRun,
     activeLogTail,
+    docs: availableDocs,
     elapsedSeconds: activeRunElapsedSeconds ?? sessionElapsedSeconds,
     activeRunElapsedSeconds,
     sessionElapsedSeconds,
