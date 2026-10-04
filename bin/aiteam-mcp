@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec node /home/brad/aiteam/src/mcp-server.mjs "$@"
