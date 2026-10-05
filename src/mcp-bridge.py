@@ -74,5 +74,14 @@ def aiteam_record_approval(gate: str, decision: str, taskId: str = "", response:
         "repository": repository
     })
 
+@mcp.tool()
+def aiteam_log(message: str, agentId: str = "specialist", repository: str = "") -> str:
+    """Stream live activity, progress notes, thoughts, or command status to the AITeam live monitor in real time."""
+    return call_node("aiteam_log", {
+        "message": message,
+        "agentId": agentId,
+        "repository": repository
+    })
+
 if __name__ == "__main__":
     mcp.run()

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { recordApproval, writeActiveLog } from '../skill/lib/state-bridge.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const dashboardPath = path.join(ROOT, 'watch-dashboard.html');
@@ -90,8 +91,16 @@ function snapshot(repo) {
   
   let activeLogTail = null;
   const runsDir = path.join(repo, '.aiteam', 'runs');
+  const activeLogPath = path.join(runsDir, 'active.log');
   try {
-    if (fs.existsSync(runsDir)) {
+    if (fs.existsSync(activeLogPath)) {
+      const activeLogContent = fs.readFileSync(activeLogPath, 'utf8').trim();
+      if (activeLogContent) {
+        const lines = activeLogContent.split(/\r?\n/).filter(Boolean);
+        activeLogTail = lines.slice(-25).join('\n').trim();
+      }
+    }
+    if (!activeLogTail && fs.existsSync(runsDir)) {
       const outputFiles = fs.readdirSync(runsDir).filter((file) => /\.(?:stdout|stderr)\.txt$/.test(file));
       const matchingFiles = activeRun
         ? outputFiles.filter((file) => file.includes(activeRun.agentId || ''))
@@ -125,6 +134,17 @@ function snapshot(repo) {
           activeLogTail = lines.slice(-25).join('\n').trim();
         }
       }
+    }
+    if (!activeLogTail && events.length) {
+      // If no file log tail exists yet, provide real-time event activity
+      const recent = events.slice(-8).reverse();
+      const eventLines = recent.map((e) => {
+        const time = e.at ? new Date(e.at).toLocaleTimeString() : '';
+        const desc = e.summary || e.responseSummary || e.outcome || e.type || '';
+        const stageInfo = e.stage ? ` [${e.stage}${e.taskId ? ` · ${e.taskId}` : ''}]` : '';
+        return `[${time}]${stageInfo} ${desc}`;
+      });
+      activeLogTail = eventLines.join('\n');
     }
   } catch {}
 
@@ -195,6 +215,50 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
         activeRepo = path.resolve(newRepo);
       }
       return sendJson(response, { ok: true, repository: activeRepo });
+    }
+    if (url.pathname === '/api/approve' && request.method === 'POST') {
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const gate = payload.gate;
+          const decision = payload.decision || 'approved';
+          const taskId = payload.taskId || null;
+          const note = payload.response || '';
+          if (!gate) return sendJson(response, { error: 'gate parameter is required' }, 400);
+
+          const updatedSession = recordApproval(activeRepo, {
+            gate,
+            taskId,
+            decision,
+            response: note,
+            approvedBy: 'human-portal'
+          });
+          return sendJson(response, { ok: true, gate, decision, session: updatedSession });
+        } catch (err) {
+          return sendJson(response, { error: err.message }, 500);
+        }
+      });
+      return;
+    }
+    if (url.pathname === '/api/log' && request.method === 'POST') {
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const message = payload.message || payload.log || '';
+          const agentId = payload.agentId || payload.role || 'agent';
+          if (message) {
+            writeActiveLog(activeRepo, message, agentId);
+          }
+          return sendJson(response, { ok: true, logged: Boolean(message) });
+        } catch (err) {
+          return sendJson(response, { error: err.message }, 500);
+        }
+      });
+      return;
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return sendJson(response, { error: 'Only GET and HEAD are supported.' }, 405);
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));

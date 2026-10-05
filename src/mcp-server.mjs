@@ -26,6 +26,7 @@ import {
   completeStage,
   recordApproval,
   updateTaskLedger,
+  writeActiveLog,
   DEFAULT_PHASE_PLAN
 } from '../skill/lib/state-bridge.mjs';
 
@@ -185,7 +186,10 @@ function getDirective(session, repo) {
   let contract = 'skill/contracts/programmer.md';
   let instruction = `Implement task ${nextTask.id} (${nextTask.title || ''}). Verify acceptance criteria and run tests. Call aiteam_advance when done.`;
 
-  if (nextTask.status === 'implemented') {
+  if (nextTask.status === 'needs-rework') {
+    const failureNote = nextTask.qaFailure?.response || nextTask.qaFailure?.decision || '';
+    instruction = `Task ${nextTask.id} (${nextTask.title || ''}) FAILED review/QA and needs rework. User/QA Feedback: "${failureNote || 'Fix issues noted during verification'}". Address issues and call aiteam_advance when resolved.`;
+  } else if (nextTask.status === 'implemented') {
     taskStage = 'code-review';
     taskRole = 'code-reviewer';
     contract = 'skill/contracts/reviewer.md';
@@ -194,7 +198,7 @@ function getDirective(session, repo) {
     taskStage = 'qa';
     taskRole = 'qa';
     contract = 'skill/contracts/qa.md';
-    instruction = `Execute black-box QA tests for ${nextTask.id}. Call aiteam_advance with stage="qa", outcome="PASS"|"FAIL".`;
+    instruction = `Author new automated black-box tests in tests/qa/${nextTask.id}.test.ts covering the acceptance criteria for ${nextTask.id}. Run them, ensure they pass with zero regressions, and call aiteam_advance with stage="qa", outcome="PASS"|"FAIL".`;
   } else if (nextTask.status === 'qa-auto-passed') {
     return {
       status: 'GATE_BLOCKED',
@@ -283,6 +287,19 @@ export const toolDefs = [
       properties: {
         repository: { type: 'string', description: 'Target git repository path.' }
       }
+    }
+  },
+  {
+    name: 'aiteam_log',
+    description: 'Stream live activity, progress notes, thoughts, or command status to the AITeam live monitor in real time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Activity note, command output, or progress description to display live.' },
+        agentId: { type: 'string', description: 'Optional agent or role name (e.g. programmer, qa, architect).' },
+        repository: { type: 'string', description: 'Target git repository path.' }
+      },
+      required: ['message']
     }
   }
 ];
@@ -381,7 +398,11 @@ export async function handleToolCall(name, args = {}) {
 
     if (action === 'start') {
       startStage(repo, stage, taskId);
+      const desc = args.summary || `Starting stage [${stage}]${taskId ? ` for task ${taskId}` : ''}`;
+      writeActiveLog(repo, `▶ ${desc}`, stage);
     } else {
+      const desc = args.summary || `Completed stage [${stage}]${taskId ? ` for task ${taskId}` : ''} (outcome: ${args.outcome || 'PASS'})`;
+      writeActiveLog(repo, `✓ ${desc}`, stage);
       // If planning provided a ledger file, parse and register tasks
       if (stage === 'planning' && args.ledger) {
         const ledgerPath = path.isAbsolute(args.ledger) ? args.ledger : path.join(repo, args.ledger);
@@ -435,6 +456,22 @@ export async function handleToolCall(name, args = {}) {
       ],
       directive,
       session
+    };
+  }
+
+  if (name === 'aiteam_log') {
+    const message = args.message || '';
+    const agentId = args.agentId || 'specialist';
+    writeActiveLog(repo, message, agentId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `⚡ Logged to live monitor: ${message}`
+        }
+      ],
+      ok: true
     };
   }
 

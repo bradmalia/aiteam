@@ -227,7 +227,20 @@
     
     const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
     $('questionsPanel').hidden = questions.length === 0;
-    $('questions').innerHTML = questions.map((question) => `<li>${md(question)}</li>`).join('');
+    const pendingGate = session?.pendingUserInput?.response == null ? session?.pendingUserInput : null;
+    let questionsContent = questions.map((question) => `<li>${md(question)}</li>`).join('');
+    if (pendingGate) {
+      const gName = (pendingGate.gate || 'gate').toUpperCase();
+      const gDoc = pendingGate.doc ? ` for <code>${esc(pendingGate.doc)}</code>` : '';
+      questionsContent += `<div style="margin-top:14px; padding:12px; background:rgba(87,230,237,0.06); border:1px solid rgba(87,230,237,0.25); border-radius:6px;">` +
+        `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">Decide ${gName} Gate${gDoc}:</div>` +
+        `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
+        `<input type="text" id="gateNoteInput" placeholder="Optional notes or feedback..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
+        `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'approved')" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Approve Gate</button>` +
+        `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'changes_requested')" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Request Changes</button>` +
+        `</div><div id="gateDecisionMsg" style="font-size:12px; margin-top:6px;"></div></div>`;
+    }
+    $('questions').innerHTML = questionsContent;
 
     const liveLogEl = $('liveLog');
     const isManualPending = session?.pendingUserInput?.response == null && session?.pendingUserInput?.kind === 'qa-manual';
@@ -242,9 +255,13 @@
       liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
         `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
         `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
-        `<div style="margin-top:12px; padding:8px 12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:4px; font-size:12px; line-height:1.5;">` +
-        `<strong style="color:var(--green);">✓ If all checks pass:</strong> Reply in chat with <code>PASS: All manual checks confirmed</code> to proceed with Integration.<br>` +
-        `<strong style="color:var(--red);">✗ If you spot defects:</strong> Reply in chat with <code>FAIL: [list of bugs/issues]</code> to route the task back to the programmer for rework.</div></div>`;
+        `<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
+        `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision & Feedback:</div>` +
+        `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
+        `<input type="text" id="manualQaNote" placeholder="Verification notes (e.g. All manual checks confirmed)..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:220px; font-family:inherit; font-size:13px;">` +
+        `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'approved', $('manualQaNote')?.value)" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Pass & Approve</button>` +
+        `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'changes_requested', $('manualQaNote')?.value)" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Fail / Request Rework</button>` +
+        `</div></div></div>`;
     } else if (data.activeLogTail) {
       $('liveActivityPanel').hidden = false;
       $('liveAgentTag').style.color = 'var(--amber)';
@@ -394,6 +411,38 @@
 </body>
 </html>`);
     popoutWindow.document.close();
+  }
+
+  async function submitGateDecision(gate, taskId, decision, explicitNote = null) {
+    const note = explicitNote !== null ? explicitNote : ($('gateNoteInput')?.value || '');
+    const msgEl = $('gateDecisionMsg');
+    if (msgEl) {
+      msgEl.style.color = 'var(--cyan)';
+      msgEl.textContent = 'Submitting decision...';
+    }
+    try {
+      const res = await fetch('/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gate, taskId: taskId || null, decision, response: note })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Failed to record decision');
+      }
+      if (msgEl) {
+        msgEl.style.color = 'var(--green)';
+        msgEl.textContent = `✓ Successfully recorded: ${decision.toUpperCase()}`;
+      }
+      await refresh();
+    } catch (err) {
+      if (msgEl) {
+        msgEl.style.color = 'var(--red)';
+        msgEl.textContent = `Error: ${err.message}`;
+      } else {
+        alert(`Error recording decision: ${err.message}`);
+      }
+    }
   }
 
   async function refresh() {
