@@ -8,6 +8,7 @@
  * Exposes standard MCP tools:
  * - aiteam_start: Start a session and launch live watcher
  * - aiteam_advance: Advance the workflow gate, validate stage outcomes, and return the next prescriptive directive
+ * - aiteam_wait_for_approval: Block and poll until the user clicks Approve or Request Changes in the Watcher Dashboard
  * - aiteam_status: Inspect active session, gates, active task, and watcher URL
  * - aiteam_record_approval: Record human decisions for PRD, TRD, and QA gates
  */
@@ -20,14 +21,14 @@ import { fileURLToPath } from 'node:url';
 
 import {
   readSession,
-  writeSession,
   initSession,
   startStage,
   completeStage,
   recordApproval,
+  waitForApproval,
   updateTaskLedger,
-  writeActiveLog,
-  DEFAULT_PHASE_PLAN
+  parseTaskLedgerMarkdown,
+  writeActiveLog
 } from '../skill/lib/state-bridge.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,14 @@ function resolveRepo(rawRepo) {
   return process.cwd();
 }
 
+function isTaskIntegrated(t) {
+  return Boolean(
+    (t.status === 'qa-passed' && (t.integration?.integrated || t.integration?.committed || t.integration?.reason === 'no_changes')) ||
+    t.status === 'integrated' ||
+    t.status === 'completed'
+  );
+}
+
 /**
  * Computes prescriptive next-action directive for the coordinator
  */
@@ -94,6 +103,8 @@ function getDirective(session, repo) {
   // Check if a human approval gate is open and pending
   const pending = session.pendingUserInput;
   if (pending && !pending.response) {
+    const taskArg = pending.taskId ? `, taskId="${pending.taskId}"` : '';
+    const cliTaskArg = pending.taskId ? ` --taskId "${pending.taskId}"` : '';
     return {
       status: 'GATE_BLOCKED',
       gate: pending.gate,
@@ -101,8 +112,8 @@ function getDirective(session, repo) {
       doc: pending.doc || null,
       taskId: pending.taskId || null,
       questions: pending.questions || [],
-      instruction: `STOP AND WAIT. The ${pending.gate.toUpperCase()} approval gate is OPEN. Present ${pending.doc || 'the QA checklist'} to the user in chat. Call aiteam_record_approval when they reply. Do NOT call aiteam_advance until the user approves.`,
-      nextTool: 'aiteam_record_approval'
+      instruction: `🛑 GATE OPEN (${pending.gate.toUpperCase()}). Present ${pending.doc || 'the QA verification checklist'} briefly to the user, then IMMEDIATELY wait for the Watcher Portal click by calling aiteam_wait_for_approval(gate="${pending.gate}"${taskArg}) (or if that tool is not in your schema, run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate ${pending.gate}${cliTaskArg} && call aiteam_status). It will block and automatically resume the moment the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`,
+      nextTool: 'aiteam_wait_for_approval'
     };
   }
 
@@ -111,16 +122,21 @@ function getDirective(session, repo) {
   if (activeStage === 'prd-review' && completedStages.has('prd-review')) {
     activeStage = 'architecture';
   } else if (activeStage === 'trd-review' && completedStages.has('trd-review')) {
-    activeStage = 'planning';
+    activeStage = 'environment-readiness';
+  } else if (activeStage === 'environment-readiness' && completedStages.has('environment-readiness')) {
+    activeStage = 'implementation';
   }
 
-  // Setup stages before task loop
+  // Setup stages before task loop (exact 9-stage Gate Progress order)
   if (activeStage === 'intake') {
+    const prdFeedback = session.approvals?.prd?.decision === 'CHANGES_REQUESTED' ? session.approvals.prd.response : null;
     return {
       status: 'ACTIVE',
       stage: 'intake',
       role: 'analyst',
-      instruction: 'Draft the Product Requirements Document in .aiteam/docs/prd.html. When done, call aiteam_advance with stage="intake", outcome="PASS", and summary.',
+      instruction: prdFeedback
+        ? `User requested changes on the PRD: "${prdFeedback}". Revise .aiteam/docs/prd.html accordingly, then call aiteam_advance with stage="intake", outcome="PASS", and summary.`
+        : 'Draft the Product Requirements Document in .aiteam/docs/prd.html following skill/contracts/analyst.md. When .aiteam/docs/prd.html is written on disk, call aiteam_advance with stage="intake", outcome="PASS", and summary.',
       contractFile: 'skill/contracts/analyst.md',
       nextTool: 'aiteam_advance'
     };
@@ -131,8 +147,8 @@ function getDirective(session, repo) {
       status: 'GATE_BLOCKED',
       gate: 'prd',
       doc: '.aiteam/docs/prd.html',
-      instruction: 'Present .aiteam/docs/prd.html to user for approval. Call aiteam_record_approval with decision="approved" or "changes_requested".',
-      nextTool: 'aiteam_record_approval'
+      instruction: `🛑 PRD GATE OPEN — Call aiteam_wait_for_approval(gate="prd") (or run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate prd) to wait until the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard.`,
+      nextTool: 'aiteam_wait_for_approval'
     };
   }
 
@@ -141,8 +157,55 @@ function getDirective(session, repo) {
       status: 'ACTIVE',
       stage: 'architecture',
       role: 'architect',
-      instruction: 'Draft the Technical Requirements Document in .aiteam/docs/trd.html. When done, call aiteam_advance with stage="architecture", outcome="PASS", and summary.',
+      instruction: 'Execute the Systems Architect stage (skill/contracts/architect.md): define component boundaries, interfaces, data models, and initialize .aiteam/docs/trd.html. When done, call aiteam_advance with stage="architecture", outcome="PASS", and summary.',
       contractFile: 'skill/contracts/architect.md',
+      nextTool: 'aiteam_advance'
+    };
+  }
+
+  if (activeStage === 'ui-design') {
+    return {
+      status: 'ACTIVE',
+      stage: 'ui-design',
+      role: 'ui-designer',
+      instruction: 'Execute the UI/UX Designer stage (skill/contracts/ui-designer.md): define user flows, screen mockups, layout hierarchy, design tokens, and interaction states, and append the UI/UX section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="ui-design", outcome="PASS", and summary.',
+      contractFile: 'skill/contracts/ui-designer.md',
+      nextTool: 'aiteam_advance'
+    };
+  }
+
+  if (activeStage === 'planning') {
+    return {
+      status: 'ACTIVE',
+      stage: 'planning',
+      role: 'planner',
+      contractFile: 'skill/contracts/planner.md',
+      instruction: 'Execute the Technical Planner stage (skill/contracts/planner.md): create TASK_LEDGER.md with explicit acceptance criteria (### T1: Title and - [ ] AC-1: ...) and append the Implementation Plan section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="planning", ledger="TASK_LEDGER.md", outcome="PASS".',
+      nextTool: 'aiteam_advance'
+    };
+  }
+
+  if (activeStage === 'qa-planning') {
+    return {
+      status: 'ACTIVE',
+      stage: 'qa-planning',
+      role: 'qa-planner',
+      contractFile: 'skill/contracts/qa-planner.md',
+      instruction: 'Execute the QA Test Planner stage (skill/contracts/qa-planner.md): design pre-implementation black-box test plans and regression strategy for every task in TASK_LEDGER.md, and append the QA Testing Plan section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="qa-planning", outcome="PASS", and summary.',
+      nextTool: 'aiteam_advance'
+    };
+  }
+
+  if (activeStage === 'critical-review') {
+    const trdFeedback = session.approvals?.trd?.decision === 'CHANGES_REQUESTED' ? session.approvals.trd.response : null;
+    return {
+      status: 'ACTIVE',
+      stage: 'critical-review',
+      role: 'critical-reviewer',
+      contractFile: 'skill/contracts/critical-reviewer.md',
+      instruction: trdFeedback
+        ? `User requested changes on the TRD: "${trdFeedback}". Revise .aiteam/docs/trd.html and TASK_LEDGER.md as needed, then call aiteam_advance with stage="critical-review", outcome="PASS", and summary to re-open the TRD approval gate.`
+        : 'Execute the Critical Reviewer stage (skill/contracts/critical-reviewer.md): audit Architecture, UI Design, TASK_LEDGER.md, and QA Plan against .aiteam/docs/prd.html, and finalize .aiteam/docs/trd.html. Then call aiteam_advance with stage="critical-review", outcome="PASS", and summary (which opens the 🛑 TRD Approval Gate).',
       nextTool: 'aiteam_advance'
     };
   }
@@ -152,31 +215,32 @@ function getDirective(session, repo) {
       status: 'GATE_BLOCKED',
       gate: 'trd',
       doc: '.aiteam/docs/trd.html',
-      instruction: 'Present .aiteam/docs/trd.html to user for approval. Call aiteam_record_approval with decision="approved" or "changes_requested".',
-      nextTool: 'aiteam_record_approval'
+      instruction: `🛑 TRD GATE OPEN — Call aiteam_wait_for_approval(gate="trd") (or run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate trd) to wait until the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard.`,
+      nextTool: 'aiteam_wait_for_approval'
+    };
+  }
+
+  if (activeStage === 'environment-readiness') {
+    return {
+      status: 'ACTIVE',
+      stage: 'environment-readiness',
+      role: 'environment-readiness',
+      contractFile: 'skill/contracts/environment-readiness.md',
+      instruction: 'Execute the Environment Readiness stage (skill/contracts/environment-readiness.md): verify workspace build, unit test, and Playwright black-box test runners work cleanly. Then call aiteam_advance with stage="environment-readiness", outcome="PASS", and summary to begin Task 1 implementation.',
+      nextTool: 'aiteam_advance'
     };
   }
 
   const taskLedger = Array.isArray(session.taskLedger) ? session.taskLedger : [];
 
-  if (activeStage === 'planning' || (taskLedger.length === 0 && ['ui-design', 'qa-planning', 'critical-review', 'planning'].includes(activeStage))) {
-    return {
-      status: 'ACTIVE',
-      stage: 'planning',
-      role: 'planner',
-      instruction: 'Create the task ledger in TASK_LEDGER.md with explicit acceptance criteria. When done, call aiteam_advance with stage="planning", ledger="TASK_LEDGER.md" (or tasks array).',
-      nextTool: 'aiteam_advance'
-    };
-  }
-
-  // Task execution loop: find active or next incomplete task
-  const nextTask = taskLedger.find((t) => t.status !== 'qa-passed' && t.status !== 'completed' && t.status !== 'integrated');
+  // Task execution loop: find active or next unintegrated task
+  const nextTask = taskLedger.find((t) => !isTaskIntegrated(t));
 
   if (!nextTask) {
     return {
       status: 'READY_TO_COMPLETE',
-      instruction: 'All tasks have passed QA and integration. Milestone ready to complete.',
-      nextTool: 'aiteam_advance'
+      instruction: 'All tasks have passed QA and Git integration. Milestone complete!',
+      nextTool: null
     };
   }
 
@@ -184,34 +248,34 @@ function getDirective(session, repo) {
   let taskStage = 'implementation';
   let taskRole = 'programmer';
   let contract = 'skill/contracts/programmer.md';
-  let instruction = `Implement task ${nextTask.id} (${nextTask.title || ''}). Verify acceptance criteria and run tests. Call aiteam_advance when done.`;
+  let instruction = `Implement task ${nextTask.id} (${nextTask.title || ''}) per skill/contracts/programmer.md. Verify acceptance criteria, run unit tests, and call aiteam_advance with stage="implementation", taskId="${nextTask.id}", filesChanged=[...], and summary.`;
 
   if (nextTask.status === 'needs-rework') {
-    const failureNote = nextTask.qaFailure?.response || nextTask.qaFailure?.decision || '';
-    instruction = `Task ${nextTask.id} (${nextTask.title || ''}) FAILED review/QA and needs rework. User/QA Feedback: "${failureNote || 'Fix issues noted during verification'}". Address issues and call aiteam_advance when resolved.`;
+    const failureNote = nextTask.qaFailure?.response || nextTask.qaFailure?.summary || nextTask['code-reviewFailure']?.summary || '';
+    instruction = `Task ${nextTask.id} (${nextTask.title || ''}) FAILED review/QA and needs rework. Feedback: "${failureNote || 'Fix issues noted during verification'}". Address root causes, verify unit tests, and call aiteam_advance with stage="implementation", taskId="${nextTask.id}", filesChanged=[...].`;
   } else if (nextTask.status === 'implemented') {
     taskStage = 'code-review';
     taskRole = 'code-reviewer';
     contract = 'skill/contracts/reviewer.md';
-    instruction = `Perform static code review on git diff for ${nextTask.id}. Call aiteam_advance with stage="code-review", outcome="PASS"|"FAIL".`;
+    instruction = `Spawn an isolated Code Reviewer subagent (skill/contracts/reviewer.md in READ-ONLY mode—do not self-review inline) to audit git diff for ${nextTask.id}. Then call aiteam_advance with stage="code-review", taskId="${nextTask.id}", outcome="PASS"|"FAIL", and findings.`;
   } else if (nextTask.status === 'review-passed') {
     taskStage = 'qa';
     taskRole = 'qa';
     contract = 'skill/contracts/qa.md';
-    instruction = `Author new automated black-box tests in tests/qa/${nextTask.id}.test.ts covering the acceptance criteria for ${nextTask.id}. Run them, ensure they pass with zero regressions, and call aiteam_advance with stage="qa", outcome="PASS"|"FAIL".`;
+    instruction = `Spawn an isolated QA Engineer subagent (skill/contracts/qa.md) to author and execute dedicated black-box tests in tests/qa/${nextTask.id}.test.* covering ${nextTask.id}. Call aiteam_advance with stage="qa", taskId="${nextTask.id}", outcome="PASS"|"FAIL", and checks.`;
   } else if (nextTask.status === 'qa-auto-passed') {
     return {
       status: 'GATE_BLOCKED',
       gate: 'qa',
       taskId: nextTask.id,
-      instruction: `Automated QA passed for ${nextTask.id}. Present manual checks to user. Call aiteam_record_approval when confirmed.`,
-      nextTool: 'aiteam_record_approval'
+      instruction: `🛑 QA GATE OPEN for ${nextTask.id} — Call aiteam_wait_for_approval(gate="qa", taskId="${nextTask.id}") to wait until the user clicks "Pass & Approve" or "Fail / Request Rework" in the Watcher Dashboard.`,
+      nextTool: 'aiteam_wait_for_approval'
     };
   } else if (nextTask.status === 'qa-passed') {
     taskStage = 'integration';
     taskRole = 'maintainer';
     contract = 'skill/contracts/maintainer.md';
-    instruction = `Stage only files changed for ${nextTask.id} and create a conventional git commit. Call aiteam_advance with stage="integration".`;
+    instruction = `Execute Maintainer Git integration (skill/contracts/maintainer.md) for ${nextTask.id}: verify unchanged SHA-256 fingerprint, stage ONLY [${(nextTask.filesChanged || []).join(', ')}], create a conventional git commit, and call aiteam_advance with stage="integration", taskId="${nextTask.id}", outcome="PASS".`;
   }
 
   return {
@@ -248,7 +312,7 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_advance',
-    description: 'Transition the workflow gate, report stage/task completion, and receive prescriptive instructions for the next required action.',
+    description: 'Transition the workflow gate, report stage/task completion, validate artifacts/tests/fingerprints, and receive prescriptive instructions for the next required action.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -260,13 +324,29 @@ export const toolDefs = [
         summary: { type: 'string', description: 'Brief summary of what was accomplished or observed.' },
         evidence: { type: 'array', items: { type: 'string' }, description: 'Supporting evidence, test outputs, or findings.' },
         filesChanged: { type: 'array', items: { type: 'string' }, description: 'List of files modified during implementation.' },
+        findings: { type: 'array', items: { type: 'object' }, description: 'Code review findings array (if stage="code-review").' },
+        checks: { type: 'array', items: { type: 'object' }, description: 'QA black-box check results (if stage="qa").' },
+        commitMessage: { type: 'string', description: 'Git commit message created during integration.' },
         ledger: { type: 'string', description: 'Path to TASK_LEDGER.md when completing the planning stage.' }
       }
     }
   },
   {
+    name: 'aiteam_wait_for_approval',
+    description: 'Block and wait until the human user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal for an open PRD, TRD, or per-task QA gate, then automatically return the next directive.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: { type: 'string', description: 'Target git repository path.' },
+        gate: { type: 'string', enum: ['prd', 'trd', 'qa'], description: 'The open gate to wait on (prd, trd, or qa).' },
+        taskId: { type: 'string', description: 'Task ID if waiting on a per-task QA gate.' }
+      },
+      required: ['gate']
+    }
+  },
+  {
     name: 'aiteam_record_approval',
-    description: 'Record human approval or change requests for PRD, TRD, or per-task QA gates.',
+    description: 'Record the human user decision for PRD, TRD, or per-task QA gates ONLY AFTER the human user has explicitly replied in chat. Prefer aiteam_wait_for_approval so the user can click Approve in the Watcher Portal.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -274,7 +354,7 @@ export const toolDefs = [
         gate: { type: 'string', enum: ['prd', 'trd', 'qa'], description: 'The gate being decided.' },
         decision: { type: 'string', enum: ['approved', 'changes_requested'], description: 'The human decision.' },
         taskId: { type: 'string', description: 'Task ID if deciding a per-task QA gate.' },
-        response: { type: 'string', description: 'User feedback, confirmed checks, or requested changes verbatim.' }
+        response: { type: 'string', description: 'Exact verbatim words from the human user reply.' }
       },
       required: ['gate', 'decision']
     }
@@ -309,7 +389,7 @@ export async function handleToolCall(name, args = {}) {
 
   if (name === 'aiteam_start') {
     const watchUrl = await ensureWatcher(repo);
-    const session = initSession(repo, args.request);
+    initSession(repo, args.request);
     startStage(repo, 'intake');
     const directive = getDirective(readSession(repo), repo);
 
@@ -359,12 +439,42 @@ export async function handleToolCall(name, args = {}) {
     };
   }
 
+  if (name === 'aiteam_wait_for_approval') {
+    const { session, approval } = await waitForApproval(repo, {
+      gate: args.gate,
+      taskId: args.taskId || null,
+      pollMs: args.pollMs || 750,
+      timeoutMs: args.timeoutMs || 3600000
+    });
+    const directive = getDirective(session, repo);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `✅ Watcher Portal Gate [${approval.gate}${approval.taskId ? ':' + approval.taskId : ''}] decided by human: ${approval.decision}`,
+            approval.response ? `💬 Human Notes: "${approval.response}"` : '',
+            '',
+            `👉 NEXT DIRECTIVE:`,
+            directive.instruction
+          ].filter(Boolean).join('\n')
+        }
+      ],
+      approval,
+      directive,
+      session
+    };
+  }
+
   if (name === 'aiteam_record_approval') {
     const result = recordApproval(repo, {
       gate: args.gate,
       taskId: args.taskId || null,
       decision: args.decision,
-      response: args.response || ''
+      response: args.response || '',
+      approvedBy: 'user',
+      enforceDwell: true
     });
 
     const session = readSession(repo);
@@ -401,41 +511,32 @@ export async function handleToolCall(name, args = {}) {
       const desc = args.summary || `Starting stage [${stage}]${taskId ? ` for task ${taskId}` : ''}`;
       writeActiveLog(repo, `▶ ${desc}`, stage);
     } else {
-      const desc = args.summary || `Completed stage [${stage}]${taskId ? ` for task ${taskId}` : ''} (outcome: ${args.outcome || 'PASS'})`;
-      writeActiveLog(repo, `✓ ${desc}`, stage);
-      // If planning provided a ledger file, parse and register tasks
+      // If planning provided a ledger file, parse and register tasks before completing planning
       if (stage === 'planning' && args.ledger) {
         const ledgerPath = path.isAbsolute(args.ledger) ? args.ledger : path.join(repo, args.ledger);
-        if (fs.existsSync(ledgerPath)) {
-          const content = fs.readFileSync(ledgerPath, 'utf8');
-          // Parse tasks from markdown headings
-          const tasks = [];
-          const taskBlocks = content.split(/^###\s+/m).slice(1);
-          for (const block of taskBlocks) {
-            const firstLine = block.split('\n')[0].trim();
-            const idMatch = firstLine.match(/^\[?([A-Za-z0-9_-]+)\]?:\s*(.+)$/) || firstLine.match(/^([A-Za-z0-9_-]+)\s*-\s*(.+)$/);
-            const id = idMatch ? idMatch[1] : `T${tasks.length + 1}`;
-            const title = idMatch ? idMatch[2] : firstLine;
-            
-            const acMatches = [...block.matchAll(/^\s*-\s*(?:\[\s*\]\s*)?(AC-\d+:?.+)$/gm)].map((m) => m[1].trim());
-            tasks.push({
-              id,
-              title,
-              status: 'planned',
-              description: block.slice(0, 300).trim(),
-              acceptanceCriteria: acMatches.length ? acMatches : ['Pass all assigned unit and integration tests.']
-            });
-          }
-          if (tasks.length) updateTaskLedger(repo, tasks);
+        if (!fs.existsSync(ledgerPath)) {
+          throw new Error(`AITEAM_ARTIFACT_MISSING: Ledger file "${args.ledger}" does not exist.`);
         }
+        const content = fs.readFileSync(ledgerPath, 'utf8');
+        const tasks = parseTaskLedgerMarkdown(content);
+        if (tasks.length === 0) {
+          throw new Error(`AITEAM_LEDGER_EMPTY: No tasks ("### T1: Title") found in "${args.ledger}".`);
+        }
+        updateTaskLedger(repo, tasks);
       }
 
       completeStage(repo, stage, taskId, {
         outcome: args.outcome || 'PASS',
         summary: args.summary || `${stage} completed`,
         evidence: args.evidence || [],
-        filesChanged: args.filesChanged || []
+        filesChanged: args.filesChanged || [],
+        findings: args.findings || [],
+        checks: args.checks || [],
+        commitMessage: args.commitMessage || null
       });
+
+      const desc = args.summary || `Completed stage [${stage}]${taskId ? ` for task ${taskId}` : ''} (outcome: ${args.outcome || 'PASS'})`;
+      writeActiveLog(repo, `✓ ${desc}`, stage);
     }
 
     session = readSession(repo);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import {
   initSession,
   readSession,
@@ -98,9 +98,22 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
     current = readSession(tmpRepo);
     assert.equal(current.taskLedger[0].status, 'review-passed');
 
-    // 7. QA testing pass — automated QA passes, task is held in qa-auto-passed with the
-    //    human sign-off gate open. Integration must be hard-blocked until the user signs off.
+    // 7. QA testing pass — requires automated test under tests/qa/
     startStage(tmpRepo, 'qa', 'task-1-canvas', 'qa', 'QA');
+    assert.throws(
+      () =>
+        completeStage(tmpRepo, 'qa', 'task-1-canvas', {
+          outcome: 'PASS',
+          summary: 'Tried passing QA without writing a test file',
+          evidence: ['None'],
+          checks: [{ name: 'Canvas Dimensions', passed: true }]
+        }),
+      /AITEAM_QA_TEST_MISSING/
+    );
+
+    fs.mkdirSync(path.join(tmpRepo, 'tests', 'qa'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRepo, 'tests', 'qa', 'task-1-canvas.test.mjs'), 'export default true;\n');
+
     completeStage(tmpRepo, 'qa', 'task-1-canvas', {
       outcome: 'PASS',
       summary: 'Automated test verified 800x600 canvas resolution',
@@ -127,14 +140,81 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
     assert.equal(current.approvals['qa:task-1-canvas'].decision, 'APPROVED');
     assert.ok(verifyFingerprint(tmpRepo, ['index.html'], current.taskLedger[0].qaFingerprint));
 
-    // Verify tamper detection
+    // 9. Verify tamper detection during integration: modifying index.html after QA approval throws AITEAM_FINGERPRINT_MISMATCH
     fs.writeFileSync(path.join(tmpRepo, 'index.html'), '<canvas id="pong-tampered"></canvas>');
     assert.equal(verifyFingerprint(tmpRepo, ['index.html'], current.taskLedger[0].qaFingerprint), false);
+    assert.throws(
+      () =>
+        completeStage(tmpRepo, 'integration', 'task-1-canvas', {
+          outcome: 'PASS',
+          summary: 'Attempted integration with tampered file'
+        }),
+      /AITEAM_FINGERPRINT_MISMATCH/
+    );
+    assert.equal(readSession(tmpRepo).taskLedger[0].status, 'needs-rework');
 
-    // Restore clean file
-    fs.writeFileSync(path.join(tmpRepo, 'index.html'), '<canvas id="pong"></canvas>');
-    assert.equal(verifyFingerprint(tmpRepo, ['index.html'], current.taskLedger[0].qaFingerprint), true);
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
 
+test('AITeam Skill: Strict stage ordering blocks skipping implementation, code-review, or QA', () => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-order-test-'));
+
+  try {
+    initSession(tmpRepo, 'Strict order test');
+    updateTaskLedger(tmpRepo, [
+      { id: 'T1', title: 'Task 1', status: 'planned', acceptanceCriteria: ['AC-1: works'] }
+    ]);
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'ok' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'ok' });
+
+    // Cannot jump straight to code-review, qa, or QA approval on a 'planned' task
+    assert.throws(() => startStage(tmpRepo, 'code-review', 'T1'), /AITEAM_STAGE_ORDER_VIOLATION/);
+    assert.throws(() => startStage(tmpRepo, 'qa', 'T1'), /AITEAM_STAGE_ORDER_VIOLATION/);
+    assert.throws(
+      () => recordApproval(tmpRepo, { gate: 'qa', taskId: 'T1', decision: 'approved', response: 'skip' }),
+      /AITEAM_STAGE_ORDER_VIOLATION/
+    );
+
+    // Cannot self-approve with boilerplate "approved by user"
+    assert.throws(
+      () => recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'approved by user' }),
+      /AITEAM_SELF_APPROVAL_BLOCKED/
+    );
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
+test('AITeam Skill: CLI update-ledger command and .git/aiteam tamper protection', () => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-cli-ledger-test-'));
+
+  try {
+    // Create a mock .git directory to activate .git/aiteam protected state mirror
+    fs.mkdirSync(path.join(tmpRepo, '.git'), { recursive: true });
+    initSession(tmpRepo, 'CLI ledger & protection test');
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'human ok' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'human ok' });
+
+    fs.writeFileSync(
+      path.join(tmpRepo, 'TASK_LEDGER.md'),
+      '# Task Ledger\n\n### T1: First task\n- [ ] AC-1: Criterion one\n\n### T2: Second task\n- [ ] AC-1: Criterion two\n'
+    );
+
+    const bridgePath = path.resolve('skill/lib/state-bridge.mjs');
+    const out = execFileSync('node', [bridgePath, 'update-ledger', '--repo', tmpRepo, '--ledger', 'TASK_LEDGER.md'], {
+      encoding: 'utf8'
+    });
+    const parsed = JSON.parse(out.trim());
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.taskCount, 2);
+
+    // Tamper with workspace .aiteam/session.json directly; readSession should restore from .git/aiteam/session.json
+    fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'session.json'), JSON.stringify({ status: 'HACKED' }));
+    const restored = readSession(tmpRepo);
+    assert.equal(restored.status, 'ACTIVE');
+    assert.equal(restored.taskLedger.length, 2);
   } finally {
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }
@@ -225,7 +305,8 @@ test('AITeam Skill: PRD/TRD gates hard-block downstream stages until approved', 
   try {
     initSession(tmpRepo, 'gate enforcement test');
 
-    // Complete intake -> auto-opens the PRD approval gate.
+    // Write PRD artifact and complete intake -> auto-opens the PRD approval gate.
+    fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'docs', 'prd.html'), '<h1>PRD</h1>');
     completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD drafted' });
     let s = readSession(tmpRepo);
     assert.equal(s.pendingUserInput?.gate, 'prd');
@@ -238,12 +319,14 @@ test('AITeam Skill: PRD/TRD gates hard-block downstream stages until approved', 
     recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'looks good' });
     startStage(tmpRepo, 'architecture', null, 'architect', 'Architect');
 
-    // Planning is blocked until the TRD gate is approved too.
-    assert.throws(() => startStage(tmpRepo, 'planning'), /AITEAM_GATE_BLOCKED/);
+    // Environment-readiness and implementation are blocked until the TRD gate is approved too.
+    assert.throws(() => startStage(tmpRepo, 'environment-readiness'), /AITEAM_GATE_BLOCKED/);
+    assert.throws(() => startStage(tmpRepo, 'implementation', 't1'), /AITEAM_GATE_BLOCKED/);
 
-    // Requesting changes on the TRD does NOT unblock it.
+    // Requesting changes on the TRD does NOT unblock environment-readiness or implementation.
     recordApproval(tmpRepo, { gate: 'trd', decision: 'changes', response: 'add caching section' });
-    assert.throws(() => startStage(tmpRepo, 'planning'), /AITEAM_GATE_BLOCKED/);
+    assert.throws(() => startStage(tmpRepo, 'environment-readiness'), /AITEAM_GATE_BLOCKED/);
+    assert.throws(() => startStage(tmpRepo, 'implementation', 't1'), /AITEAM_GATE_BLOCKED/);
 
     s = readSession(tmpRepo);
     assert.equal(s.approvals.trd.decision, 'CHANGES_REQUESTED');
@@ -286,4 +369,3 @@ test('AITeam Skill: Brownfield projects automatically archive existing PRD/TRD d
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }
 });
-

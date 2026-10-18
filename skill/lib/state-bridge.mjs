@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { computeFingerprint } from './fingerprint.mjs';
+import { computeFingerprint, verifyFingerprint } from './fingerprint.mjs';
 
 export const DEFAULT_PHASE_PLAN = [
   'intake',
   'prd-review',
   'architecture',
-  'trd-review',
   'ui-design',
   'planning',
   'qa-planning',
   'critical-review',
+  'trd-review',
   'environment-readiness',
   'implementation',
   'code-review',
@@ -19,6 +19,24 @@ export const DEFAULT_PHASE_PLAN = [
   'qa-manual',
   'integration'
 ];
+
+export const ROLE_FOR_STAGE = {
+  intake: 'Analyst',
+  'prd-review': 'Human Gate (PRD)',
+  architecture: 'Architect',
+  'ui-design': 'UI Designer',
+  planning: 'Planner',
+  qa_planning: 'QA Planner',
+  'qa-planning': 'QA Planner',
+  'critical-review': 'Critical Reviewer',
+  'trd-review': 'Human Gate (TRD)',
+  'environment-readiness': 'Env Readiness',
+  implementation: 'Programmer',
+  'code-review': 'Code Reviewer',
+  qa: 'QA Engineer',
+  'qa-manual': 'Human Gate (QA)',
+  integration: 'Maintainer'
+};
 
 // Human-approval gate stages. Each gate id maps to the review stage it occupies
 // in the phase plan. These are HARD GATES: downstream stages cannot start, and the
@@ -29,26 +47,67 @@ export const GATE_STAGE_FOR_GATE = {
   qa: 'qa-manual'
 };
 
+export function syncActiveRunForSession(session, now = new Date().toISOString()) {
+  if (!session) return null;
+  // Normalize legacy phasePlan ordering where trd-review was before ui-design
+  if (Array.isArray(session.phasePlan)) {
+    const trdIdx = session.phasePlan.indexOf('trd-review');
+    const critIdx = session.phasePlan.indexOf('critical-review');
+    if (trdIdx !== -1 && critIdx !== -1 && trdIdx < critIdx) {
+      session.phasePlan = [...DEFAULT_PHASE_PLAN];
+    }
+  }
+  const stage = session.currentStage;
+  const isGateStage = stage === 'prd-review' || stage === 'trd-review' || stage === 'qa-manual';
+  const hasOpenGate = Boolean(session.pendingUserInput && session.pendingUserInput.response == null);
+  if (session.status !== 'ACTIVE' || !stage || isGateStage || hasOpenGate) {
+    session.activeRun = null;
+    return null;
+  }
+  const taskId = session.currentTaskId ?? null;
+  const role = ROLE_FOR_STAGE[stage] || stage;
+  if (session.activeRun && session.activeRun.stage === stage && (session.activeRun.taskId ?? null) === taskId) {
+    return session.activeRun;
+  }
+  const agentId = role.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  session.activeRun = {
+    runId: `${now.replace(/[:.]/g, '-')}-${agentId}`,
+    stage,
+    taskId,
+    agentId,
+    role,
+    startedAt: now
+  };
+  return session.activeRun;
+}
+
+const SELF_APPROVAL_PATTERNS = [
+  /^approved by user$/i,
+  /^auto[- ]?approved$/i,
+  /^self[- ]?approved$/i,
+  /^approved autonomously$/i
+];
+
 function defaultGateQuestions(gate, taskId, doc = null) {
   if (gate === 'prd') {
     const target = doc || '.aiteam/docs/prd.html';
-    return [`Review the PRD at ${target} (scope, user stories, acceptance criteria). Reply APPROVED to proceed, or describe the changes you want.`];
+    return [`Review the PRD at ${target} (scope, user stories, acceptance criteria). Approve in the Watcher Portal or reply APPROVED in chat to proceed, or describe the changes you want.`];
   }
   if (gate === 'trd') {
     const target = doc || '.aiteam/docs/trd.html';
-    return [`Review the TRD at ${target} (architecture, components, data models). Reply APPROVED to proceed, or describe the changes you want.`];
+    return [`Review the TRD at ${target} (architecture, components, data models). Approve in the Watcher Portal or reply APPROVED in chat to proceed, or describe the changes you want.`];
   }
   if (gate === 'qa') {
-    return [`Automated QA PASSED for ${taskId || 'this task'}. Confirm the behavior works in the running app/environment, then reply "PASS: ..." to proceed to commit, or "FAIL: <defects>" to route the task back to the programmer.`];
+    return [`Automated QA PASSED for ${taskId || 'this task'}. Confirm the behavior works in the running app/environment, then approve in the Watcher Portal or reply "PASS: ..." in chat to proceed to commit, or "FAIL: <defects>" to route the task back to the programmer.`];
   }
-  return ['Reply APPROVED to proceed, or describe the changes you want.'];
+  return ['Approve in the Watcher Portal or reply APPROVED in chat to proceed, or describe the changes you want.'];
 }
 
 function qaManualQuestions(taskId, result) {
   const checks = (result && result.manualChecks && result.manualChecks.length)
     ? result.manualChecks
     : (result && result.checks ? result.checks.map((c) =>
-        (c && c.name) ? `${c.name}: ${c.expected || c.actual || ''}` : (typeof c === 'string' ? c : ''))
+        (c && c.name) ? `${c.name}: ${c.expected || c.actual || c.evidence || ''}` : (typeof c === 'string' ? c : ''))
         .filter(Boolean) : []);
   const body = checks.length ? checks : ['Confirm the task behavior works end-to-end in the running application.'];
   return [`Automated QA PASSED for ${taskId}. Verify these behaviors in the running app/environment before committing:`, ...body];
@@ -58,7 +117,7 @@ function qaManualQuestions(taskId, result) {
 function requiredApprovals(stage, taskId) {
   const need = [];
   const afterPrd = ['architecture', 'ui-design', 'planning', 'qa-planning', 'critical-review', 'environment-readiness', 'implementation', 'code-review', 'qa', 'integration'];
-  const afterTrd = ['planning', 'qa-planning', 'critical-review', 'environment-readiness', 'implementation', 'code-review', 'qa', 'integration'];
+  const afterTrd = ['environment-readiness', 'implementation', 'code-review', 'qa', 'integration'];
   if (afterPrd.includes(stage)) need.push('prd');
   if (afterTrd.includes(stage)) need.push('trd');
   if (stage === 'integration' && taskId) need.push(`qa:${taskId}`);
@@ -66,11 +125,12 @@ function requiredApprovals(stage, taskId) {
 }
 
 function gateBlockMessage(stage, missing) {
-  const cmds = missing.map((id) => {
-    const [gate, taskId] = id.includes(':') ? id.split(':') : [id, null];
-    return `  node state-bridge.mjs record-approval --repo "$PWD" --gate ${gate}${taskId ? ` --taskId ${taskId}` : ''} --decision approved --response "approved by user"`;
-  }).join('\n');
-  return `AITEAM_GATE_BLOCKED: stage "${stage}" is blocked by an unapproved human-approval gate (${missing.join(', ')}). The matching gate is open (see .aiteam/session.json "pendingUserInput"). Get the user's explicit decision in chat, then record it:\n${cmds}`;
+  const first = missing[0] || 'prd';
+  const [gate, taskId] = first.includes(':') ? first.split(':') : [first, null];
+  return [
+    `AITEAM_GATE_BLOCKED: stage "${stage}" is HARD-BLOCKED by unapproved human-approval gate (${missing.join(', ')}).`,
+    `Call aiteam_wait_for_approval(gate="${gate}"${taskId ? `, taskId="${taskId}"` : ''}) (or run: node state-bridge.mjs wait-approval --repo "$PWD" --gate ${gate}${taskId ? ` --taskId ${taskId}` : ''}) to pause until the human user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`
+  ].join(' ');
 }
 
 function enforceApprovals(session, stage, taskId) {
@@ -79,6 +139,164 @@ function enforceApprovals(session, stage, taskId) {
   const approved = (id) => Boolean(session.approvals && session.approvals[id] && session.approvals[id].decision === 'APPROVED');
   const missing = need.filter((id) => !approved(id));
   if (missing.length) throw new Error(gateBlockMessage(stage, missing));
+}
+
+/**
+ * Enforces strict sequential order across the pre-implementation setup phases:
+ * intake -> prd-review -> architecture -> ui-design -> planning -> qa-planning -> critical-review -> trd-review -> environment-readiness
+ */
+function enforceSetupStageOrder(session, stage) {
+  // If TRD is already approved (e.g. during task loop or unit test setup), setup phases are already satisfied
+  if (session.approvals?.trd?.decision === 'APPROVED') return;
+
+  const completed = new Set(session.completedStages || []);
+  const prereqFor = {
+    'ui-design': 'architecture',
+    'planning': 'ui-design',
+    'qa-planning': 'planning',
+    'critical-review': 'qa-planning'
+  };
+  const needed = prereqFor[stage];
+  if (needed && !completed.has(needed)) {
+    throw new Error(
+      `AITEAM_STAGE_ORDER_VIOLATION: Cannot execute stage "${stage}" before completing "${needed}". Required setup order: architecture -> ui-design -> planning -> qa-planning -> critical-review -> trd-review -> environment-readiness.`
+    );
+  }
+}
+
+/**
+ * Enforces strict per-task stage ordering so the coordinator cannot skip
+ * implementation, code-review, qa, or qa-manual sign-off.
+ */
+function enforceTaskStageOrder(session, stage, taskId) {
+  if (!taskId || !Array.isArray(session.taskLedger) || session.taskLedger.length === 0) return;
+  const task = session.taskLedger.find((t) => t.id === taskId);
+  if (!task) {
+    throw new Error(`AITEAM_TASK_NOT_FOUND: Task "${taskId}" does not exist in session.taskLedger.`);
+  }
+
+  const status = task.status || 'planned';
+
+  if (stage === 'implementation') {
+    if (status === 'qa-passed' && (task.integration?.integrated || task.integration?.committed)) {
+      throw new Error(`AITEAM_STAGE_ORDER_VIOLATION: Task "${taskId}" is already integrated and complete.`);
+    }
+    return;
+  }
+
+  if (stage === 'code-review') {
+    if (status !== 'implemented' && status !== 'review-passed') {
+      throw new Error(
+        `AITEAM_STAGE_ORDER_VIOLATION: Cannot execute "code-review" for task "${taskId}" because its status is "${status}". Task must complete "implementation" first.`
+      );
+    }
+    return;
+  }
+
+  if (stage === 'qa') {
+    if (status !== 'review-passed' && status !== 'qa-auto-passed') {
+      throw new Error(
+        `AITEAM_STAGE_ORDER_VIOLATION: Cannot execute "qa" for task "${taskId}" because its status is "${status}". Task must pass "code-review" first.`
+      );
+    }
+    return;
+  }
+
+  if (stage === 'integration') {
+    if (status !== 'qa-passed') {
+      throw new Error(
+        `AITEAM_STAGE_ORDER_VIOLATION: Cannot execute "integration" for task "${taskId}" because its status is "${status}". Task must pass automated "qa" AND receive human QA sign-off first.`
+      );
+    }
+  }
+}
+
+function hasQaTestFiles(repo) {
+  const qaDir = path.join(repo, 'tests', 'qa');
+  if (!fs.existsSync(qaDir)) return false;
+  try {
+    const entries = fs.readdirSync(qaDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && /\.(?:test|spec)\.[a-z0-9]+$|\.(?:mjs|cjs|js|ts|tsx|py|sh)$/i.test(entry.name)) {
+        const stat = fs.statSync(path.join(qaDir, entry.name));
+        if (stat.size > 0) return true;
+      }
+      if (entry.isDirectory()) {
+        const subEntries = fs.readdirSync(path.join(qaDir, entry.name));
+        if (subEntries.length > 0) return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Validates that required disk artifacts and structured evidence exist before
+ * allowing a stage to complete with PASS.
+ */
+function validateStageCompletion(repo, session, stage, taskId, result) {
+  const outcome = result.outcome || 'PASS';
+  if (outcome !== 'PASS' && outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
+
+  if (stage === 'intake') {
+    const prdPath = path.join(docsDir(repo), 'prd.html');
+    if (!fs.existsSync(prdPath) || fs.statSync(prdPath).size === 0) {
+      throw new Error(
+        `AITEAM_ARTIFACT_MISSING: Cannot complete stage "intake" with PASS because ".aiteam/docs/prd.html" does not exist or is empty. You must generate the PRD HTML document before completing intake.`
+      );
+    }
+  } else if (stage === 'architecture' || stage === 'critical-review') {
+    const trdPath = path.join(docsDir(repo), 'trd.html');
+    if (!fs.existsSync(trdPath) || fs.statSync(trdPath).size === 0) {
+      throw new Error(
+        `AITEAM_ARTIFACT_MISSING: Cannot complete stage "${stage}" with PASS because ".aiteam/docs/trd.html" does not exist or is empty. You must generate/update the TRD HTML document before completing ${stage}.`
+      );
+    }
+  } else if (stage === 'planning') {
+    const tasks = session.taskLedger || [];
+    if (tasks.length === 0) {
+      throw new Error(
+        `AITEAM_LEDGER_EMPTY: Cannot complete stage "planning" with an empty taskLedger. Author TASK_LEDGER.md and register tasks first.`
+      );
+    }
+  } else if (stage === 'implementation' && taskId) {
+    const task = (session.taskLedger || []).find((t) => t.id === taskId);
+    const filesChanged = result.filesChanged || task?.filesChanged || [];
+    if (!Array.isArray(filesChanged) || filesChanged.length === 0) {
+      throw new Error(
+        `AITEAM_EVIDENCE_MISSING: Cannot complete "implementation" for task "${taskId}" without a non-empty "filesChanged" array.`
+      );
+    }
+    for (const rel of filesChanged) {
+      const full = path.isAbsolute(rel) ? rel : path.join(repo, rel);
+      if (!fs.existsSync(full)) {
+        throw new Error(
+          `AITEAM_EVIDENCE_MISSING: Reported changed file "${rel}" for task "${taskId}" does not exist on disk.`
+        );
+      }
+    }
+  } else if (stage === 'code-review' && taskId) {
+    const findings = Array.isArray(result.findings) ? result.findings : [];
+    const severe = findings.filter((f) => f && (f.severity === 'BLOCKER' || f.severity === 'MAJOR'));
+    if (severe.length > 0) {
+      throw new Error(
+        `AITEAM_REVIEW_CONFLICT: Cannot PASS "code-review" for task "${taskId}" when ${severe.length} BLOCKER/MAJOR finding(s) are present.`
+      );
+    }
+  } else if (stage === 'qa' && taskId) {
+    if (!hasQaTestFiles(repo)) {
+      throw new Error(
+        `AITEAM_QA_TEST_MISSING: Cannot PASS stage "qa" for task "${taskId}" because no automated black-box test files exist under "tests/qa/". Per the QA contract, you must author and run dedicated black-box tests in tests/qa/ before completing QA.`
+      );
+    }
+    const hasChecks = Array.isArray(result.checks) && result.checks.length > 0;
+    const hasEvidence = Array.isArray(result.evidence) && result.evidence.length > 0;
+    if (!hasChecks && !hasEvidence) {
+      throw new Error(
+        `AITEAM_EVIDENCE_MISSING: Cannot PASS stage "qa" for task "${taskId}" without reporting executed "checks" or "evidence".`
+      );
+    }
+  }
 }
 
 // Mutates an in-memory session to open a human-approval gate (pendingUserInput).
@@ -111,12 +329,51 @@ export function openGate(repo, opts) {
   return session;
 }
 
-export function recordApproval(repo, { gate, taskId = null, decision, response = '', approvedBy = 'user' }) {
+export function recordApproval(repo, { gate, taskId = null, decision, response = '', approvedBy = 'user', enforceDwell = false }) {
   const session = readSession(repo);
   if (!session) throw new Error(`No active session found in ${repo}`);
   const approved = String(decision).toUpperCase() === 'APPROVED' || String(decision).toLowerCase() === 'approved';
   const gateId = taskId ? `${gate}:${taskId}` : gate;
   const now = new Date().toISOString();
+
+  // Anti-self-approval guard when called by an agent CLI/MCP rather than the human portal
+  if (approved && approvedBy !== 'human-portal') {
+    const trimmedResp = String(response || '').trim();
+    if (SELF_APPROVAL_PATTERNS.some((re) => re.test(trimmedResp))) {
+      throw new Error(
+        `AITEAM_SELF_APPROVAL_BLOCKED: Boilerplate response "${trimmedResp}" rejected. You must wait for the actual human user to approve in the Watcher Portal or reply in chat.`
+      );
+    }
+
+    if (
+      enforceDwell &&
+      !process.env.NODE_TEST_CONTEXT &&
+      process.env.AITEAM_TEST_MODE !== '1' &&
+      session.pendingUserInput &&
+      session.pendingUserInput.gateId === gateId &&
+      session.pendingUserInput.openedAt
+    ) {
+      const elapsedMs = Date.now() - Date.parse(session.pendingUserInput.openedAt);
+      if (Number.isFinite(elapsedMs) && elapsedMs < 2500) {
+        throw new Error(
+          `AITEAM_SELF_APPROVAL_BLOCKED: Gate "${gateId}" was opened less than 3 seconds ago in this same turn. Call aiteam_wait_for_approval to wait for the human user's decision in the Watcher Portal.`
+        );
+      }
+    }
+  }
+
+  // Enforce that per-task QA approval can only be recorded after automated QA has passed
+  if (gate === 'qa' && taskId && Array.isArray(session.taskLedger) && session.taskLedger.length > 0) {
+    const targetTask = session.taskLedger.find((t) => t.id === taskId);
+    if (!targetTask) {
+      throw new Error(`AITEAM_TASK_NOT_FOUND: Task "${taskId}" does not exist in session.taskLedger.`);
+    }
+    if (approved && targetTask.status !== 'qa-auto-passed' && targetTask.status !== 'qa-passed') {
+      throw new Error(
+        `AITEAM_STAGE_ORDER_VIOLATION: Cannot approve QA gate for task "${taskId}" because its current status is "${targetTask.status}" (must pass automated "qa" stage first).`
+      );
+    }
+  }
 
   if (!session.approvals) session.approvals = {};
   session.approvals[gateId] = { gate, taskId: taskId ?? null, decision: approved ? 'APPROVED' : 'CHANGES_REQUESTED', response, approvedBy, at: now };
@@ -142,17 +399,38 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
       }
       return t;
     });
+    if (approved) {
+      session.currentStage = 'integration';
+      session.currentTaskId = taskId;
+    } else {
+      session.currentStage = 'implementation';
+      session.currentTaskId = taskId;
+    }
   } else if (reviewStage) {
     if (approved) {
       if (!session.completedStages.includes(reviewStage)) session.completedStages.push(reviewStage);
       if (!session.stageEvidence) session.stageEvidence = {};
       session.stageEvidence[reviewStage] = { completedAt: now, result: { outcome: 'PASS', approval: { approvedBy, response } } };
+      if (gate === 'prd' && session.currentStage === 'prd-review') {
+        archiveDocIfPresent(repo, '.aiteam/docs/trd.html');
+        session.currentStage = 'architecture';
+      } else if (gate === 'trd' && session.currentStage === 'trd-review') {
+        session.currentStage = 'environment-readiness';
+      }
     } else {
       const i = session.completedStages.indexOf(reviewStage);
       if (i !== -1) session.completedStages.splice(i, 1);
+      if (gate === 'prd') session.currentStage = 'intake';
+      if (gate === 'trd') {
+        const critIdx = session.completedStages.indexOf('critical-review');
+        if (critIdx !== -1) session.completedStages.splice(critIdx, 1);
+        session.currentStage = 'critical-review';
+      }
     }
   }
 
+  session.activeRun = null;
+  syncActiveRunForSession(session, now);
   writeSession(repo, session);
   appendEvent(repo, { type: 'approval_gate_decided', gate, gateId, decision: approved ? 'APPROVED' : 'CHANGES_REQUESTED', approvedBy, at: now });
   return session;
@@ -162,11 +440,24 @@ export function stateDir(repo) {
   return path.join(repo, '.aiteam');
 }
 
+function protectedStateDir(repo) {
+  const gitDir = path.join(repo, '.git');
+  try {
+    if (fs.existsSync(gitDir) && fs.statSync(gitDir).isDirectory()) {
+      const dir = path.join(gitDir, 'aiteam');
+      fs.mkdirSync(dir, { recursive: true });
+      return dir;
+    }
+  } catch {}
+  return null;
+}
+
 export function ensureStateDir(repo) {
   const dir = stateDir(repo);
   fs.mkdirSync(path.join(dir, 'runs'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'docs', 'archive'), { recursive: true });
+  protectedStateDir(repo);
   return dir;
 }
 
@@ -186,9 +477,24 @@ export function archiveDocIfPresent(repo, docRelPath) {
 
   const ext = path.extname(baseName);
   const stem = path.basename(baseName, ext);
+  const archiveDir = docsArchiveDir(repo);
+  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+  try {
+    const existing = fs
+      .readdirSync(archiveDir)
+      .filter((f) => f.startsWith(`${stem}-`) && f.endsWith(ext))
+      .sort();
+    if (existing.length > 0) {
+      const latestArchive = path.join(archiveDir, existing.at(-1));
+      if (fs.readFileSync(latestArchive, 'utf8') === sourceContent) {
+        return path.relative(repo, latestArchive);
+      }
+    }
+  } catch {}
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const archivedName = `${stem}-${timestamp}${ext}`;
-  const destPath = path.join(docsArchiveDir(repo), archivedName);
+  const destPath = path.join(archiveDir, archivedName);
 
   fs.copyFileSync(sourcePath, destPath);
   const archiveRelPath = path.relative(repo, destPath);
@@ -225,9 +531,28 @@ function atomicWrite(filePath, data) {
 }
 
 export function readSession(repo) {
-  const file = sessionPath(repo);
+  const pDir = protectedStateDir(repo);
+  const protectedFile = pDir ? path.join(pDir, 'session.json') : null;
+  const workspaceFile = sessionPath(repo);
+
+  // Prefer protected .git/aiteam/session.json mirror if present so workspace tampering cannot bypass gates
+  if (protectedFile && fs.existsSync(protectedFile)) {
+    try {
+      const raw = fs.readFileSync(protectedFile, 'utf8');
+      const parsed = JSON.parse(raw);
+      // Restore workspace copy if missing or out of sync
+      try {
+        if (!fs.existsSync(workspaceFile) || fs.readFileSync(workspaceFile, 'utf8') !== raw) {
+          ensureStateDir(repo);
+          atomicWrite(workspaceFile, raw);
+        }
+      } catch {}
+      return parsed;
+    } catch {}
+  }
+
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    return JSON.parse(fs.readFileSync(workspaceFile, 'utf8'));
   } catch {
     return null;
   }
@@ -236,19 +561,39 @@ export function readSession(repo) {
 export function writeSession(repo, session) {
   ensureStateDir(repo);
   const next = { ...session, updatedAt: new Date().toISOString() };
-  atomicWrite(sessionPath(repo), JSON.stringify(next, null, 2) + '\n');
+  const payload = JSON.stringify(next, null, 2) + '\n';
+  atomicWrite(sessionPath(repo), payload);
+  const pDir = protectedStateDir(repo);
+  if (pDir) {
+    try {
+      atomicWrite(path.join(pDir, 'session.json'), payload);
+    } catch {}
+  }
   return next;
 }
 
 export function appendEvent(repo, event) {
   ensureStateDir(repo);
   const row = { at: new Date().toISOString(), ...event };
-  fs.appendFileSync(eventsPath(repo), JSON.stringify(row) + '\n', 'utf8');
+  const line = JSON.stringify(row) + '\n';
+  fs.appendFileSync(eventsPath(repo), line, 'utf8');
+  const pDir = protectedStateDir(repo);
+  if (pDir) {
+    try {
+      fs.appendFileSync(path.join(pDir, 'events.jsonl'), line, 'utf8');
+    } catch {}
+  }
   return row;
 }
 
 export function initSession(repo, request) {
-  ensureStateDir(repo);
+  const dir = ensureStateDir(repo);
+  const activeLogFile = path.join(dir, 'runs', 'active.log');
+  try {
+    if (fs.existsSync(activeLogFile)) {
+      fs.unlinkSync(activeLogFile);
+    }
+  } catch {}
   const now = new Date().toISOString();
   const session = {
     schema: 3,
@@ -260,7 +605,7 @@ export function initSession(repo, request) {
     status: 'ACTIVE',
     currentActor: 'coordinator',
     currentStage: 'intake',
-    phasePlan: DEFAULT_PHASE_PLAN,
+    phasePlan: [...DEFAULT_PHASE_PLAN],
     completedStages: [],
     stageEvidence: {},
     taskLedger: [],
@@ -273,6 +618,7 @@ export function initSession(repo, request) {
     approvals: {},
     pendingUserInput: null
   };
+  syncActiveRunForSession(session, now);
   writeSession(repo, session);
   appendEvent(repo, { type: 'session_started', request, sessionId: session.id });
   return session;
@@ -286,6 +632,10 @@ export function startStage(repo, stage, taskId = null, agentId = null, role = nu
 
   // Hard human-approval gate: cannot enter a stage until its prerequisite gates are approved.
   enforceApprovals(session, stage, taskId);
+  // Strict setup stage ordering (architecture -> ui-design -> planning -> qa-planning -> critical-review)
+  enforceSetupStageOrder(session, stage);
+  // Strict per-task stage ordering
+  enforceTaskStageOrder(session, stage, taskId);
 
   // In brownfield projects, if a previous PRD or TRD exists when re-entering
   // intake or architecture, archive it so it is never overwritten or lost.
@@ -295,15 +645,23 @@ export function startStage(repo, stage, taskId = null, agentId = null, role = nu
     archiveDocIfPresent(repo, '.aiteam/docs/trd.html');
   }
 
-  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${agentId || stage}`;
+  const now = new Date().toISOString();
+  const runId = `${now.replace(/[:.]/g, '-')}-${agentId || stage}`;
   const activeRun = {
     runId,
     stage,
     taskId,
     agentId: agentId || stage,
     role: role || stage,
-    startedAt: new Date().toISOString()
+    startedAt: now
   };
+
+  if (taskId && Array.isArray(session.taskLedger)) {
+    session.taskLedger = session.taskLedger.map((t) => {
+      if (t.id !== taskId) return t;
+      return { ...t, startedAt: t.startedAt || now };
+    });
+  }
 
   session.currentStage = stage;
   session.currentTaskId = taskId;
@@ -327,26 +685,18 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
   const session = readSession(repo);
   if (!session) throw new Error(`No active session found in ${repo}`);
   enforceApprovals(session, stage, taskId);
+  enforceSetupStageOrder(session, stage);
+  enforceTaskStageOrder(session, stage, taskId);
+  validateStageCompletion(repo, session, stage, taskId, result);
 
   const now = new Date().toISOString();
   const outcome = result.outcome || 'PASS';
   const runId = session.activeRun?.runId || `${now.replace(/[:.]/g, '-')}-${stage}`;
 
-  // Record stage evidence
-  if (!session.stageEvidence) session.stageEvidence = {};
-  const evidenceKey = taskId ? `${stage}:${taskId}` : stage;
-  session.stageEvidence[evidenceKey] = {
-    completedAt: now,
-    runId,
-    result
-  };
-
-  if (!session.completedStages.includes(stage)) {
-    session.completedStages.push(stage);
-  }
-
-  // Handle task-specific state transitions
+  // Handle task-specific state transitions & cryptographic fingerprint verification
   if (taskId && Array.isArray(session.taskLedger)) {
+    let fingerprintError = null;
+
     session.taskLedger = session.taskLedger.map((t) => {
       if (t.id !== taskId) return t;
 
@@ -365,6 +715,13 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
           updated.status = 'implemented';
           updated.filesChanged = result.filesChanged || updated.filesChanged || [];
           updated.validations = result.validations || [];
+          updated.implFingerprint = computeFingerprint(repo, updated.filesChanged);
+          // Clear stale downstream review/QA state after implementation rework
+          updated.review = null;
+          updated.qa = null;
+          updated.qaFingerprint = null;
+          updated.integration = null;
+          if (session.approvals) delete session.approvals[`qa:${taskId}`];
         } else {
           updated.status = 'needs-rework';
         }
@@ -390,36 +747,120 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
           updated.status = 'needs-rework';
           updated.qaFailure = result;
         }
+      } else if (stage === 'integration') {
+        if (outcome === 'PASS') {
+          const filesToVerify = updated.filesChanged || [];
+          if (updated.qaFingerprint && filesToVerify.length > 0) {
+            const valid = verifyFingerprint(repo, filesToVerify, updated.qaFingerprint);
+            if (!valid) {
+              updated.status = 'needs-rework';
+              updated.integration = null;
+              if (session.approvals) delete session.approvals[`qa:${taskId}`];
+              fingerprintError = new Error(
+                `AITEAM_FINGERPRINT_MISMATCH: Files for task "${taskId}" (${filesToVerify.join(', ')}) were modified after QA approval! Approval invalidated and task routed back to "needs-rework".`
+              );
+              return updated;
+            }
+          }
+          updated.status = 'qa-passed';
+          updated.integration = {
+            committed: true,
+            integrated: true,
+            at: now,
+            summary: result.summary || 'Integrated into Git',
+            commitMessage: result.commitMessage || null,
+            filesCommitted: result.filesCommitted || filesToVerify,
+            fingerprint: updated.qaFingerprint || null
+          };
+        } else {
+          updated.status = 'needs-rework';
+          updated.integration = null;
+        }
       }
 
       return updated;
     });
+
+    if (fingerprintError) {
+      session.activeRun = null;
+      session.currentStage = 'implementation';
+      writeSession(repo, session);
+      appendEvent(repo, {
+        type: 'workflow_fingerprint_mismatch',
+        stage,
+        taskId,
+        error: fingerprintError.message
+      });
+      throw fingerprintError;
+    }
   }
 
-  // Check if all tasks in ledger are complete
-  const allTasksDone = session.taskLedger.length > 0 &&
-    session.taskLedger.every((t) => ['qa-passed', 'completed', 'integrated'].includes(t.status));
+  // Record stage evidence
+  if (!session.stageEvidence) session.stageEvidence = {};
+  const evidenceKey = taskId ? `${stage}:${taskId}` : stage;
+  session.stageEvidence[evidenceKey] = {
+    completedAt: now,
+    runId,
+    result
+  };
+
+  if (!session.completedStages.includes(stage)) {
+    session.completedStages.push(stage);
+  }
+
+  // Check if all tasks in ledger are QA-passed AND integrated
+  const isTaskIntegrated = (t) => Boolean(
+    (t.status === 'qa-passed' && (t.integration?.integrated || t.integration?.committed || t.integration?.reason === 'no_changes')) ||
+    t.status === 'integrated' ||
+    t.status === 'completed'
+  );
+  const allTasksDone = session.taskLedger.length > 0 && session.taskLedger.every(isTaskIntegrated);
 
   if (allTasksDone && stage === 'integration') {
     session.status = 'COMPLETE';
     session.completedAt = now;
   }
 
-  // Automatically open the human-approval gate that gates the next stage, so the
-  // coordinator cannot skip it. The gate is hard: the following stage will throw
-  // (AITEAM_GATE_BLOCKED) until the user's decision is recorded via recordApproval.
-  if (stage === 'intake') {
+  // Advance through the 9-stage setup pipeline and open human-approval gates at prd-review, trd-review, and qa-manual
+  if (stage === 'intake' && outcome === 'PASS') {
     openGateOnSession(session, { gate: 'prd', kind: 'prd', taskId: null, doc: '.aiteam/docs/prd.html' });
-  } else if (stage === 'architecture') {
+  } else if (stage === 'architecture' && outcome === 'PASS') {
+    session.currentStage = 'ui-design';
+  } else if (stage === 'ui-design' && outcome === 'PASS') {
+    session.currentStage = 'planning';
+  } else if (stage === 'planning' && outcome === 'PASS') {
+    session.currentStage = 'qa-planning';
+  } else if (stage === 'qa-planning' && outcome === 'PASS') {
+    session.currentStage = 'critical-review';
+  } else if (stage === 'critical-review' && outcome === 'PASS') {
     openGateOnSession(session, { gate: 'trd', kind: 'trd', taskId: null, doc: '.aiteam/docs/trd.html' });
+  } else if (stage === 'environment-readiness' && outcome === 'PASS') {
+    session.currentStage = 'implementation';
+    session.currentTaskId = session.taskLedger[0]?.id || null;
+  } else if (stage === 'implementation' && taskId) {
+    session.currentStage = outcome === 'PASS' ? 'code-review' : 'implementation';
+    session.currentTaskId = taskId;
+  } else if (stage === 'code-review' && taskId) {
+    session.currentStage = outcome === 'PASS' ? 'qa' : 'implementation';
+    session.currentTaskId = taskId;
   } else if (stage === 'qa') {
     const qt = (session.taskLedger || []).find((x) => x.id === taskId);
     if (qt && qt.status === 'qa-auto-passed') {
       openGateOnSession(session, { gate: 'qa', kind: 'qa-manual', taskId, questions: qaManualQuestions(taskId, result) });
+    } else if (taskId && outcome === 'FAIL') {
+      session.currentStage = 'implementation';
+      session.currentTaskId = taskId;
+    }
+  } else if (stage === 'integration' && taskId && outcome === 'PASS' && !allTasksDone) {
+    const nextTask = (session.taskLedger || []).find((t) => !isTaskIntegrated(t));
+    if (nextTask) {
+      session.currentStage = 'implementation';
+      session.currentTaskId = nextTask.id;
     }
   }
 
   session.activeRun = null;
+  syncActiveRunForSession(session, now);
   writeSession(repo, session);
 
   appendEvent(repo, {
@@ -435,10 +876,38 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
   return session;
 }
 
+export function parseTaskLedgerMarkdown(content) {
+  const tasks = [];
+  const taskBlocks = String(content || '').split(/^###\s+/m).slice(1);
+  for (const block of taskBlocks) {
+    const firstLine = block.split(/\r?\n/)[0].trim();
+    const idMatch = firstLine.match(/^\[?([A-Za-z0-9_-]+)\]?:\s*(.+)$/) || firstLine.match(/^([A-Za-z0-9_-]+)\s*-\s*(.+)$/);
+    const id = idMatch ? idMatch[1] : `T${tasks.length + 1}`;
+    const title = idMatch ? idMatch[2] : firstLine;
+
+    const acMatches = [...block.matchAll(/^\s*-\s*(?:\[[ xX]\]\s*)?(AC-\d+:?.+)$/gm)].map((m) => m[1].trim());
+    const bulletMatches = acMatches.length
+      ? acMatches
+      : [...block.matchAll(/^\s*-\s*(?:\[[ xX]\]\s*)?(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
+
+    tasks.push({
+      id,
+      title,
+      status: 'planned',
+      description: block.slice(0, 400).trim(),
+      acceptanceCriteria: bulletMatches.length ? bulletMatches : ['Pass all assigned unit and integration tests.']
+    });
+  }
+  return tasks;
+}
+
 export function updateTaskLedger(repo, tasks) {
   const session = readSession(repo);
   if (!session) throw new Error(`No active session found in ${repo}`);
   session.taskLedger = tasks;
+  if (!session.completedStages.includes('planning')) {
+    session.completedStages.push('planning');
+  }
   writeSession(repo, session);
   appendEvent(repo, { type: 'task_ledger_updated', taskCount: tasks.length });
   return session;
@@ -447,14 +916,58 @@ export function updateTaskLedger(repo, tasks) {
 export function writeActiveLog(repo, text, agentId = null) {
   ensureStateDir(repo);
   const session = readSession(repo);
-  const runId = session?.activeRun?.runId || `${new Date().toISOString().replace(/[:.]/g, '-')}-${agentId || 'active'}`;
-  
+  const now = new Date().toISOString();
+  const runId = session?.activeRun?.runId || `${now.replace(/[:.]/g, '-')}-${agentId || 'active'}`;
+
   const runsDir = path.join(stateDir(repo), 'runs');
   const logFile = path.join(runsDir, 'active.log');
   const runStderr = path.join(runsDir, `${runId}.stderr.txt`);
-  
-  fs.appendFileSync(logFile, text + '\n', 'utf8');
-  fs.appendFileSync(runStderr, text + '\n', 'utf8');
+
+  const formatted = /^\[\d{4}-\d{2}-\d{2}T/.test(String(text)) ? String(text) : `[${now}] ${text}`;
+  fs.appendFileSync(logFile, formatted + '\n', 'utf8');
+  fs.appendFileSync(runStderr, formatted + '\n', 'utf8');
+}
+
+export async function waitForApproval(repo, { gate, taskId = null, pollMs = 750, timeoutMs = 3600000 } = {}) {
+  let session = readSession(repo);
+  if (!session) throw new Error(`No active session found in ${repo}`);
+  if (!gate) {
+    gate = session.pendingUserInput?.gate || (session.currentStage === 'prd-review' ? 'prd' : session.currentStage === 'trd-review' ? 'trd' : 'qa');
+  }
+  if (!taskId && gate === 'qa') {
+    taskId = session.pendingUserInput?.taskId || session.currentTaskId || null;
+  }
+  const gateId = taskId ? `${gate}:${taskId}` : gate;
+
+  // If the gate isn't already decided and isn't currently open on pendingUserInput, open it so the Watcher UI displays the buttons
+  const existingApproval = session.approvals?.[gateId];
+  if (!existingApproval && (!session.pendingUserInput || session.pendingUserInput.gateId !== gateId || session.pendingUserInput.response !== null)) {
+    const doc = gate === 'prd' ? '.aiteam/docs/prd.html' : gate === 'trd' ? '.aiteam/docs/trd.html' : null;
+    openGate(repo, { gate, taskId, kind: gate === 'qa' ? 'qa-manual' : gate, doc });
+  }
+
+  writeActiveLog(
+    repo,
+    `⏸ Waiting for human decision on [${gateId.toUpperCase()}] gate in Watcher Dashboard Portal...`,
+    'coordinator'
+  );
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    session = readSession(repo);
+    const approval = session?.approvals?.[gateId];
+    if (approval && (approval.decision === 'APPROVED' || approval.decision === 'CHANGES_REQUESTED')) {
+      writeActiveLog(
+        repo,
+        `▶ Portal gate [${gateId.toUpperCase()}] decided: ${approval.decision}${approval.response ? ` (${approval.response})` : ''}`,
+        'coordinator'
+      );
+      return { session, approval };
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+
+  throw new Error(`AITEAM_WAIT_TIMEOUT: Timed out after ${Math.round(timeoutMs / 1000)}s waiting for human approval on gate "${gateId}".`);
 }
 
 // --- CLI Execution Interface ---
@@ -469,63 +982,100 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const repo = path.resolve(getArg('--repo', process.cwd()));
 
-  if (cmd === 'init') {
-    const request = getArg('--request', 'AITeam Managed Workflow');
-    const sess = initSession(repo, request);
-    console.log(JSON.stringify({ ok: true, sessionId: sess.id, status: sess.status }));
-  } else if (cmd === 'stage-start') {
-    const stage = getArg('--stage');
-    const taskId = getArg('--taskId');
-    const agentId = getArg('--agentId');
-    const role = getArg('--role');
-    const run = startStage(repo, stage, taskId, agentId, role);
-    console.log(JSON.stringify({ ok: true, run }));
-  } else if (cmd === 'stage-complete') {
-    const stage = getArg('--stage');
-    const taskId = getArg('--taskId');
-    const resultRaw = getArg('--result', '{}');
-    let result = {};
-    try { result = JSON.parse(resultRaw); } catch {}
-    const sess = completeStage(repo, stage, taskId, result);
-    console.log(JSON.stringify({ ok: true, stage, taskId, status: sess.status }));
-  } else if (cmd === 'request-approval') {
-    const gate = getArg('--gate');
-    const taskId = getArg('--taskId');
-    const kind = getArg('--kind');
-    const doc = getArg('--doc');
-    const stage = getArg('--stage');
-    let questions = null;
-    const qRaw = getArg('--questions');
-    if (qRaw) { try { questions = JSON.parse(qRaw); } catch {} }
-    const sess = openGate(repo, { gate, taskId, kind, doc, stage, questions });
-    console.log(JSON.stringify({ ok: true, gate, gateId: taskId ? `${gate}:${taskId}` : gate, status: 'AWAITING_APPROVAL' }));
-  } else if (cmd === 'record-approval') {
-    const gate = getArg('--gate');
-    const taskId = getArg('--taskId');
-    const decision = getArg('--decision');
-    const response = getArg('--response', '');
-    const approvedBy = getArg('--approvedBy', 'user');
-    const gateId = taskId ? `${gate}:${taskId}` : gate;
-    const sess = recordApproval(repo, { gate, taskId, decision, response, approvedBy });
-    console.log(JSON.stringify({ ok: true, gate, taskId, decision: sess.approvals[gateId]?.decision }));
-  } else if (cmd === 'log') {
-    const text = getArg('--text', '');
-    writeActiveLog(repo, text);
-    console.log(JSON.stringify({ ok: true }));
-  } else if (cmd === 'archive-doc') {
-    const doc = getArg('--doc');
-    if (!doc) {
-      console.error('Usage: state-bridge.mjs archive-doc --doc <relative-path> [--repo <repo>]');
+  (async () => {
+    try {
+      if (cmd === 'init') {
+        const request = getArg('--request', 'AITeam Managed Workflow');
+        const sess = initSession(repo, request);
+        console.log(JSON.stringify({ ok: true, sessionId: sess.id, status: sess.status }));
+      } else if (cmd === 'stage-start') {
+        const stage = getArg('--stage');
+        const taskId = getArg('--taskId');
+        const agentId = getArg('--agentId');
+        const role = getArg('--role');
+        const run = startStage(repo, stage, taskId, agentId, role);
+        console.log(JSON.stringify({ ok: true, run }));
+      } else if (cmd === 'stage-complete') {
+        const stage = getArg('--stage');
+        const taskId = getArg('--taskId');
+        const resultRaw = getArg('--result', '{}');
+        let result = {};
+        try { result = JSON.parse(resultRaw); } catch {}
+        const sess = completeStage(repo, stage, taskId, result);
+        console.log(JSON.stringify({ ok: true, stage, taskId, status: sess.status }));
+      } else if (cmd === 'update-ledger') {
+        const session = readSession(repo);
+        if (!session) throw new Error(`No active session found in ${repo}`);
+        enforceApprovals(session, 'planning', null);
+        const ledgerArg = getArg('--ledger', 'TASK_LEDGER.md');
+        const ledgerPath = path.isAbsolute(ledgerArg) ? ledgerArg : path.join(repo, ledgerArg);
+        if (!fs.existsSync(ledgerPath)) {
+          throw new Error(`AITEAM_ARTIFACT_MISSING: Ledger file "${ledgerArg}" does not exist.`);
+        }
+        const content = fs.readFileSync(ledgerPath, 'utf8');
+        const tasks = parseTaskLedgerMarkdown(content);
+        if (tasks.length === 0) {
+          throw new Error(`AITEAM_LEDGER_EMPTY: No tasks ("### T1: Title") found in "${ledgerArg}".`);
+        }
+        const sess = updateTaskLedger(repo, tasks);
+        console.log(JSON.stringify({ ok: true, taskCount: sess.taskLedger.length, tasks: sess.taskLedger.map((t) => t.id) }));
+      } else if (cmd === 'request-approval') {
+        const gate = getArg('--gate');
+        const taskId = getArg('--taskId');
+        const kind = getArg('--kind');
+        const doc = getArg('--doc');
+        const stage = getArg('--stage');
+        let questions = null;
+        const qRaw = getArg('--questions');
+        if (qRaw) { try { questions = JSON.parse(qRaw); } catch {} }
+        const sess = openGate(repo, { gate, taskId, kind, doc, stage, questions });
+        console.log(JSON.stringify({ ok: true, gate, gateId: taskId ? `${gate}:${taskId}` : gate, status: 'AWAITING_APPROVAL' }));
+      } else if (cmd === 'wait-approval') {
+        const gate = getArg('--gate');
+        const taskId = getArg('--taskId');
+        const timeoutMs = Number(getArg('--timeoutMs', '3600000'));
+        const pollMs = Number(getArg('--pollMs', '750'));
+        const { session, approval } = await waitForApproval(repo, { gate, taskId, pollMs, timeoutMs });
+        console.log(JSON.stringify({
+          ok: true,
+          gate: approval.gate,
+          taskId: approval.taskId,
+          decision: approval.decision,
+          response: approval.response || '',
+          currentStage: session.currentStage,
+          currentTaskId: session.currentTaskId
+        }));
+      } else if (cmd === 'record-approval') {
+        const gate = getArg('--gate');
+        const taskId = getArg('--taskId');
+        const decision = getArg('--decision');
+        const response = getArg('--response', '');
+        const approvedBy = getArg('--approvedBy', 'user');
+        const gateId = taskId ? `${gate}:${taskId}` : gate;
+        const sess = recordApproval(repo, { gate, taskId, decision, response, approvedBy, enforceDwell: true });
+        console.log(JSON.stringify({ ok: true, gate, taskId, decision: sess.approvals[gateId]?.decision }));
+      } else if (cmd === 'log') {
+        const text = getArg('--text', '');
+        writeActiveLog(repo, text);
+        console.log(JSON.stringify({ ok: true }));
+      } else if (cmd === 'archive-doc') {
+        const doc = getArg('--doc');
+        if (!doc) {
+          console.error('Usage: state-bridge.mjs archive-doc --doc <relative-path> [--repo <repo>]');
+          process.exit(1);
+        }
+        const archivedPath = archiveDocIfPresent(repo, doc);
+        console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
+      } else if (cmd === 'status') {
+        const sess = readSession(repo);
+        console.log(JSON.stringify(sess || { status: 'NO_SESSION' }, null, 2));
+      } else {
+        console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|update-ledger|request-approval|wait-approval|record-approval|archive-doc|log|status> [options]');
+        process.exit(1);
+      }
+    } catch (err) {
+      console.error(err.message);
       process.exit(1);
     }
-    const archivedPath = archiveDocIfPresent(repo, doc);
-    console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
-  } else if (cmd === 'status') {
-    const sess = readSession(repo);
-    console.log(JSON.stringify(sess || { status: 'NO_SESSION' }, null, 2));
-  } else {
-    console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|request-approval|record-approval|archive-doc|log|status> [options]');
-    process.exit(1);
-  }
+  })();
 }
-

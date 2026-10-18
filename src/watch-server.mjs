@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { recordApproval, writeActiveLog } from '../skill/lib/state-bridge.mjs';
+import { recordApproval, writeActiveLog, DEFAULT_PHASE_PLAN, ROLE_FOR_STAGE } from '../skill/lib/state-bridge.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const dashboardPath = path.join(ROOT, 'watch-dashboard.html');
@@ -68,18 +69,136 @@ function tailEvents(file, repo, limit = 80) {
   }
 }
 
+function tailQwenLiveTranscript(repo, minTimeMs) {
+  try {
+    const escapedRepo = path.resolve(repo).replace(/[^a-zA-Z0-9]/g, '-');
+    const chatDir = path.join(os.homedir(), '.qwen', 'projects', escapedRepo, 'chats');
+    if (!fs.existsSync(chatDir)) return [];
+    const files = fs
+      .readdirSync(chatDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => {
+        const full = path.join(chatDir, f);
+        const st = fs.statSync(full);
+        return { full, mtimeMs: st.mtimeMs, size: st.size };
+      })
+      .filter((x) => !Number.isFinite(minTimeMs) || x.mtimeMs >= minTimeMs)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (!files.length) return [];
+
+    const latest = files[0];
+    const readSize = Math.min(latest.size, 131072);
+    if (readSize <= 0) return [];
+    const fd = fs.openSync(latest.full, 'r');
+    const buf = Buffer.alloc(readSize);
+    fs.readSync(fd, buf, 0, readSize, latest.size - readSize);
+    fs.closeSync(fd);
+
+    const rawLines = buf.toString('utf8').split(/\r?\n/);
+    const linesToParse = latest.size > readSize ? rawLines.slice(1) : rawLines;
+    const entries = [];
+    const repoPrefix = path.resolve(repo) + path.sep;
+
+    for (const line of linesToParse) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line);
+        const ts = d.timestamp || '';
+        const t = Date.parse(ts);
+        if (Number.isFinite(minTimeMs) && (!Number.isFinite(t) || t < minTimeMs)) continue;
+        const parts = d?.message?.parts || [];
+        if (!Array.isArray(parts)) continue;
+        for (const p of parts) {
+          if (p.thought && p.text) {
+            const clean = String(p.text).replace(/\s+/g, ' ').trim().slice(0, 145);
+            if (clean) entries.push({ t: Number.isFinite(t) ? t : 0, text: `[${ts}] 💭 ${clean}` });
+          } else if (p.text && d.type === 'assistant') {
+            const clean = String(p.text).replace(/\s+/g, ' ').trim().slice(0, 145);
+            if (clean) entries.push({ t: Number.isFinite(t) ? t : 0, text: `[${ts}] 💬 ${clean}` });
+          } else if (p.functionCall) {
+            const fc = p.functionCall;
+            const name = fc.name || 'tool';
+            const args = fc.args || {};
+            let icon = '🔧';
+            let detail = '';
+            if (name === 'read_file' || name === 'view_file') {
+              icon = '📖';
+              detail = String(args.file_path || args.AbsolutePath || '').replace(repoPrefix, '');
+            } else if (name === 'write_file' || name === 'write_to_file') {
+              icon = '✍️';
+              detail = String(args.file_path || args.TargetFile || '').replace(repoPrefix, '');
+            } else if (name === 'edit' || name === 'edit_file' || name === 'replace_file_content') {
+              icon = '🛠️';
+              detail = String(args.file_path || args.TargetFile || '').replace(repoPrefix, '');
+            } else if (name === 'grep_search' || name === 'glob') {
+              icon = '🔍';
+              const target = String(args.path || '').replace(repoPrefix, '');
+              detail = `${args.pattern || ''}${target ? ` in ${target}` : ''}`;
+            } else if (name === 'run_shell_command' || name === 'bash') {
+              icon = '💻';
+              detail = String(args.command || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+            } else if (args.arguments && typeof args.arguments === 'object') {
+              icon = '⚙️';
+              const a = args.arguments;
+              detail = `${a.action || ''}${a.stage ? ` [${a.stage}]` : ''}${a.gate ? ` (${a.gate})` : ''}${a.summary ? ` — ${String(a.summary).slice(0, 80)}` : ''}`.trim() || JSON.stringify(a).slice(0, 100);
+            } else {
+              detail = JSON.stringify(args).slice(0, 100);
+            }
+            entries.push({ t: Number.isFinite(t) ? t : 0, text: `[${ts}] ${icon} ${name}: ${detail}` });
+          }
+        }
+      } catch {}
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
 function snapshot(repo) {
   const sessionPath = path.join(repo, '.aiteam', 'session.json');
   const protectedSessionPath = path.join(repo, '.git', 'aiteam', 'session.json');
   const eventPath = path.join(repo, '.aiteam', 'events.jsonl');
   const protectedEventPath = path.join(repo, '.git', 'aiteam', 'events.jsonl');
   const session = readJson(sessionPath) || readJson(protectedSessionPath);
-  const events = tailEvents(eventPath, repo).length ? tailEvents(eventPath, repo) : tailEvents(protectedEventPath, repo);
+  if (session && Array.isArray(session.phasePlan)) {
+    const trdIdx = session.phasePlan.indexOf('trd-review');
+    const critIdx = session.phasePlan.indexOf('critical-review');
+    if (trdIdx !== -1 && critIdx !== -1 && trdIdx < critIdx) {
+      session.phasePlan = [...DEFAULT_PHASE_PLAN];
+    }
+  }
+  const allEvents = tailEvents(eventPath, repo).length ? tailEvents(eventPath, repo) : tailEvents(protectedEventPath, repo);
+  const sessionCreatedAt = session?.createdAt ? Date.parse(session.createdAt) : NaN;
+  const minSessionTime = Number.isFinite(sessionCreatedAt) ? sessionCreatedAt - 5000 : NaN;
+  const sessionScopedEvents = Number.isFinite(minSessionTime)
+    ? allEvents.filter((e) => !e.at || Date.parse(e.at) >= minSessionTime)
+    : allEvents;
+  const events = sessionScopedEvents.length ? sessionScopedEvents : allEvents;
   const lastEvent = events.at(-1) || null;
-  const activeRun = session?.activeRun || null;
+
+  let activeRun = session?.activeRun || null;
+  if (!activeRun && session?.status === 'ACTIVE' && session?.currentStage) {
+    const stage = session.currentStage;
+    const isGateStage = stage === 'prd-review' || stage === 'trd-review' || stage === 'qa-manual';
+    const hasOpenGate = Boolean(session.pendingUserInput && session.pendingUserInput.response == null);
+    if (!isGateStage && !hasOpenGate) {
+      const role = ROLE_FOR_STAGE[stage] || stage;
+      const stageEvents = events.filter((e) => e.stage === stage);
+      const inferredStart = stageEvents.at(-1)?.at || session.updatedAt || session.createdAt;
+      activeRun = {
+        runId: `active-${stage}`,
+        stage,
+        taskId: session.currentTaskId ?? null,
+        agentId: role.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        role,
+        startedAt: inferredStart
+      };
+    }
+  }
+
   const startedAt = activeRun?.startedAt ? Date.parse(activeRun.startedAt) : NaN;
   const activeRunElapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
-  const sessionCreatedAt = session?.createdAt ? Date.parse(session.createdAt) : NaN;
   const isTerminalSession = session?.status === 'COMPLETE' || session?.status === 'CANCELLED';
   const sessionEndTime = isTerminalSession && (session?.completedAt || session?.updatedAt)
     ? Date.parse(session.completedAt || session.updatedAt)
@@ -88,18 +207,50 @@ function snapshot(repo) {
   const evidence = Object.values(session?.stageEvidence || {}).filter((item) => item?.result).sort((a, b) => Date.parse(a.completedAt || 0) - Date.parse(b.completedAt || 0));
   const stageResult = evidence.at(-1)?.result || null;
   const packageJson = readJson(path.join(ROOT, '..', 'package.json'));
-  
+
   let activeLogTail = null;
   const runsDir = path.join(repo, '.aiteam', 'runs');
   const activeLogPath = path.join(runsDir, 'active.log');
   try {
+    const mergedEntries = [];
     if (fs.existsSync(activeLogPath)) {
       const activeLogContent = fs.readFileSync(activeLogPath, 'utf8').trim();
       if (activeLogContent) {
         const lines = activeLogContent.split(/\r?\n/).filter(Boolean);
-        activeLogTail = lines.slice(-25).join('\n').trim();
+        let lastSeenTime = 0;
+        let sawAnyTimestamp = false;
+        const fileMtime = fs.statSync(activeLogPath).mtimeMs;
+        for (const line of lines) {
+          const m = line.match(/^\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/);
+          if (m) {
+            sawAnyTimestamp = true;
+            const lt = Date.parse(m[1]);
+            if (Number.isFinite(lt)) lastSeenTime = lt;
+            if (Number.isFinite(minSessionTime) && Number.isFinite(lt) && lt < minSessionTime) {
+              continue; // skip stale lines from prior sessions/milestones
+            }
+            mergedEntries.push({ t: lastSeenTime, text: line });
+          } else {
+            const effectiveTime = sawAnyTimestamp ? lastSeenTime : fileMtime;
+            if (Number.isFinite(minSessionTime) && effectiveTime < minSessionTime) {
+              continue;
+            }
+            mergedEntries.push({ t: effectiveTime, text: line });
+          }
+        }
       }
     }
+
+    const qwenEntries = tailQwenLiveTranscript(repo, minSessionTime);
+    if (qwenEntries.length) {
+      mergedEntries.push(...qwenEntries);
+    }
+
+    if (mergedEntries.length) {
+      mergedEntries.sort((a, b) => a.t - b.t);
+      activeLogTail = mergedEntries.slice(-25).map((e) => e.text).join('\n').trim();
+    }
+
     if (!activeLogTail && fs.existsSync(runsDir)) {
       const outputFiles = fs.readdirSync(runsDir).filter((file) => /\.(?:stdout|stderr)\.txt$/.test(file));
       const matchingFiles = activeRun
@@ -136,7 +287,6 @@ function snapshot(repo) {
       }
     }
     if (!activeLogTail && events.length) {
-      // If no file log tail exists yet, provide real-time event activity
       const recent = events.slice(-8).reverse();
       const eventLines = recent.map((e) => {
         const time = e.at ? new Date(e.at).toLocaleTimeString() : '';

@@ -7,6 +7,7 @@ Under the hood, delegates to the node state-bridge and mcp-server logic.
 import sys
 import json
 import subprocess
+from typing import List, Optional, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("aiteam")
@@ -49,9 +50,14 @@ def aiteam_advance(
     summary: str = "",
     taskId: str = "",
     ledger: str = "",
+    filesChanged: Optional[List[str]] = None,
+    evidence: Optional[List[str]] = None,
+    findings: Optional[List[Dict[str, Any]]] = None,
+    checks: Optional[List[Dict[str, Any]]] = None,
+    commitMessage: str = "",
     repository: str = ""
 ) -> str:
-    """Transition the workflow gate, report stage/task completion, and receive prescriptive instructions for the next required action."""
+    """Transition the workflow gate, report stage/task completion, validate artifacts/tests/fingerprints, and receive prescriptive instructions for the next required action."""
     args = {
         "stage": stage,
         "action": action,
@@ -59,13 +65,27 @@ def aiteam_advance(
         "summary": summary,
         "taskId": taskId,
         "ledger": ledger,
+        "filesChanged": filesChanged or [],
+        "evidence": evidence or [],
+        "findings": findings or [],
+        "checks": checks or [],
+        "commitMessage": commitMessage,
         "repository": repository
     }
     return call_node("aiteam_advance", args)
 
 @mcp.tool()
+def aiteam_wait_for_approval(gate: str, taskId: str = "", repository: str = "") -> str:
+    """Block and wait until the human user clicks 'Approve Gate' or 'Request Changes' in the Watcher Dashboard Portal for an open PRD, TRD, or per-task QA gate, then automatically return the next directive."""
+    return call_node("aiteam_wait_for_approval", {
+        "gate": gate,
+        "taskId": taskId,
+        "repository": repository
+    })
+
+@mcp.tool()
 def aiteam_record_approval(gate: str, decision: str, taskId: str = "", response: str = "", repository: str = "") -> str:
-    """Record human approval or change requests for PRD, TRD, or per-task QA gates."""
+    """Record human approval or change requests for PRD, TRD, or per-task QA gates ONLY after the human user replies in chat."""
     return call_node("aiteam_record_approval", {
         "gate": gate,
         "decision": decision,
