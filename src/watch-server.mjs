@@ -248,7 +248,7 @@ function snapshot(repo) {
 
     if (mergedEntries.length) {
       mergedEntries.sort((a, b) => a.t - b.t);
-      activeLogTail = mergedEntries.slice(-25).map((e) => e.text).join('\n').trim();
+      activeLogTail = mergedEntries.slice(-80).map((e) => e.text).join('\n').trim();
     }
 
     if (!activeLogTail && fs.existsSync(runsDir)) {

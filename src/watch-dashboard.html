@@ -56,6 +56,7 @@
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const formatDuration = (seconds) => seconds == null ? '—' : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2,'0')}s`;
+  let isExpanded = false;
   
   const md = (text) => esc(text)
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -228,19 +229,24 @@
     const questions = session?.pendingUserInput?.response == null ? (session?.pendingUserInput?.questions || []) : [];
     $('questionsPanel').hidden = questions.length === 0;
     const pendingGate = session?.pendingUserInput?.response == null ? session?.pendingUserInput : null;
-    let questionsContent = questions.map((question) => `<li>${md(question)}</li>`).join('');
-    if (pendingGate) {
-      const gName = (pendingGate.gate || 'gate').toUpperCase();
-      const gDoc = pendingGate.doc ? ` for <code>${esc(pendingGate.doc)}</code>` : '';
-      questionsContent += `<div style="margin-top:14px; padding:12px; background:rgba(87,230,237,0.06); border:1px solid rgba(87,230,237,0.25); border-radius:6px;">` +
-        `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">Decide ${gName} Gate${gDoc}:</div>` +
-        `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
-        `<input type="text" id="gateNoteInput" placeholder="Optional notes or feedback..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
-        `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'approved')" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Approve Gate</button>` +
-        `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'changes_requested')" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Request Changes</button>` +
-        `</div><div id="gateDecisionMsg" style="font-size:12px; margin-top:6px;"></div></div>`;
+    const pendingGateKey = pendingGate ? `${pendingGate.gateId || pendingGate.gate}:${questions.join('|')}` : '';
+    if ($('questions').getAttribute('data-gate-key') !== pendingGateKey) {
+      const savedGateNote = $('gateNoteInput')?.value || '';
+      let questionsContent = questions.map((question) => `<li>${md(question)}</li>`).join('');
+      if (pendingGate) {
+        const gName = (pendingGate.gate || 'gate').toUpperCase();
+        const gDoc = pendingGate.doc ? ` for <code>${esc(pendingGate.doc)}</code>` : '';
+        questionsContent += `<div style="margin-top:14px; padding:12px; background:rgba(87,230,237,0.06); border:1px solid rgba(87,230,237,0.25); border-radius:6px;">` +
+          `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">Decide ${gName} Gate${gDoc}:</div>` +
+          `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
+          `<input type="text" id="gateNoteInput" value="${esc(savedGateNote)}" placeholder="Optional notes or feedback..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
+          `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'approved')" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Approve Gate</button>` +
+          `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'changes_requested')" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Request Changes</button>` +
+          `</div><div id="gateDecisionMsg" style="font-size:12px; margin-top:6px;"></div></div>`;
+      }
+      $('questions').innerHTML = questionsContent;
+      $('questions').setAttribute('data-gate-key', pendingGateKey);
     }
-    $('questions').innerHTML = questionsContent;
 
     const liveLogEl = $('liveLog');
     const isManualPending = session?.pendingUserInput?.response == null && session?.pendingUserInput?.kind === 'qa-manual';
@@ -252,16 +258,21 @@
       liveLogEl.style.height = 'auto';
       liveLogEl.style.borderColor = 'var(--amber)';
       liveLogEl.style.background = 'rgba(255, 209, 102, 0.08)';
-      liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
-        `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
-        `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
-        `<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
-        `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision & Feedback:</div>` +
-        `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
-        `<input type="text" id="manualQaNote" placeholder="Verification notes (e.g. All manual checks confirmed)..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:220px; font-family:inherit; font-size:13px;">` +
-        `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'approved', $('manualQaNote')?.value)" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Pass & Approve</button>` +
-        `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'changes_requested', $('manualQaNote')?.value)" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Fail / Request Rework</button>` +
-        `</div></div></div>`;
+      const manualKey = `manual:${session.pendingUserInput.gateId || ''}:${(session.pendingUserInput.questions || []).join('|')}`;
+      if (liveLogEl.getAttribute('data-mode-key') !== manualKey) {
+        const savedManualNote = $('manualQaNote')?.value || '';
+        liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
+          `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
+          `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
+          `<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
+          `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision & Feedback:</div>` +
+          `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
+          `<input type="text" id="manualQaNote" value="${esc(savedManualNote)}" placeholder="Verification notes (e.g. All manual checks confirmed)..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:220px; font-family:inherit; font-size:13px;">` +
+          `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'approved', $('manualQaNote')?.value)" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Pass & Approve</button>` +
+          `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'changes_requested', $('manualQaNote')?.value)" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Fail / Request Rework</button>` +
+          `</div></div></div>`;
+        liveLogEl.setAttribute('data-mode-key', manualKey);
+      }
     } else if (data.activeLogTail) {
       $('liveActivityPanel').hidden = false;
       $('liveAgentTag').style.color = 'var(--amber)';
@@ -270,13 +281,22 @@
       } else {
         $('liveAgentTag').textContent = `[idle · waiting for next gate]`;
       }
-      liveLogEl.style.height = '110px';
+      liveLogEl.style.height = isExpanded ? '80vh' : '110px';
+      if ($('expandBtn')) {
+        $('expandBtn').textContent = isExpanded ? 'Collapse' : '⛶ Expand';
+      }
       liveLogEl.style.borderColor = 'rgba(255,209,102,0.25)';
       liveLogEl.style.background = '#0c0814';
-      const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= liveLogEl.scrollTop + 50;
-      liveLogEl.textContent = data.activeLogTail;
-      if (isScrolledToBottom) {
-        liveLogEl.scrollTop = liveLogEl.scrollHeight;
+      liveLogEl.removeAttribute('data-mode-key');
+      const prevScroll = liveLogEl.scrollTop;
+      const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= prevScroll + 50;
+      if (liveLogEl.textContent !== data.activeLogTail) {
+        liveLogEl.textContent = data.activeLogTail;
+        if (isScrolledToBottom) {
+          liveLogEl.scrollTop = liveLogEl.scrollHeight;
+        } else {
+          liveLogEl.scrollTop = prevScroll;
+        }
       }
     } else {
       $('liveActivityPanel').hidden = true;
@@ -337,7 +357,6 @@
     $('refresh').textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every 1.5s`;
   }
 
-  let isExpanded = false;
   function toggleExpandLive() {
     isExpanded = !isExpanded;
     const logEl = $('liveLog');
