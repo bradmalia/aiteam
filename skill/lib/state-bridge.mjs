@@ -230,15 +230,45 @@ function hasQaTestFiles(repo) {
   return false;
 }
 
+function isRedundantIntakeApprovalQuestion(question) {
+  const asksForApproval = /\b(?:approve|confirm|sign[\s-]?off)\b/i.test(question);
+  const targetsWholeArtifact = /\b(?:prd|product requirements document|requirements artifact|final(?:ized)? requirements|complete requirements|all requirements|requirements and acceptance criteria|everything)\b/i.test(question);
+  return asksForApproval && targetsWholeArtifact;
+}
+
 /**
  * Validates that required disk artifacts and structured evidence exist before
- * allowing a stage to complete with PASS.
+ * allowing a stage to complete with PASS (or AWAITING_USER for intake).
  */
 function validateStageCompletion(repo, session, stage, taskId, result) {
   const outcome = result.outcome || 'PASS';
+
+  if (stage === 'intake' && outcome === 'AWAITING_USER') {
+    const rawQuestions = Array.isArray(result.questions) ? result.questions : [];
+    const cleanQuestions = rawQuestions
+      .map((q) => (typeof q === 'string' ? q.trim() : typeof q?.question === 'string' ? q.question.trim() : ''))
+      .filter(Boolean);
+    if (cleanQuestions.length === 0) {
+      throw new Error(
+        `AITEAM_INTAKE_QUESTIONS_EMPTY: Cannot return outcome "AWAITING_USER" in stage "intake" without a non-empty "questions" array of concrete clarifying questions.`
+      );
+    }
+    if (cleanQuestions.some(isRedundantIntakeApprovalQuestion)) {
+      throw new Error(
+        `AITEAM_INTAKE_INVALID_QUESTION: Do not ask for generic PRD approval during the intake interview. Ask concrete product, UX, scope, or edge-case clarifying questions.`
+      );
+    }
+    return;
+  }
+
   if (outcome !== 'PASS' && outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
 
   if (stage === 'intake') {
+    if (!session.intakeClarified) {
+      throw new Error(
+        `AITEAM_INTAKE_INTERVIEW_REQUIRED: Cannot complete stage "intake" with PASS before asking the user clarifying questions! First inspect the repository, formulate 3-5 concrete product/UX/scope clarifying questions (each with a recommended default), and call aiteam_advance with stage="intake", outcome="AWAITING_USER", and questions=[...]. Wait for the user's answers before generating .aiteam/docs/prd.html and completing intake with PASS.`
+      );
+    }
     const prdPath = path.join(docsDir(repo), 'prd.html');
     if (!fs.existsSync(prdPath) || fs.statSync(prdPath).size === 0) {
       throw new Error(
@@ -383,7 +413,24 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
   }
 
   const reviewStage = GATE_STAGE_FOR_GATE[gate];
-  if (gate === 'qa' && taskId) {
+  if (gate === 'intake') {
+    if (approved) {
+      session.intakeClarified = true;
+      session.intakeAnswers = response || 'Use recommended defaults for any unanswered questions.';
+      if (!Array.isArray(session.intakeHistory)) session.intakeHistory = [];
+      session.intakeHistory.push({
+        questions: session.intakeQuestions || session.pendingUserInput?.questions || [],
+        answers: session.intakeAnswers,
+        approvedBy,
+        at: now
+      });
+      session.currentStage = 'intake';
+    } else {
+      session.intakeClarified = false;
+      session.intakeFeedback = response || '';
+      session.currentStage = 'intake';
+    }
+  } else if (gate === 'qa' && taskId) {
     // Human sign-off is what promotes an auto-passed QA result to a real pass.
     session.taskLedger = (session.taskLedger || []).map((t) => {
       if (t.id !== taskId) return t;
@@ -804,7 +851,7 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     result
   };
 
-  if (!session.completedStages.includes(stage)) {
+  if (outcome !== 'AWAITING_USER' && !session.completedStages.includes(stage)) {
     session.completedStages.push(stage);
   }
 
@@ -821,8 +868,21 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     session.completedAt = now;
   }
 
-  // Advance through the 9-stage setup pipeline and open human-approval gates at prd-review, trd-review, and qa-manual
-  if (stage === 'intake' && outcome === 'PASS') {
+  // Advance through the 9-stage setup pipeline and open human-approval gates at intake (clarification), prd-review, trd-review, and qa-manual
+  if (stage === 'intake' && outcome === 'AWAITING_USER') {
+    const cleanQuestions = (result.questions || [])
+      .map((q) => (typeof q === 'string' ? q.trim() : typeof q?.question === 'string' ? q.question.trim() : ''))
+      .filter(Boolean);
+    session.intakeQuestions = cleanQuestions;
+    openGateOnSession(session, {
+      gate: 'intake',
+      kind: 'intake',
+      stage: 'intake',
+      taskId: null,
+      doc: null,
+      questions: cleanQuestions
+    });
+  } else if (stage === 'intake' && outcome === 'PASS') {
     openGateOnSession(session, { gate: 'prd', kind: 'prd', taskId: null, doc: '.aiteam/docs/prd.html' });
   } else if (stage === 'architecture' && outcome === 'PASS') {
     session.currentStage = 'ui-design';

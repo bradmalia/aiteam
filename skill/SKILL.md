@@ -84,14 +84,23 @@ When asked to build or maintain a project using AITeam:
 
 ## 2. Core Workflow Stages
 
-### Stage 1: Analyst Intake & PRD (`skill/contracts/analyst.md`)
+### Stage 1: Analyst Intake Interview & PRD (`skill/contracts/analyst.md`)
 - **Brownfield Safety**: If `.aiteam/docs/prd.html` already exists from a prior milestone, `stage-start --stage intake` automatically archives it into `.aiteam/docs/archive/prd-<timestamp>.html`.
-- Collect requirements and write `.aiteam/docs/prd.html` following `/home/brad/aiteam/skill/contracts/analyst.md`.
-- Record completion (throws `AITEAM_ARTIFACT_MISSING` if `.aiteam/docs/prd.html` is missing):
-  ```bash
-  node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"PASS","summary":"PRD drafted"}'
-  ```
-- **🛑 PRD GATE (hard stop):** Present `.aiteam/docs/prd.html` to the user and **end your turn**. Wait for their approval in the Watcher Portal or chat.
+- **Step 1 — Mandatory Clarifying Interview (`outcome: "AWAITING_USER"`)**:
+  - Inspect the repository first, then formulate 3–5 concrete clarifying questions (each with a `(Recommended default: ...)`).
+  - The state engine **blocks** `intake` `PASS` (`AITEAM_INTAKE_INTERVIEW_REQUIRED`) until clarifying questions have been asked and answered.
+  - Submit the questions and wait for the user's answers in the Watcher Portal (or chat):
+    ```bash
+    node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"AWAITING_USER","summary":"Clarifying questions","questions":["1. ... (Recommended default: ...)","2. ... (Recommended default: ...)"]}'
+    node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "$PWD" --gate intake
+    ```
+- **Step 2 — Draft `.aiteam/docs/prd.html` (`outcome: "PASS"`)**:
+  - Incorporate the user's answers into `.aiteam/docs/prd.html` (including a *Clarifications & Product Decisions* section) following `/home/brad/aiteam/skill/contracts/analyst.md`.
+  - Record completion (throws `AITEAM_ARTIFACT_MISSING` if `.aiteam/docs/prd.html` is missing):
+    ```bash
+    node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"PASS","summary":"PRD drafted incorporating user clarifications"}'
+    ```
+- **🛑 PRD GATE (hard stop):** Call `wait-approval --gate prd` (or `aiteam_wait_for_approval(gate="prd")`) to wait for the user's PRD approval in the Watcher Portal.
 
 ### Stage 2: Architecture & Technical Design (`skill/contracts/architect.md`)
 - **Brownfield Safety**: If `.aiteam/docs/trd.html` already exists, `stage-start --stage architecture` automatically archives it into `.aiteam/docs/archive/trd-<timestamp>.html`.

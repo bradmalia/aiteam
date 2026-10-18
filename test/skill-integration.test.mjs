@@ -305,10 +305,26 @@ test('AITeam Skill: PRD/TRD gates hard-block downstream stages until approved', 
   try {
     initSession(tmpRepo, 'gate enforcement test');
 
-    // Write PRD artifact and complete intake -> auto-opens the PRD approval gate.
+    // Trying to complete intake with PASS before asking clarifying questions is blocked
     fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'docs', 'prd.html'), '<h1>PRD</h1>');
-    completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD drafted' });
+    assert.throws(
+      () => completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD drafted' }),
+      /AITEAM_INTAKE_INTERVIEW_REQUIRED/
+    );
+
+    // Ask clarifying questions first (AWAITING_USER), then record user answers
+    completeStage(tmpRepo, 'intake', null, {
+      outcome: 'AWAITING_USER',
+      summary: 'Clarifying questions',
+      questions: ['1. Should it work offline? (Recommended default: Yes)']
+    });
     let s = readSession(tmpRepo);
+    assert.equal(s.pendingUserInput?.gate, 'intake');
+    recordApproval(tmpRepo, { gate: 'intake', decision: 'approved', response: 'Q1: Yes, offline supported' });
+
+    // Now complete intake with PASS -> auto-opens the PRD approval gate.
+    completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD drafted' });
+    s = readSession(tmpRepo);
     assert.equal(s.pendingUserInput?.gate, 'prd');
     assert.equal(s.pendingUserInput?.response, null);
 
@@ -356,7 +372,13 @@ test('AITeam Skill: Brownfield projects automatically archive existing PRD/TRD d
     assert.equal(archivedPrds.length, 1);
     assert.equal(fs.readFileSync(path.join(archiveDir, archivedPrds[0]), 'utf8'), '<h1>PRD v1</h1>');
 
-    // Approve PRD and start architecture
+    // Ask intake question, answer, approve PRD and start architecture
+    completeStage(tmpRepo, 'intake', null, {
+      outcome: 'AWAITING_USER',
+      summary: 'Clarifying questions',
+      questions: ['1. Target viewport sizes? (Recommended default: 320px-1440px)']
+    });
+    recordApproval(tmpRepo, { gate: 'intake', decision: 'approved', response: 'Q1: 320px-1440px' });
     completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD v2 drafted' });
     recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'PRD v2 approved' });
     

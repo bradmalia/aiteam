@@ -17,7 +17,45 @@ test('AITeam Pure State MCP: full 9-stage setup pipeline and 4-gate task loop wi
     assert.equal(startRes.directive.stage, 'intake');
     assert.equal(startRes.directive.status, 'ACTIVE');
 
-    // 2a. Trying to complete intake without .aiteam/docs/prd.html throws AITEAM_ARTIFACT_MISSING
+    // 2a. Trying to complete intake with PASS before asking clarifying questions throws AITEAM_INTAKE_INTERVIEW_REQUIRED
+    await assert.rejects(
+      async () => {
+        await handleToolCall('aiteam_advance', {
+          repository: tmpDir,
+          stage: 'intake',
+          action: 'complete',
+          outcome: 'PASS',
+          summary: 'Tried skipping clarifying questions'
+        });
+      },
+      /AITEAM_INTAKE_INTERVIEW_REQUIRED/
+    );
+
+    // 2b. Submit clarifying questions (outcome: AWAITING_USER) -> opens intake gate
+    const interviewRes = await handleToolCall('aiteam_advance', {
+      repository: tmpDir,
+      stage: 'intake',
+      action: 'complete',
+      outcome: 'AWAITING_USER',
+      summary: 'Identified clarifying questions',
+      questions: [
+        '1. Should the floating menu collapse on mobile? (Recommended default: Yes, below 640px)',
+        '2. What zoom range should pinch-to-zoom support? (Recommended default: 0.5x to 2.5x)'
+      ]
+    });
+    assert.equal(interviewRes.directive.status, 'GATE_BLOCKED');
+    assert.equal(interviewRes.directive.gate, 'intake');
+    assert.equal(interviewRes.directive.questions.length, 2);
+
+    // 2c. User answers the intake questions
+    await handleToolCall('aiteam_record_approval', {
+      repository: tmpDir,
+      gate: 'intake',
+      decision: 'approved',
+      response: 'Q1: Yes, collapse below 640px | Q2: 0.5x to 2.5x'
+    });
+
+    // 2d. Trying to complete intake with PASS without .aiteam/docs/prd.html throws AITEAM_ARTIFACT_MISSING
     await assert.rejects(
       async () => {
         await handleToolCall('aiteam_advance', {
@@ -31,7 +69,7 @@ test('AITeam Pure State MCP: full 9-stage setup pipeline and 4-gate task loop wi
       /AITEAM_ARTIFACT_MISSING/
     );
 
-    // 2b. Write prd.html and complete intake -> opens PRD gate
+    // 2e. Write prd.html and complete intake -> opens PRD gate
     fs.writeFileSync(path.join(tmpDir, '.aiteam', 'docs', 'prd.html'), '<h1>PRD</h1>');
     const intakeRes = await handleToolCall('aiteam_advance', {
       repository: tmpDir,

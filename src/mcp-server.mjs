@@ -100,11 +100,13 @@ function getDirective(session, repo) {
     };
   }
 
-  // Check if a human approval gate is open and pending
+  // Check if a human approval or intake clarification gate is open and pending
   const pending = session.pendingUserInput;
   if (pending && !pending.response) {
     const taskArg = pending.taskId ? `, taskId="${pending.taskId}"` : '';
     const cliTaskArg = pending.taskId ? ` --taskId "${pending.taskId}"` : '';
+    const isIntakeGate = pending.gate === 'intake';
+    const formattedQuestions = (pending.questions || []).map((q, i) => `  ${i + 1}. ${q}`).join('\n');
     return {
       status: 'GATE_BLOCKED',
       gate: pending.gate,
@@ -112,7 +114,9 @@ function getDirective(session, repo) {
       doc: pending.doc || null,
       taskId: pending.taskId || null,
       questions: pending.questions || [],
-      instruction: `🛑 GATE OPEN (${pending.gate.toUpperCase()}). Present ${pending.doc || 'the QA verification checklist'} briefly to the user, then IMMEDIATELY wait for the Watcher Portal click by calling aiteam_wait_for_approval(gate="${pending.gate}"${taskArg}) (or if that tool is not in your schema, run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate ${pending.gate}${cliTaskArg} && call aiteam_status). It will block and automatically resume the moment the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`,
+      instruction: isIntakeGate
+        ? `🛑 INTAKE CLARIFYING INTERVIEW OPEN. Present these clarifying questions clearly to the user in chat:\n${formattedQuestions}\nThen IMMEDIATELY wait for the user's answers in the Watcher Dashboard Portal by calling aiteam_wait_for_approval(gate="intake") (or run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate intake && call aiteam_status). If the user replies in chat instead, record their answers via aiteam_record_approval(gate="intake", decision="approved", response="<user's answers>").`
+        : `🛑 GATE OPEN (${pending.gate.toUpperCase()}). Present ${pending.doc || 'the QA verification checklist'} briefly to the user, then IMMEDIATELY wait for the Watcher Portal click by calling aiteam_wait_for_approval(gate="${pending.gate}"${taskArg}) (or if that tool is not in your schema, run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate ${pending.gate}${cliTaskArg} && call aiteam_status). It will block and automatically resume the moment the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`,
       nextTool: 'aiteam_wait_for_approval'
     };
   }
@@ -130,13 +134,19 @@ function getDirective(session, repo) {
   // Setup stages before task loop (exact 9-stage Gate Progress order)
   if (activeStage === 'intake') {
     const prdFeedback = session.approvals?.prd?.decision === 'CHANGES_REQUESTED' ? session.approvals.prd.response : null;
+    let instruction;
+    if (prdFeedback) {
+      instruction = `User requested changes on the PRD: "${prdFeedback}". Revise .aiteam/docs/prd.html accordingly, then call aiteam_advance with stage="intake", outcome="PASS", and summary.`;
+    } else if (!session.intakeClarified) {
+      instruction = 'STEP 1 OF 2 (MANDATORY INTAKE CLARIFYING INTERVIEW): Inspect the repository first so your questions are grounded in the existing codebase, then formulate 3-5 concrete, high-impact clarifying questions covering ambiguous scope, user flows, edge cases, or visual/UX behavior (include a recommended default in parentheses for each question). Do NOT write .aiteam/docs/prd.html yet — the state engine rejects intake PASS until clarifying questions are asked and answered. Call aiteam_advance with stage="intake", outcome="AWAITING_USER", questions=["1. ...", "2. ..."], and summary.';
+    } else {
+      instruction = `STEP 2 OF 2 (AUTHOR PRD FROM USER ANSWERS): The user answered the intake clarifying questions: "${session.intakeAnswers || 'Use recommended defaults'}". Incorporate all user answers into a comprehensive Product Requirements Document at .aiteam/docs/prd.html following skill/contracts/analyst.md (including a "Clarifications & Product Decisions" table). When .aiteam/docs/prd.html is written on disk, call aiteam_advance with stage="intake", outcome="PASS", and summary.`;
+    }
     return {
       status: 'ACTIVE',
       stage: 'intake',
       role: 'analyst',
-      instruction: prdFeedback
-        ? `User requested changes on the PRD: "${prdFeedback}". Revise .aiteam/docs/prd.html accordingly, then call aiteam_advance with stage="intake", outcome="PASS", and summary.`
-        : 'Draft the Product Requirements Document in .aiteam/docs/prd.html following skill/contracts/analyst.md. When .aiteam/docs/prd.html is written on disk, call aiteam_advance with stage="intake", outcome="PASS", and summary.',
+      instruction,
       contractFile: 'skill/contracts/analyst.md',
       nextTool: 'aiteam_advance'
     };
@@ -320,8 +330,9 @@ export const toolDefs = [
         stage: { type: 'string', description: 'The stage being started or completed (intake, architecture, planning, implementation, code-review, qa, integration).' },
         action: { type: 'string', enum: ['start', 'complete'], default: 'complete', description: 'Whether starting or completing the stage.' },
         taskId: { type: 'string', description: 'Task ID if completing a task-specific stage (e.g. T1).' },
-        outcome: { type: 'string', enum: ['PASS', 'FAIL'], default: 'PASS' },
+        outcome: { type: 'string', enum: ['PASS', 'FAIL', 'AWAITING_USER', 'PASS_WITH_MANUAL_VALIDATION'], default: 'PASS' },
         summary: { type: 'string', description: 'Brief summary of what was accomplished or observed.' },
+        questions: { type: 'array', items: { type: 'string' }, description: 'Clarifying questions for the user when completing intake with outcome="AWAITING_USER".' },
         evidence: { type: 'array', items: { type: 'string' }, description: 'Supporting evidence, test outputs, or findings.' },
         filesChanged: { type: 'array', items: { type: 'string' }, description: 'List of files modified during implementation.' },
         findings: { type: 'array', items: { type: 'object' }, description: 'Code review findings array (if stage="code-review").' },
@@ -333,12 +344,12 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_wait_for_approval',
-    description: 'Block and wait until the human user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal for an open PRD, TRD, or per-task QA gate, then automatically return the next directive.',
+    description: 'Block and wait until the human user submits answers or clicks "Approve Gate" / "Request Changes" in the Watcher Dashboard Portal for an open intake, PRD, TRD, or per-task QA gate, then automatically return the next directive.',
     inputSchema: {
       type: 'object',
       properties: {
         repository: { type: 'string', description: 'Target git repository path.' },
-        gate: { type: 'string', enum: ['prd', 'trd', 'qa'], description: 'The open gate to wait on (prd, trd, or qa).' },
+        gate: { type: 'string', enum: ['intake', 'prd', 'trd', 'qa'], description: 'The open gate to wait on (intake, prd, trd, or qa).' },
         taskId: { type: 'string', description: 'Task ID if waiting on a per-task QA gate.' }
       },
       required: ['gate']
@@ -346,15 +357,15 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_record_approval',
-    description: 'Record the human user decision for PRD, TRD, or per-task QA gates ONLY AFTER the human user has explicitly replied in chat. Prefer aiteam_wait_for_approval so the user can click Approve in the Watcher Portal.',
+    description: 'Record the human user answers or decision for intake, PRD, TRD, or per-task QA gates ONLY AFTER the human user has explicitly replied in chat. Prefer aiteam_wait_for_approval so the user can interact in the Watcher Portal.',
     inputSchema: {
       type: 'object',
       properties: {
         repository: { type: 'string', description: 'Target git repository path.' },
-        gate: { type: 'string', enum: ['prd', 'trd', 'qa'], description: 'The gate being decided.' },
+        gate: { type: 'string', enum: ['intake', 'prd', 'trd', 'qa'], description: 'The gate being decided.' },
         decision: { type: 'string', enum: ['approved', 'changes_requested'], description: 'The human decision.' },
         taskId: { type: 'string', description: 'Task ID if deciding a per-task QA gate.' },
-        response: { type: 'string', description: 'Exact verbatim words from the human user reply.' }
+        response: { type: 'string', description: 'Exact verbatim words or answers from the human user reply.' }
       },
       required: ['gate', 'decision']
     }
@@ -528,6 +539,7 @@ export async function handleToolCall(name, args = {}) {
       completeStage(repo, stage, taskId, {
         outcome: args.outcome || 'PASS',
         summary: args.summary || `${stage} completed`,
+        questions: args.questions || [],
         evidence: args.evidence || [],
         filesChanged: args.filesChanged || [],
         findings: args.findings || [],

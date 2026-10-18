@@ -232,17 +232,35 @@
     const pendingGateKey = pendingGate ? `${pendingGate.gateId || pendingGate.gate}:${questions.join('|')}` : '';
     if ($('questions').getAttribute('data-gate-key') !== pendingGateKey) {
       const savedGateNote = $('gateNoteInput')?.value || '';
-      let questionsContent = questions.map((question) => `<li>${md(question)}</li>`).join('');
-      if (pendingGate) {
-        const gName = (pendingGate.gate || 'gate').toUpperCase();
-        const gDoc = pendingGate.doc ? ` for <code>${esc(pendingGate.doc)}</code>` : '';
+      let questionsContent = '';
+      const stripNum = (q) => String(q || '').replace(/^\s*\d+[.)]\s*/, '');
+      if (pendingGate && pendingGate.gate === 'intake') {
+        questionsContent += questions.map((question, idx) =>
+          `<li style="margin-bottom:12px;">` +
+          `<div style="margin-bottom:5px; line-height:1.5;">${md(stripNum(question))}</div>` +
+          `<input type="text" class="intake-answer-input" data-qidx="${idx + 1}" placeholder="Your answer (or leave blank for recommended default)..." style="width:100%; background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-family:inherit; font-size:13px;">` +
+          `</li>`
+        ).join('');
         questionsContent += `<div style="margin-top:14px; padding:12px; background:rgba(87,230,237,0.06); border:1px solid rgba(87,230,237,0.25); border-radius:6px;">` +
-          `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">Decide ${gName} Gate${gDoc}:</div>` +
+          `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">💬 Submit Intake Clarifications (to generate .aiteam/docs/prd.html):</div>` +
           `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
-          `<input type="text" id="gateNoteInput" value="${esc(savedGateNote)}" placeholder="Optional notes or feedback..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
-          `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'approved')" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Approve Gate</button>` +
-          `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'changes_requested')" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Request Changes</button>` +
+          `<input type="text" id="gateNoteInput" value="${esc(savedGateNote)}" placeholder="Additional product notes or constraints..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
+          `<button id="submitIntakeBtn" onclick="submitIntakeAnswers()" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Submit Answers &amp; Draft PRD</button>` +
+          `<button id="defaultIntakeBtn" onclick="submitGateDecision('intake', '', 'approved', 'Use recommended defaults for all clarifying questions.')" style="background:#38204a; color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">⚡ Use Recommended Defaults</button>` +
           `</div><div id="gateDecisionMsg" style="font-size:12px; margin-top:6px;"></div></div>`;
+      } else {
+        questionsContent += questions.map((question) => `<li>${md(stripNum(question))}</li>`).join('');
+        if (pendingGate) {
+          const gName = (pendingGate.gate || 'gate').toUpperCase();
+          const gDoc = pendingGate.doc ? ` for <code>${esc(pendingGate.doc)}</code>` : '';
+          questionsContent += `<div style="margin-top:14px; padding:12px; background:rgba(87,230,237,0.06); border:1px solid rgba(87,230,237,0.25); border-radius:6px;">` +
+            `<div style="font-weight:600; color:var(--cyan); margin-bottom:8px;">Decide ${gName} Gate${gDoc}:</div>` +
+            `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
+            `<input type="text" id="gateNoteInput" value="${esc(savedGateNote)}" placeholder="Optional notes or feedback..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:200px; font-family:inherit; font-size:13px;">` +
+            `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'approved')" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Approve Gate</button>` +
+            `<button onclick="submitGateDecision('${esc(pendingGate.gate)}', '${esc(pendingGate.taskId || '')}', 'changes_requested')" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Request Changes</button>` +
+            `</div><div id="gateDecisionMsg" style="font-size:12px; margin-top:6px;"></div></div>`;
+        }
       }
       $('questions').innerHTML = questionsContent;
       $('questions').setAttribute('data-gate-key', pendingGateKey);
@@ -430,6 +448,20 @@
 </body>
 </html>`);
     popoutWindow.document.close();
+  }
+
+  async function submitIntakeAnswers() {
+    const inputs = document.querySelectorAll('.intake-answer-input');
+    const parts = [];
+    inputs.forEach((inp) => {
+      const idx = inp.getAttribute('data-qidx');
+      const val = (inp.value || '').trim();
+      parts.push(`Q${idx}: ${val || '(use recommended default)'}`);
+    });
+    const extra = ($('gateNoteInput')?.value || '').trim();
+    if (extra) parts.push(`Additional notes: ${extra}`);
+    const combined = parts.join(' | ') || 'Use recommended defaults.';
+    await submitGateDecision('intake', '', 'approved', combined);
   }
 
   async function submitGateDecision(gate, taskId, decision, explicitNote = null) {
