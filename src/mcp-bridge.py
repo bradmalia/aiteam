@@ -55,6 +55,8 @@ def aiteam_advance(
     evidence: Optional[List[str]] = None,
     findings: Optional[List[Dict[str, Any]]] = None,
     checks: Optional[List[Dict[str, Any]]] = None,
+    manualChecks: Optional[List[str]] = None,
+    requiresManualValidation: Optional[bool] = None,
     commitMessage: str = "",
     repository: str = ""
 ) -> str:
@@ -71,6 +73,8 @@ def aiteam_advance(
         "evidence": evidence or [],
         "findings": findings or [],
         "checks": checks or [],
+        "manualChecks": manualChecks or [],
+        "requiresManualValidation": requiresManualValidation,
         "commitMessage": commitMessage,
         "repository": repository
     }

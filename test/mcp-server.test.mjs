@@ -245,6 +245,7 @@ test('AITeam Pure State MCP: full 9-stage setup pipeline and 4-gate task loop wi
       taskId: 'T1',
       outcome: 'PASS',
       checks: [{ name: 'AC-1', status: 'PASS', evidence: 'verified' }],
+      manualChecks: ['Open browser and verify UI rendered properly'],
       summary: 'QA passed'
     });
     assert.equal(qaRes.directive.status, 'GATE_BLOCKED');

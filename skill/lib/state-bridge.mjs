@@ -782,10 +782,32 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
           updated['code-reviewFailure'] = result;
         }
       } else if (stage === 'qa') {
-        if (outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION') {
-          // Automated QA passed, but the task is NOT complete yet: it is held in
-          // "qa-auto-passed" and the human sign-off gate opens. The recordApproval
-          // (gate "qa") step is what promotes it to "qa-passed" and completes it.
+        const hasManualChecks = Array.isArray(result.manualChecks) && result.manualChecks.length > 0;
+        const requiresManual = outcome === 'PASS_WITH_MANUAL_VALIDATION' || result.requiresManualValidation === true || hasManualChecks;
+
+        if (outcome === 'PASS' && !requiresManual) {
+          // Pure automated QA pass for headless/backend task with no manual human testing needed.
+          // Direct bypass to qa-passed so integration can proceed without blocking on human sign-off.
+          updated.status = 'qa-passed';
+          updated.qa = result;
+          updated.qaFailure = null;
+          updated.qaFingerprint = computeFingerprint(repo, updated.filesChanged || []);
+          updated.completedAt = now;
+          if (!Array.isArray(updated.attemptHistory)) updated.attemptHistory = [];
+          updated.attemptHistory.push({ stage: 'qa-automated', at: now, outcome: 'PASS' });
+          if (!session.completedTasks.includes(taskId)) session.completedTasks.push(taskId);
+          if (!session.approvals) session.approvals = {};
+          session.approvals[`qa:${taskId}`] = {
+            gate: 'qa',
+            taskId,
+            decision: 'APPROVED',
+            approvedBy: 'qa-automated-bypass',
+            at: now,
+            response: 'Automated black-box QA passed with zero manual verification checks.'
+          };
+        } else if (outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION') {
+          // Automated QA passed, but human manual verification is required (e.g. UI/browser check).
+          // Held in "qa-auto-passed" until human user approves in portal/chat.
           updated.status = 'qa-auto-passed';
           updated.qa = result;
           updated.qaFailure = null;
@@ -907,6 +929,9 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     const qt = (session.taskLedger || []).find((x) => x.id === taskId);
     if (qt && qt.status === 'qa-auto-passed') {
       openGateOnSession(session, { gate: 'qa', kind: 'qa-manual', taskId, questions: qaManualQuestions(taskId, result) });
+    } else if (qt && qt.status === 'qa-passed') {
+      session.currentStage = 'integration';
+      session.currentTaskId = taskId;
     } else if (taskId && outcome === 'FAIL') {
       session.currentStage = 'implementation';
       session.currentTaskId = taskId;

@@ -337,6 +337,8 @@ export const toolDefs = [
         filesChanged: { type: 'array', items: { type: 'string' }, description: 'List of files modified during implementation.' },
         findings: { type: 'array', items: { type: 'object' }, description: 'Code review findings array (if stage="code-review").' },
         checks: { type: 'array', items: { type: 'object' }, description: 'QA black-box check results (if stage="qa").' },
+        manualChecks: { type: 'array', items: { type: 'string' }, description: 'Checklist of manual verification steps for human validation (e.g. browser UI checks). If empty or omitted and outcome="PASS", the human QA gate is bypassed.' },
+        requiresManualValidation: { type: 'boolean', description: 'Explicit flag indicating whether human manual testing is required. If false/omitted and manualChecks is empty, human QA gate is bypassed.' },
         commitMessage: { type: 'string', description: 'Git commit message created during integration.' },
         ledger: { type: 'string', description: 'Path to TASK_LEDGER.md when completing the planning stage.' }
       }
@@ -544,6 +546,8 @@ export async function handleToolCall(name, args = {}) {
         filesChanged: args.filesChanged || [],
         findings: args.findings || [],
         checks: args.checks || [],
+        manualChecks: args.manualChecks || [],
+        requiresManualValidation: args.requiresManualValidation ?? null,
         commitMessage: args.commitMessage || null
       });
 

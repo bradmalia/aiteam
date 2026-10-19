@@ -118,7 +118,8 @@ test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', a
       outcome: 'PASS',
       summary: 'Automated test verified 800x600 canvas resolution',
       evidence: ['Playwright canvas width/height verified'],
-      checks: [{ name: 'Canvas Dimensions', passed: true }]
+      checks: [{ name: 'Canvas Dimensions', passed: true }],
+      manualChecks: ['Verify pong canvas displays on screen']
     });
 
     current = readSession(tmpRepo);
@@ -387,6 +388,89 @@ test('AITeam Skill: Brownfield projects automatically archive existing PRD/TRD d
     const archivedTrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('trd-') && f.endsWith('.html'));
     assert.equal(archivedTrds.length, 1);
     assert.equal(fs.readFileSync(path.join(archiveDir, archivedTrds[0]), 'utf8'), '<h1>TRD v1</h1>');
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
+test('AITeam Skill: Headless tasks bypass human QA approval when automated tests pass with no manual checks', (t) => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-qa-bypass-test-'));
+
+  try {
+    initSession(tmpRepo, 'headless backend API task');
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'PRD approved' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'TRD approved' });
+
+    updateTaskLedger(tmpRepo, [
+      {
+        id: 'T1',
+        title: 'Backend deduplication engine & REST API',
+        status: 'planned',
+        description: 'Headless deduplication service and REST API',
+        acceptanceCriteria: ['AC-1: POST /api/dedup returns deduplicated set']
+      }
+    ]);
+
+    // Implementation
+    startStage(tmpRepo, 'implementation', 'T1', 'programmer', 'Programmer');
+    fs.writeFileSync(path.join(tmpRepo, 'engine.js'), 'export function dedup(items) { return Array.from(new Set(items)); }\n');
+    completeStage(tmpRepo, 'implementation', 'T1', {
+      outcome: 'PASS',
+      filesChanged: ['engine.js'],
+      summary: 'Implemented deduplication service'
+    });
+
+    let current = readSession(tmpRepo);
+    assert.equal(current.taskLedger[0].status, 'implemented');
+
+    // Code Review
+    startStage(tmpRepo, 'code-review', 'T1', 'reviewer', 'Code Reviewer');
+    completeStage(tmpRepo, 'code-review', 'T1', {
+      outcome: 'PASS',
+      findings: [],
+      summary: 'Code review passed'
+    });
+
+    current = readSession(tmpRepo);
+    assert.equal(current.taskLedger[0].status, 'review-passed');
+
+    // QA Stage: pure automated pass with NO manualChecks
+    startStage(tmpRepo, 'qa', 'T1', 'qa', 'QA');
+    fs.mkdirSync(path.join(tmpRepo, 'tests', 'qa'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRepo, 'tests', 'qa', 'T1.test.mjs'), 'export default true;\n');
+
+    completeStage(tmpRepo, 'qa', 'T1', {
+      outcome: 'PASS',
+      summary: 'Automated tests verified deduplication API edge cases',
+      evidence: ['100% automated test coverage in tests/qa/T1.test.mjs'],
+      checks: [{ name: 'AC-1', status: 'PASS', evidence: 'verified via test runner' }],
+      manualChecks: [] // Headless backend task: nothing for a human to test
+    });
+
+    current = readSession(tmpRepo);
+    // Task was promoted directly to qa-passed without holding on qa-auto-passed!
+    assert.equal(current.taskLedger[0].status, 'qa-passed');
+    assert.ok(current.taskLedger[0].qaFingerprint);
+    assert.ok(current.completedTasks.includes('T1'));
+    // No open human gate on pendingUserInput
+    assert.equal(current.pendingUserInput, null);
+    // Auto-recorded QA approval exists with qa-automated-bypass
+    assert.equal(current.approvals['qa:T1'].decision, 'APPROVED');
+    assert.equal(current.approvals['qa:T1'].approvedBy, 'qa-automated-bypass');
+    // Session transitioned directly to integration
+    assert.equal(current.currentStage, 'integration');
+    assert.equal(current.currentTaskId, 'T1');
+
+    // Integration succeeds immediately without needing aiteam_wait_for_approval
+    startStage(tmpRepo, 'integration', 'T1', 'maintainer', 'Maintainer');
+    completeStage(tmpRepo, 'integration', 'T1', {
+      outcome: 'PASS',
+      commitMessage: 'feat: add deduplication engine',
+      summary: 'Integrated T1 into git'
+    });
+
+    current = readSession(tmpRepo);
+    assert.equal(current.status, 'COMPLETE');
   } finally {
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }

@@ -153,14 +153,16 @@ For each task in `TASK_LEDGER.md`, execute these 4 gates in strict sequential or
 - **Responsibilities**:
   - Author and execute automated black-box tests in `tests/qa/<task-id>.test.*` (`AITEAM_QA_TEST_MISSING` blocks completing QA if `tests/qa/` has no test files).
   - Test user-observable behavior and verify zero cross-task regressions.
-- **State Update** (a `PASS` computes `task.qaFingerprint`, sets `qa-auto-passed`, and **auto-opens the QA sign-off gate**):
+- **State Update**:
+  - **Headless / Backend Tasks (No Manual Human Validation)**: If `outcome: "PASS"` and there are no manual verification checks (`manualChecks: []`), the state engine automatically promotes the task to `qa-passed`, records an automated bypass approval, and routes directly to Gate 4 (Git Integration) without blocking on human sign-off.
+  - **UI / User-Facing Tasks (Manual Verification Required)**: If `outcome: "PASS_WITH_MANUAL_VALIDATION"` or `manualChecks` has steps (or `requiresManualValidation: true`), the task is held in `qa-auto-passed` and opens the human QA sign-off gate.
   ```bash
   node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage qa --taskId "<task-id>" --result '<json-result>'
   ```
-- **🛑 QA SIGN-OFF GATE (hard stop, per-task):** Present the automated results and manual verification checklist to the user and **end your turn**. Wait for their decision in the Watcher Portal or chat.
+- **🛑 QA SIGN-OFF GATE (for tasks requiring human manual verification):** Present the automated results and manual verification checklist to the user and **end your turn**. Wait for their decision in the Watcher Portal or chat.
 
 ### Gate 4: Maintainer Git Integration (`maintainer`)
-- **Blocked until the QA sign-off gate passes** (`AITEAM_GATE_BLOCKED` / `AITEAM_STAGE_ORDER_VIOLATION`).
+- **Blocked until the QA sign-off gate passes or automated QA bypass is recorded** (`AITEAM_GATE_BLOCKED` / `AITEAM_STAGE_ORDER_VIOLATION`).
 - **Contract**: `/home/brad/aiteam/skill/contracts/maintainer.md`
 - **Responsibilities**:
   - Stage ONLY `task.filesChanged` and create a clean conventional git commit.
