@@ -136,10 +136,31 @@
         activeTaskIdx = tasks.findIndex((t) => t.status !== 'qa-passed' || !isIntegrated(t));
       }
       const taskNum = activeTaskIdx >= 0 ? activeTaskIdx + 1 : totalTasks;
-      const allDone = completed.has('integration') || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
-      const cycleHtml = taskCycleStages.map((stage) => {
+      const allDone = (completedTasksCount === totalTasks && totalTasks > 0) || session?.status === 'COMPLETE' || session?.status === 'READY_TO_COMPLETE';
+      const activeTask = tasks[activeTaskIdx] || null;
+      const stageOrder = ['implementation', 'code-review', 'qa', 'integration'];
+      
+      const getActiveStageIndex = () => {
+        if (!activeTask) return -1;
+        if (activeTask.status === 'qa-passed') return 3; // passed integration
+        if (activeTask.status === 'implemented') {
+          return session?.currentStage === 'code-review' ? 1 : 0;
+        }
+        if (activeTask.status === 'review-passed' || activeTask.status === 'qa-auto-passed' || activeTask.status === 'qa-awaiting-manual') {
+          return session?.currentStage === 'integration' ? 3 : 2;
+        }
+        if (activeTask.status === 'needs-rework') {
+          return 0;
+        }
+        const stIdx = stageOrder.indexOf(session?.currentStage);
+        return stIdx !== -1 ? stIdx : 0;
+      };
+
+      const activeStageIdx = getActiveStageIndex();
+
+      const cycleHtml = taskCycleStages.map((stage, idx) => {
         const isCurrent = stage === session?.currentStage;
-        const isStagePassed = allDone || (completedTasksCount === totalTasks);
+        const isStagePassed = allDone || (activeTask?.status === 'qa-passed') || (idx < activeStageIdx);
         return `<span class="${isStagePassed ? 'passed' : isCurrent ? (active ? 'running' : 'waiting') : ''}">${isStagePassed ? '✓' : isCurrent ? '▶' : '○'} ${esc(stage)}</span>`;
       }).join(' &nbsp;→&nbsp; ');
 
