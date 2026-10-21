@@ -56,6 +56,7 @@ def aiteam_advance(
     findings: Optional[List[Dict[str, Any]]] = None,
     checks: Optional[List[Dict[str, Any]]] = None,
     manualChecks: Optional[List[str]] = None,
+    screenshots: Optional[List[Dict[str, Any]]] = None,
     requiresManualValidation: Optional[bool] = None,
     commitMessage: str = "",
     repository: str = ""
@@ -74,6 +75,7 @@ def aiteam_advance(
         "findings": findings or [],
         "checks": checks or [],
         "manualChecks": manualChecks or [],
+        "screenshots": screenshots or [],
         "requiresManualValidation": requiresManualValidation,
         "commitMessage": commitMessage,
         "repository": repository

@@ -330,7 +330,7 @@ function validateStageCompletion(repo, session, stage, taskId, result) {
 }
 
 // Mutates an in-memory session to open a human-approval gate (pendingUserInput).
-function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions }) {
+function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions, screenshots }) {
   const gateId = taskId ? `${gate}:${taskId}` : gate;
   const now = new Date().toISOString();
   session.currentStage = stage || GATE_STAGE_FOR_GATE[gate] || gate;
@@ -344,6 +344,7 @@ function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions 
     taskId: taskId ?? null,
     doc: doc || null,
     questions: questions || defaultGateQuestions(gate, taskId, doc),
+    screenshots: Array.isArray(screenshots) ? screenshots : (session.pendingUserInput?.screenshots || []),
     response: null,
     openedAt: now
   };
@@ -928,7 +929,13 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
   } else if (stage === 'qa') {
     const qt = (session.taskLedger || []).find((x) => x.id === taskId);
     if (qt && qt.status === 'qa-auto-passed') {
-      openGateOnSession(session, { gate: 'qa', kind: 'qa-manual', taskId, questions: qaManualQuestions(taskId, result) });
+      openGateOnSession(session, {
+        gate: 'qa',
+        kind: 'qa-manual',
+        taskId,
+        questions: qaManualQuestions(taskId, result),
+        screenshots: result.screenshots || []
+      });
     } else if (qt && qt.status === 'qa-passed') {
       session.currentStage = 'integration';
       session.currentTaskId = taskId;
@@ -1113,7 +1120,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         let questions = null;
         const qRaw = getArg('--questions');
         if (qRaw) { try { questions = JSON.parse(qRaw); } catch {} }
-        const sess = openGate(repo, { gate, taskId, kind, doc, stage, questions });
+        let screenshots = null;
+        const sRaw = getArg('--screenshots');
+        if (sRaw) { try { screenshots = JSON.parse(sRaw); } catch {} }
+        const sess = openGate(repo, { gate, taskId, kind, doc, stage, questions, screenshots });
         console.log(JSON.stringify({ ok: true, gate, gateId: taskId ? `${gate}:${taskId}` : gate, status: 'AWAITING_APPROVAL' }));
       } else if (cmd === 'wait-approval') {
         const gate = getArg('--gate');

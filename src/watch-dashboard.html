@@ -16,6 +16,17 @@
     .badge.PASS, .badge.PASS_WITH_MANUAL_VALIDATION { background: rgba(119, 227, 155, 0.2); color: var(--green); }
     .badge.FAIL { background: rgba(255, 123, 145, 0.2); color: var(--red); }
     .badge.AWAITING_USER, .badge.BLOCKED { background: rgba(255, 209, 102, 0.2); color: var(--amber); }
+    .screenshot-gallery { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+    .screenshot-card { background: rgba(0,0,0,0.4); border: 1px solid rgba(87,230,237,0.3); border-radius: 6px; overflow: hidden; max-width: 320px; flex: 1 1 240px; display: flex; flex-direction: column; transition: transform 0.15s, border-color 0.15s; }
+    .screenshot-card:hover { border-color: var(--cyan); transform: translateY(-2px); }
+    .screenshot-card img { width: 100%; height: 160px; object-fit: cover; background: #000; cursor: pointer; display: block; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .screenshot-caption { padding: 8px 10px; font-size: 12px; color: var(--text); line-height: 1.35; flex: 1; }
+    .screenshot-meta { font-size: 11px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+    .lightbox-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+    .lightbox-content { max-width: 95vw; max-height: 85vh; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 40px #000; object-fit: contain; background: #0e0917; }
+    .lightbox-title { margin-top: 12px; font-size: 14px; color: var(--cyan); font-weight: 600; text-align: center; }
+    .lightbox-close { position: absolute; top: 16px; right: 24px; font-size: 28px; color: var(--muted); cursor: pointer; background: transparent; border: 0; font-family: inherit; }
+    .lightbox-close:hover { color: var(--text); }
     @media (max-width:950px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
   </style>
 </head>
@@ -62,6 +73,78 @@
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/`(.*?)`/g, '<code style="background:#0004;padding:2px 4px;border-radius:4px;">$1</code>')
     .replace(/\n/g, '<br>');
+
+  function extractScreenshots(text, explicitScreenshots = []) {
+    const list = Array.isArray(explicitScreenshots) ? [...explicitScreenshots] : [];
+    const seen = new Set(list.map((s) => s.path));
+
+    if (text) {
+      // Regex pattern 1: Image: Caption -> /path/to/img.png
+      const regex1 = /(?:🖼️|Image:)\s*([^\n\->]+?)\s*->\s*([^\s\n"']+\.(?:png|jpg|jpeg|webp|gif))/gi;
+      let match;
+      while ((match = regex1.exec(text)) !== null) {
+        const caption = match[1].trim();
+        const p = match[2].trim();
+        if (!seen.has(p)) {
+          seen.add(p);
+          list.push({ caption, path: p });
+        }
+      }
+
+      // Regex pattern 2: raw image paths (.png, .jpg, .webp)
+      const regex2 = /(?:(?:\/[\w.-]+)+\.(?:png|jpg|jpeg|webp|gif)|(?:tests\/[^\s"']+\.(?:png|jpg|jpeg|webp|gif))|(?:\.aiteam\/[^\s"']+\.(?:png|jpg|jpeg|webp|gif)))/gi;
+      while ((match = regex2.exec(text)) !== null) {
+        const p = match[0].trim();
+        if (!seen.has(p)) {
+          seen.add(p);
+          const base = p.split('/').pop() || 'Screenshot';
+          list.push({ caption: base, path: p });
+        }
+      }
+    }
+
+    return list;
+  }
+
+  function renderScreenshotGallery(screenshots) {
+    if (!screenshots || !screenshots.length) return '';
+    const cards = screenshots.map((s) => {
+      const src = `/api/screenshot?path=${encodeURIComponent(s.path)}`;
+      const caption = s.caption || s.path.split('/').pop() || 'Screenshot';
+      return `<div class="screenshot-card">` +
+        `<img src="${esc(src)}" alt="${esc(caption)}" loading="lazy" onclick="openLightbox('${esc(src)}', '${esc(caption)}')">` +
+        `<div class="screenshot-caption">` +
+        `<strong>📸 ${esc(caption)}</strong>` +
+        `<div class="screenshot-meta">${esc(s.path)}</div>` +
+        `</div>` +
+        `</div>`;
+    }).join('');
+
+    return `<div style="margin-top:12px;">` +
+      `<div style="font-weight:600; color:var(--cyan); font-size:13px; margin-bottom:6px;">📸 Visual Verification Screenshots:</div>` +
+      `<div class="screenshot-gallery">${cards}</div>` +
+      `</div>`;
+  }
+
+  function openLightbox(src, title) {
+    let lb = $('lightboxModal');
+    if (!lb) {
+      lb = document.createElement('div');
+      lb.id = 'lightboxModal';
+      lb.className = 'lightbox-modal';
+      lb.onclick = (e) => { if (e.target === lb || e.target.className === 'lightbox-close') closeLightbox(); };
+      document.body.appendChild(lb);
+    }
+    lb.innerHTML = `<button class="lightbox-close" onclick="closeLightbox()">&times;</button>` +
+      `<img class="lightbox-content" src="${esc(src)}" alt="${esc(title)}">` +
+      `<div class="lightbox-title">${esc(title)}</div>`;
+    lb.hidden = false;
+  }
+
+  function closeLightbox() {
+    const lb = $('lightboxModal');
+    if (lb) lb.hidden = true;
+  }
 
   function renderResult(result, evidence) {
     if (!result) return 'No result yet.';
@@ -231,6 +314,14 @@
         qaHtml += `</ul></div>`;
       }
 
+      const taskScreenshots = extractScreenshots(
+        `${qa?.summary || ''} ${(qa?.evidence || []).join(' ')}`,
+        qa?.screenshots || []
+      );
+      if (taskScreenshots.length) {
+        qaHtml += renderScreenshotGallery(taskScreenshots);
+      }
+
       const isCurrentActive = task.id === currentTaskId;
       const statusLabel = (s) => ({ 'qa-auto-passed': 'awaiting QA sign-off', 'qa-awaiting-manual': 'awaiting sign-off', 'needs-rework': 'needs rework', 'qa-passed': 'complete', 'review-passed': 'awaiting QA' }[s]) || s || 'planned';
       const displayStatus = (isCurrentActive && task.status === 'planned') ? (session.currentStage || 'in-progress') : statusLabel(task.status);
@@ -297,12 +388,19 @@
       liveLogEl.style.height = 'auto';
       liveLogEl.style.borderColor = 'var(--amber)';
       liveLogEl.style.background = 'rgba(255, 209, 102, 0.08)';
-      const manualKey = `manual:${session.pendingUserInput.gateId || ''}:${(session.pendingUserInput.questions || []).join('|')}`;
+      const manualKey = `manual:${session.pendingUserInput.gateId || ''}:${(session.pendingUserInput.questions || []).join('|')}:${(session.pendingUserInput.screenshots || []).map(s=>s.path).join('|')}`;
       if (liveLogEl.getAttribute('data-mode-key') !== manualKey) {
         const savedManualNote = $('manualQaNote')?.value || '';
+        const pendingScreenshots = extractScreenshots(
+          (session.pendingUserInput.questions || []).join(' '),
+          session.pendingUserInput.screenshots || []
+        );
+        const screenshotsHtml = renderScreenshotGallery(pendingScreenshots);
+
         liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
           `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
           `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
+          screenshotsHtml +
           `<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
           `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision & Feedback:</div>` +
           `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +

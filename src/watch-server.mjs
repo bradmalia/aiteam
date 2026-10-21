@@ -355,6 +355,55 @@ function sendArtifact(response, repo, pathname) {
   return response.end(fs.readFileSync(artifactPath));
 }
 
+function sendScreenshot(response, activeRepo, requestedPath) {
+  if (!requestedPath || typeof requestedPath !== 'string') {
+    return sendJson(response, { error: 'path query parameter is required' }, 400);
+  }
+
+  const raw = requestedPath.trim();
+  // Safe resolution: absolute path or relative to active repository
+  const resolved = path.isAbsolute(raw) ? path.normalize(raw) : path.normalize(path.join(activeRepo, raw));
+
+  // Only allow serving image extensions
+  const ext = path.extname(resolved).toLowerCase();
+  const mimeTypes = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.gif': 'image/gif'
+  };
+
+  const contentType = mimeTypes[ext];
+  if (!contentType) {
+    return sendJson(response, { error: `Unsupported image format: ${ext || 'none'}` }, 400);
+  }
+
+  // Security bounds: must be inside active repo, /home/brad, or /tmp
+  const homeDir = os.homedir();
+  const isAllowed = resolved.startsWith(activeRepo) ||
+    resolved.startsWith(path.join(homeDir, '.gemini')) ||
+    resolved.startsWith(path.join(homeDir, '.qwen')) ||
+    resolved.startsWith(homeDir) ||
+    resolved.startsWith('/tmp');
+
+  if (!isAllowed) {
+    return sendJson(response, { error: 'Access denied: path is outside allowed directories.' }, 403);
+  }
+
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    return sendJson(response, { error: `Screenshot file not found: ${raw}` }, 404);
+  }
+
+  response.writeHead(200, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*'
+  });
+  return response.end(fs.readFileSync(resolved));
+}
+
 export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) {
   let activeRepo = path.resolve(repo);
   const server = http.createServer((request, response) => {
@@ -413,6 +462,7 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
     if (request.method !== 'GET' && request.method !== 'HEAD') return sendJson(response, { error: 'Only GET and HEAD are supported.' }, 405);
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
+    if (url.pathname === '/api/screenshot') return sendScreenshot(response, activeRepo, url.searchParams.get('path'));
     if (url.pathname.startsWith('/artifacts/')) return sendArtifact(response, activeRepo, url.pathname);
     if (url.pathname === '/' || url.pathname === '/index.html') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
