@@ -4,27 +4,52 @@ A lightweight, skill-based agentic software engineering team for AI coding envir
 
 AITeam coordinates an automated development workflow through structured quality gates—from PRD intake and task breakdown to implementation, code review, black-box QA, and git integration—while streaming live progress to a local dashboard.
 
-```
-Request ──► Intake/PRD ──► 🛑 PRD APPROVAL ──► Architecture ──► 🛑 TRD APPROVAL
-                                                                       │
-                                                                       ▼
-                                                                  Task Planning
-                                                                       │
-                 ┌─────────────────────────────────────────────────────┴────────┐
-                 ▼                                                              ▼
-        [Task N: Implementation]                                       [Next Task 1..N]
-                 │
-                 ▼
-        [Code Review Gate]  ── (Fail) ──► Needs Rework
-                 │ (Pass)
-                 ▼
-        [QA Black-Box Gate] ── (Fail) ──► Needs Rework
-                 │ (auto-pass)
-                 ▼
-        🛑 QA SIGN-OFF (per-task)
-                 │ (approved)
-                 ▼
-        [Maintainer Git Commit]
+```mermaid
+flowchart TD
+    Start(["User Request"]) --> Intake["1. Intake & Requirements<br/><i>(PRD Generation)</i>"]
+    Intake --> GatePRD{"🛑 PRD Gate<br/><i>User Sign-Off</i>"}
+
+    GatePRD -->|Approved| Arch["2. Architecture & Design<br/><i>(TRD Specification)</i>"]
+    GatePRD -->|Feedback| Intake
+
+    Arch --> GateTRD{"🛑 TRD Gate<br/><i>User Sign-Off</i>"}
+    GateTRD -->|Approved| Plan["3. Task Breakdown<br/><i>(TASK_LEDGER.md)</i>"]
+    GateTRD -->|Feedback| Arch
+
+    Plan --> TaskLoop["Iterate Tasks (1..N)"]
+
+    subgraph TaskExecution ["Per-Task 4-Gate Quality Loop"]
+        direction TB
+        Impl["Programmer<br/><i>Implementation & Unit Tests</i>"]
+        Review["Reviewer<br/><i>Static Analysis & Code Review</i>"]
+        QA["QA Engineer<br/><i>Automated Black-Box & Visual Playwright</i>"]
+        QAEval{"Actionable Human<br/>Test Steps?"}
+        GateQA{"🛑 Human QA Gate<br/><i>Screenshot & Evidence Review</i>"}
+        Commit["Maintainer<br/><i>Git Commit & Fingerprint Verification</i>"]
+
+        Impl --> Review
+        Review -->|Pass| QA
+        Review -->|Fail: Rework| Impl
+
+        QA -->|Pass| QAEval
+        QA -->|Fail: Rework| Impl
+
+        QAEval -->|Yes| GateQA
+        QAEval -->|No: Autonomous Bypass| Commit
+        GateQA -->|Approved| Commit
+        GateQA -->|Feedback / Issues| Impl
+    end
+
+    TaskLoop --> Impl
+    Commit --> CheckMore{"More Tasks<br/>Remaining?"}
+    CheckMore -->|Yes| Impl
+    CheckMore -->|No: Milestone Done| Done(["🎉 Project / Milestone Complete"])
+
+    subgraph LiveObserver ["AITeam Watcher Dashboard (:22924)"]
+        WatchServer["Real-Time Watcher Server<br/><i>WebSocket & SSE</i>"] -.->|Visual QA Screenshot Viewer| GateQA
+        WatchServer -.->|Gate Approvals & Feedback| GatePRD
+        WatchServer -.->|Live Task Timeline & Event Logs| TaskExecution
+    end
 ```
 
 ---
@@ -32,10 +57,11 @@ Request ──► Intake/PRD ──► 🛑 PRD APPROVAL ──► Architecture 
 ## Features
 
 - **Lightweight & Skill-Native**: Zero heavy runtime dependencies. Operates as an agent skill (`SKILL.md`) with explicit prompt contracts in `skill/contracts/`.
-- **Enforced Human-Approval Gates**: Hard stops for PRD, TRD, and per-task QA sign-off enforced by the state bridge (`AITEAM_GATE_BLOCKED`)—preventing autonomous code commits without explicit user approval.
-- **4-Gate Quality Loop**: Every task passes Implementation, static Code Review, automated black-box QA, human QA sign-off, and SHA-256 verified Git integration.
+- **Structured Quality Gates & Intelligent Sign-Off**: Hard stops for PRD, TRD, and per-task QA sign-offs enforced by the state bridge (`AITEAM_GATE_BLOCKED`). Includes autonomous bypass for headless/internal tasks where manual verification is non-actionable, while preserving full automated QA.
+- **4-Gate Quality Loop**: Every task strictly passes Implementation, static Code Review, automated black-box QA, QA sign-off, and SHA-256 verified Git integration.
+- **Visual QA Screenshot Evidence**: Black-box and Playwright visual verification screenshots are automatically cataloged, linked, and displayed directly inside test reports and the Watcher UI.
+- **Real-Time Live Dashboard**: Lightweight HTTP/WebSocket watcher server (`bin/aiteam-watch`) visualizing task status, active logs, phase progress, gate prompts/approvals, visual screenshot evidence, and generated artifacts in your browser.
 - **Brownfield Safety**: Automatically archives existing PRD and TRD documents when starting new milestone iterations to preserve prior project specifications.
-- **Real-Time Live Dashboard**: Lightweight HTTP/WebSocket watcher server (`bin/aiteam-watch`) visualizing task status, active logs, phase progress, gate prompts/approvals, and generated artifacts in your browser.
 - **State Bridge**: Clean CLI & programmatic bridge (`skill/lib/state-bridge.mjs`) tracking `.aiteam/session.json` and `.aiteam/events.jsonl` without process locks or daemon overhead.
 
 ---
