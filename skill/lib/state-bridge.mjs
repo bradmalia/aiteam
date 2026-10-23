@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { computeFingerprint, verifyFingerprint } from './fingerprint.mjs';
 
 export const DEFAULT_PHASE_PLAN = [
@@ -1063,7 +1064,14 @@ export async function waitForApproval(repo, { gate, taskId = null, pollMs = 750,
 }
 
 // --- CLI Execution Interface ---
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMain = Boolean(process.argv[1]) && (() => {
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(path.resolve(process.argv[1]))).href;
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
   const args = process.argv.slice(2);
   const cmd = args[0];
 

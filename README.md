@@ -105,6 +105,8 @@ aiteam-watch . --port 22924
 ```
 Open `http://localhost:22924` in your browser.
 
+![AITeam Watcher Dashboard](docs/images/aiteam-watcher-dashboard.png)
+
 ### 2. Trigger the Workflow
 In your AI assistant prompt (or conversation), say:
 > "Using AITeam, I want to build `<feature/project>`"
