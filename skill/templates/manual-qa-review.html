@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Manual QA review · reusable template</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101923;--panel:#182733;--line:#35505f;--text:#eef5f7;--muted:#bdd0d8;--accent:#96d9e5}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}
+    main{max-width:1440px;margin:auto;padding:32px 24px 64px}
+    h1{font-size:clamp(28px,4vw,40px);line-height:1.2;margin:12px 0}
+    h2{font-size:24px;margin:0 0 14px}h3{font-size:18px}
+    p,li,td,figcaption{color:var(--muted)}a{color:var(--accent)}
+    .meta{display:flex;flex-wrap:wrap;gap:10px 20px;color:var(--muted);font-size:14px}
+    .badge{display:inline-block;border:1px solid var(--line);border-radius:20px;padding:5px 13px;color:var(--accent)}
+    .notice{padding:16px 20px;background:var(--panel);border-left:4px solid var(--accent);border-radius:6px}
+    nav{display:flex;flex-wrap:wrap;gap:4px 14px;margin:20px 0}
+    nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 4px}
+    section{margin-top:26px;border:1px solid var(--line);border-radius:12px;padding:24px;background:var(--panel)}
+    .table-wrap{max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:8px}
+    table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:13px;vertical-align:top;border-bottom:1px solid var(--line)}
+    th{color:var(--text)}tr:last-child td{border-bottom:0}
+    pre{max-width:100%;overflow:auto;padding:16px;background:var(--bg);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+    code{font-size:.9em;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}
+    button{min-height:44px;min-width:88px;padding:9px 18px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;cursor:pointer}
+    button:hover{border-color:var(--accent)}button[aria-pressed=true]{background:#315565;border-color:var(--accent)}
+    :focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+    figure{margin:20px 0 0}figcaption{margin-top:10px}img,video{display:block;max-width:100%;height:auto;border-radius:8px}
+    iframe.evidence-preview{display:block;width:100%;height:720px;max-height:85vh;min-height:360px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+    .evidence-open{display:inline-flex;align-items:center;min-height:44px;padding:4px 0}
+    details>summary{cursor:pointer;min-height:44px;padding:8px 0}
+    .sample{width:100%;min-height:180px;padding:20px;background:var(--bg);border:1px solid var(--line);border-radius:10px}
+    .sample strong{display:block;color:var(--text)}.sample p{margin:8px 0}.sample.after{border-left:4px solid var(--accent)}
+    [hidden]{display:none!important}.small{font-size:14px}
+    @media(max-width:700px){main{padding:22px 16px 40px}section{padding:18px 14px}th,td{padding:10px;font-size:14px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body><main>
+  <!-- AUTHOR: copy to .aiteam/docs/qa-<safe-task-id>.html. Resolve all illustrative
+       content before a real handoff. Keep raw evidence and actual receipts in
+       .aiteam/reviews/<task>/ and use /review-assets/<task>/... URLs on the
+       Watcher origin. Audit every link/media/source/receipt/manual URL and
+       fragment, including reachable reports; do not depend on a fixture port. -->
+  <header>
+    <span class="badge">Pending human review</span>
+    <h1>Manual QA approval page</h1>
+    <p>A single place to understand the change, reproduce it, and judge the acceptance criteria.</p>
+    <div class="meta"><span>Task: EXAMPLE-TASK</span><span>Revision: replace with reviewed build/hash</span><span>Prepared: replace with actual date/time</span></div>
+    <p class="notice"><strong>Reusable template:</strong> this page contains illustrative authoring content. Replace it with the actual task, commands, results and captured evidence. No test execution or human approval is claimed by this example.</p>
+    <nav aria-label="Review sections"><a href="#criteria">Acceptance criteria</a><a href="#startup">Start services</a><a href="#manual">Manual steps</a><a href="#tests">Tests performed</a><a href="#evidence">Evidence</a><a href="#decision">Decision</a></nav>
+  </header>
+
+  <section id="criteria" aria-labelledby="criteria-title">
+    <h2 id="criteria-title">Acceptance criteria</h2>
+    <p>Replace these sample criteria with the task’s approved, observable ACs.</p>
+    <div class="table-wrap" role="region" aria-label="Acceptance criteria and evidence" tabindex="0"><table>
+      <thead><tr><th>Criterion</th><th>Expected behavior</th><th>Automated evidence</th><th>Human observation</th></tr></thead>
+      <tbody><tr><td>AC-1 · example</td><td>The reviewer can find the startup instructions and expected test outcome.</td><td>Unrun in this template</td><td>Pending human review</td></tr>
+      <tr><td>AC-2 · example</td><td>Relevant before/after evidence is clearly labeled and usable on desktop and mobile.</td><td>Unrun in this template</td><td>Pending human review</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section id="startup" aria-labelledby="startup-title">
+    <h2 id="startup-title">Start services or application</h2>
+    <p><strong>Authoring example:</strong> replace this with the actual working directory, prerequisites, configuration, commands, readiness request, URLs and cleanup. If no additional service is needed, say so and explain.</p>
+    <ol><li>State the required runtime/device, safe test data and exact project directory.</li><li>Show the exact startup command and inspect the selected port/process. Bind local previews explicitly to loopback.</li><li>Read the actual launch URL, verify the bind and repository/root, then request the intended readiness endpoint. Supply the resolved URL here.</li><li>Keep track of the process started for this task; state when and how to stop only that PID.</li></ol>
+    <pre><code>Working directory: AUTHOR — actual project directory
+Prerequisites/configuration: AUTHOR — runtime, device, safe test data
+Startup command: AUTHOR — exact executable command
+Readiness check: AUTHOR — actual endpoint and expected response
+Application URL: AUTHOR — verified HTTP(S) URL
+Cleanup: AUTHOR — exact owned process or project shutdown command</code></pre>
+    <p class="small">Use the returned repository-specific Watcher URL and origin-relative /artifacts/ and /review-assets/ links for retained packet files. No helper server should be silently required. Verify every page/media/receipt/source/archive link and fragment, not only this HTML. A localhost link does not prove loopback binding. The public Watcher CLI needs a verified unused high port; do not assume port 4317 or use unsupported CLI port 0.</p>
+  </section>
+
+  <section id="manual" aria-labelledby="manual-title">
+    <h2 id="manual-title">How to manually test</h2>
+    <ol><li><strong>Initial state:</strong> open the verified task/application URL using the stated test data. <strong>Expected:</strong> the identified revision and initial screen are visible.</li><li><strong>Action:</strong> perform the concrete user action associated with the criterion. <strong>Expected:</strong> state the visible result or measured behavior.</li><li><strong>Repeat/reset:</strong> explain how to retry, test the relevant viewport/device and return to a known state. <strong>Expected:</strong> give a specific observation, not only “works”.</li></ol>
+    <p class="small">These are illustrative authoring steps. Replace them with the actual task actions before requesting review.</p>
+  </section>
+
+  <section id="tests" aria-labelledby="tests-title">
+    <h2 id="tests-title">Tests performed</h2>
+    <p>Only report executed commands as performed tests. Preserve their real output and link available receipts.</p>
+    <div class="table-wrap" role="region" aria-label="Test execution results" tabindex="0"><table>
+      <thead><tr><th>Check / command</th><th>Observed result</th><th>Receipt / limit</th></tr></thead>
+      <tbody><tr><td>Automated acceptance checks</td><td>Unrun · template example</td><td>Insert actual command, exit code, counts, revision/time and report URL.</td></tr>
+      <tr><td>Browser/media/viewport verification</td><td>Unrun · template example</td><td>Record real page/media/keyboard/desktop/mobile observations.</td></tr>
+      <tr><td>Manual aesthetic or usability judgment</td><td>Pending human review</td><td>Automated rendering does not supply this decision.</td></tr></tbody>
+    </table></div>
+    <p class="small">Use explicit Failed, Skipped, Unrun, Stale or Not applicable states with reasons when those are the actual outcomes. A broken or missing useful resource is a gap to resolve.</p>
+  </section>
+
+  <section id="evidence" aria-labelledby="evidence-title">
+    <h2 id="evidence-title">Evidence showing the change</h2>
+    <p>Choose the evidence that helps judge this task: a useful picture, playable video, working interactive page/component, browser artifact, or readable output. Combine types where useful and omit irrelevant ones. There is no required screenshot-only format.</p>
+    <p>The working comparison below is an <strong>illustrative HTML component</strong>, not a screenshot. Try the buttons directly. Replace it with the actual task evidence or a verified link/live preview; never present a picture of a control as an operable control.</p>
+    <div class="controls" role="group" aria-label="Compare evidence" hidden>
+      <button type="button" data-view="before" aria-pressed="false">Before</button>
+      <button type="button" data-view="after" aria-pressed="true">After</button>
+    </div>
+    <figure data-evidence="before"><div class="sample"><strong>Before · illustrative layout</strong><p>Setup, criteria and outcomes are collected in one dense note.</p><p>Example content only.</p></div><figcaption>Before: illustrative authoring example, not a captured application state.</figcaption></figure>
+    <figure data-evidence="after"><div class="sample after"><strong>After · illustrative layout</strong><p>1. Acceptance criterion and expected observation</p><p>2. Reproducible startup and manual steps</p><p>3. Actual test results and pending human judgment</p></div><figcaption>After: illustrative authoring example, not runtime or approval evidence.</figcaption></figure>
+    <!-- Freeform evidence: use the actual artifact appropriate to the acceptance
+         criterion. Images need descriptive alt/captions and a native-size link
+         when detail matters; clips use native controls with no autoplay. For a
+         trusted interactive artifact, offer an open-page link and optionally
+         an iframe.evidence-preview with title and least-needed sandbox rights.
+         Retain originals. Do not load fictitious placeholder resource URLs. -->
+    <details data-illustrative><summary>Authoring patterns for optional evidence</summary><pre><code>&lt;!-- Picture: verified source, useful displayed size, original-size access --&gt;
+&lt;a href="/review-assets/TASK/desktop.png" target="_blank" rel="noopener noreferrer"&gt;Open original capture&lt;/a&gt;
+&lt;img src="/review-assets/TASK/desktop.png" alt="Observed result"&gt;
+&lt;!-- Video: retain only when motion/timing adds evidence --&gt;
+&lt;video controls preload="metadata" src="/review-assets/TASK/change.webm"&gt;&lt;/video&gt;
+&lt;!-- Interactive: a working read-only fixture, with a full-page fallback --&gt;
+&lt;a href="/review-assets/TASK/demo.html" target="_blank" rel="noopener noreferrer"&gt;Open working page&lt;/a&gt;
+&lt;iframe class="evidence-preview" title="Working task demo" src="/review-assets/TASK/demo.html" sandbox="allow-scripts"&gt;&lt;/iframe&gt;</code></pre><p>These escaped snippets are authoring examples. Resolve real artifact paths before use, verify actual desktop/mobile rendered dimensions and interactions, and use only the sandbox permissions the trusted test artifact needs. Do not embed the Watcher approval UI or a production surface with unintended writes.</p></details>
+    <h3>Other media and limits</h3>
+    <p>No runtime picture or clip is claimed by this generic example; its interactive HTML illustrates the evidence surface. In a real packet, select useful media/content for the task and explain relevant omissions. A desktop label must match the captured viewport and the readable displayed content; keep mobile evidence separately labeled rather than using it as the primary desktop view.</p>
+  </section>
+
+  <section id="decision" aria-labelledby="decision-title">
+    <h2 id="decision-title">Remaining observations and decision</h2>
+    <p><strong>Pending human review.</strong> Read the criteria and real evidence, perform the stated manual checks, then submit Approve or Request Changes through the existing Watcher gate or reply in chat.</p>
+    <p>AUTHOR: place the actual verified Watcher gate URL here. This evidence page does not record approvals or change workflow state.</p>
+    <p class="small">The facilitator opens the existing gate and immediately keeps its approval listener active. Watcher decisions resume the workflow; chat decisions are recorded verbatim using the existing tool. Timeout, page viewing and comparison/media controls never count as approval.</p>
+  </section>
+</main>
+<script>
+  const controls = document.querySelector('.controls');
+  if (controls) {
+    const buttons = [...controls.querySelectorAll('button')];
+    const figures = [...document.querySelectorAll('[data-evidence]')];
+    function selectEvidence(view) {
+      figures.forEach(figure => { figure.hidden = figure.dataset.evidence !== view; });
+      buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === view)));
+    }
+    buttons.forEach(button => button.addEventListener('click', () => selectEvidence(button.dataset.view)));
+    controls.hidden = false;
+    selectEvidence('after');
+  }
+</script>
+</body></html>

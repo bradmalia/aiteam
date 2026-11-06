@@ -27,12 +27,25 @@
     .lightbox-title { margin-top: 12px; font-size: 14px; color: var(--cyan); font-weight: 600; text-align: center; }
     .lightbox-close { position: absolute; top: 16px; right: 24px; font-size: 28px; color: var(--muted); cursor: pointer; background: transparent; border: 0; font-family: inherit; }
     .lightbox-close:hover { color: var(--text); }
+    a { color:var(--cyan); overflow-wrap:anywhere; } a:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
     @media (max-width:950px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
   </style>
 </head>
 <body>
 <main>
-  <header><div><h1>AITEAM Watch <span id="version" style="font-size: 14px; color: var(--muted); font-weight: normal;"></span></h1><div class="subtitle">Read-only live workflow monitor</div></div><div id="refresh" class="muted">Connecting…</div></header>
+  <header style="display:flex; flex-direction:column; gap:16px; margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:end; gap:20px; width:100%;">
+      <div>
+        <h1>AITEAM Watch <span id="version" style="font-size: 14px; color: var(--muted); font-weight: normal;"></span></h1>
+        <div class="subtitle">Read-only live workflow monitor</div>
+      </div>
+      <div id="refresh" class="muted">Connecting…</div>
+    </div>
+    <div id="peerProjectsBar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:6px; padding:8px 12px; width:100%; font-size:13px;">
+      <span style="color:var(--muted); font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">Active Projects:</span>
+      <div id="peerProjectsList" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+    </div>
+  </header>
   <section class="grid">
     <div class="panel"><div class="label">Status</div><div id="status" class="value">—</div></div>
     <div class="panel"><div class="label">Agent</div><div id="agent" class="value">—</div></div>
@@ -69,10 +82,62 @@
   const formatDuration = (seconds) => seconds == null ? '—' : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2,'0')}s`;
   let isExpanded = false;
   
-  const md = (text) => esc(text)
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.*?)`/g, '<code style="background:#0004;padding:2px 4px;border-radius:4px;">$1</code>')
-    .replace(/\n/g, '<br>');
+  function renderText(text, markdown = false) {
+    const template = document.createElement('template');
+    let safe = esc(text);
+    if (markdown) safe = safe
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/`(.*?)`/g, '<code style="background:#0004;padding:2px 4px;border-radius:4px;">$1</code>')
+      .replace(/\n/g, '<br>');
+    if (!/https?:\/\//i.test(String(text ?? ''))) return safe;
+    template.innerHTML = safe;
+    // Link only text nodes after escaping/formatting, never generated markup.
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const pattern = /\[([^\]\n]+)\]\((https?:\/\/[^\s<>"'`]+)\)|https?:\/\/[^\s<>"'`]+/gi;
+      const fragment = document.createDocumentFragment();
+      let position = 0;
+      for (const match of node.data.matchAll(pattern)) {
+        fragment.append(document.createTextNode(node.data.slice(position, match.index)));
+        const candidate = match[2] || match[0];
+        let url = candidate;
+        while (url.length) {
+          const last = url.at(-1);
+          const opening = {')':'(', ']':'[', '}':'{'}[last];
+          const unbalanced = opening && url.split(last).length > url.split(opening).length;
+          if ((!match[2] && /[.,;:!?…]/.test(last)) || unbalanced) url = url.slice(0, -1);
+          else break;
+        }
+        let valid = false;
+        try { valid = ['http:', 'https:'].includes(new URL(url).protocol); } catch {}
+        if (valid) {
+          const anchor = document.createElement('a');
+          anchor.setAttribute('href', url);
+          anchor.target = '_blank';
+          anchor.rel = 'noopener noreferrer';
+          anchor.textContent = match[1] || url;
+          fragment.append(anchor, document.createTextNode(candidate.slice(url.length)));
+        } else fragment.append(document.createTextNode(match[0]));
+        position = match.index + match[0].length;
+      }
+      fragment.append(document.createTextNode(node.data.slice(position)));
+      node.replaceWith(fragment);
+    }
+    return template.innerHTML;
+  }
+  const md = (text) => renderText(text, true);
+
+  function checkBadge(check) {
+    const reported = String(check.status ?? '').trim().toUpperCase();
+    const supported = ['PASS', 'FAIL', 'PENDING', 'UNKNOWN', 'SKIPPED', 'UNRUN'];
+    const status = reported
+      ? (supported.includes(reported) ? reported : 'UNKNOWN')
+      : (check.passed === true ? 'PASS' : check.passed === false ? 'FAIL' : 'UNKNOWN');
+    const color = status === 'PASS' ? 'var(--green)' : status === 'FAIL' ? 'var(--red)' : 'var(--amber)';
+    return `<span style="color:${color}">[${status}]</span>`;
+  }
 
   function extractScreenshots(text, explicitScreenshots = []) {
     const list = Array.isArray(explicitScreenshots) ? [...explicitScreenshots] : [];
@@ -158,7 +223,7 @@
       html += `<div><strong>Findings</strong><ul>${result.findings.map(f => `<li><span style="color:var(--amber)">[${esc(f.severity)}]</span> ${md(f.recommendation || f.description || f.id)}</li>`).join('')}</ul></div>`;
     }
     if (result.checks && result.checks.length) {
-      html += `<div><strong>Checks</strong><ul>${result.checks.map(c => `<li><span style="color:${c.status==='PASS'?'var(--green)':'var(--red)'}">[${esc(c.status)}]</span> ${md(c.name)}: ${md(c.evidence)}</li>`).join('')}</ul></div>`;
+      html += `<div><strong>Checks</strong><ul>${result.checks.map(c => `<li>${checkBadge(c)} ${md(c.name)}: ${md(c.evidence || c.actual || '')}</li>`).join('')}</ul></div>`;
     }
     return html;
   }
@@ -191,7 +256,7 @@
         const color = d.type === 'PRD' ? 'var(--cyan)' : d.type === 'TRD' ? 'var(--amber)' : 'var(--text)';
         const bg = d.type === 'PRD' ? 'rgba(87,230,237,0.1)' : d.type === 'TRD' ? 'rgba(255,209,102,0.1)' : 'rgba(255,255,255,0.05)';
         const border = d.type === 'PRD' ? 'rgba(87,230,237,0.3)' : d.type === 'TRD' ? 'rgba(255,209,102,0.3)' : 'var(--border)';
-        return `<a href="${esc(d.path)}" target="_blank" style="display:inline-flex; align-items:center; gap:6px; background:${bg}; border:1px solid ${border}; color:${color}; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:600; font-size:13px; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">` +
+        return `<a href="${esc(d.path)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; gap:6px; background:${bg}; border:1px solid ${border}; color:${color}; text-decoration:none; padding:4px 10px; border-radius:6px; font-weight:600; font-size:13px; transition:opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">` +
           `<span>📄</span> <span>${esc(d.name)}</span> <span style="font-size:10px; background:#0004; padding:1px 5px; border-radius:3px; font-weight:normal; color:var(--muted);">${Math.round(d.size / 1024)} KB</span> <span>↗</span>` +
           `</a>`;
       }).join('');
@@ -305,11 +370,12 @@
 
       let qaHtml = '';
       const qa = task.qa || task.qaFailure;
+      if (qa?.summary) qaHtml += `<div style="margin-top:10px;"><strong>QA Summary</strong><p>${md(qa.summary)}</p></div>`;
+      if (qa?.evidence?.length) qaHtml += `<div style="margin-top:10px;"><strong>QA Evidence</strong><ul>${qa.evidence.map(item => `<li>${md(item)}</li>`).join('')}</ul></div>`;
       if (qa?.checks?.length) {
         qaHtml += `<div style="margin-top:10px;"><strong>QA Validation Checks</strong><ul>`;
         for (const c of qa.checks) {
-          const stColor = c.status === 'PASS' ? 'var(--green)' : 'var(--red)';
-          qaHtml += `<li><span style="color:${stColor}">[${esc(c.status)}]</span> <strong>${esc(c.name)}</strong>: ${md(c.evidence || '')}</li>`;
+          qaHtml += `<li>${checkBadge(c)} <strong>${esc(c.name)}</strong>: ${md(c.evidence || c.actual || '')}</li>`;
         }
         qaHtml += `</ul></div>`;
       }
@@ -428,7 +494,7 @@
       const prevScroll = liveLogEl.scrollTop;
       const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= prevScroll + 50;
       if (liveLogEl.textContent !== data.activeLogTail) {
-        liveLogEl.textContent = data.activeLogTail;
+        liveLogEl.innerHTML = renderText(data.activeLogTail);
         if (isScrolledToBottom) {
           liveLogEl.scrollTop = liveLogEl.scrollHeight;
         } else {
@@ -474,7 +540,7 @@
       details += `<table style="width:100%; border-collapse:collapse; margin-top:8px;">`;
       for (const [k, v] of Object.entries(event)) {
         if (k === 'at' || k === 'type' || k === 'responseSummary' || k === 'responseOutcome' || k === 'responseEvidence') continue;
-        details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre style="white-space:pre-wrap; word-break:break-word; max-height:250px; overflow-y:auto; margin:0;">${esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
+        details += `<tr><td style="color:var(--muted); padding:4px 8px; border:1px solid #ffffff12; width:150px; vertical-align:top;">${esc(k)}</td><td style="padding:4px 8px; border:1px solid #ffffff12;"><pre style="white-space:pre-wrap; word-break:break-word; max-height:250px; overflow-y:auto; margin:0;">${renderText(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v))}</pre></td></tr>`;
       }
       details += `</table>`;
       let localTime = '';
@@ -484,7 +550,7 @@
           localTime = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
         } catch { localTime = esc(event.at); }
       }
-      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${localTime} <span class="event-type">${esc(type)}</span></span> ${badge}${esc(summaryText)}</summary>${details}</details>`;
+      return `<details class="event" data-id="${esc(eventId)}"${isOpen}><summary><span class="event-time">${localTime} <span class="event-type">${esc(type)}</span></span> ${badge}${renderText(summaryText)}</summary>${details}</details>`;
     }).join('') || 'No events yet.';
     
     if (container && prevScrollTop > 0) {
@@ -615,12 +681,44 @@
     }
   }
 
+  let peerRefreshCount = 0;
+  async function updatePeers() {
+    try {
+      const res = await fetch('/api/peers', { cache: 'no-store' });
+      if (!res.ok) return;
+      const { peers } = await res.json();
+      const bar = $('peerProjectsBar');
+      const list = $('peerProjectsList');
+      if (!peers || peers.length <= 1) {
+        if (peers && peers.length === 1) {
+          bar.style.display = 'flex';
+          list.innerHTML = peers.map(p => `<span style="background:rgba(87,230,237,0.15); border:1px solid var(--cyan); color:var(--cyan); padding:3px 10px; border-radius:12px; font-weight:600;">● ${esc(p.name)} (port ${p.port})</span>`).join('');
+          return;
+        }
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+      list.innerHTML = peers.map(p => {
+        if (p.active) {
+          return `<span style="background:rgba(87,230,237,0.18); border:1px solid var(--cyan); color:var(--cyan); padding:3px 10px; border-radius:12px; font-weight:600;">● ${esc(p.name)} (this dashboard)</span>`;
+        }
+        const stageTag = p.stage ? ` <span style="font-size:11px; color:var(--amber);">[${esc(p.stage)}]</span>` : '';
+        return `<a href="http://localhost:${p.port}" target="_blank" style="text-decoration:none; background:rgba(255,255,255,0.06); border:1px solid var(--border); color:var(--text); padding:3px 10px; border-radius:12px; transition:border-color 0.15s, background 0.15s;" onmouseover="this.style.borderColor='var(--cyan)'; this.style.background='rgba(87,230,237,0.08)'" onmouseout="this.style.borderColor='var(--border)'; this.style.background='rgba(255,255,255,0.06)'">↗ ${esc(p.name)} (port ${p.port})${stageTag}</a>`;
+      }).join('');
+    } catch {}
+  }
+
   async function refresh() {
     try {
       const response = await fetch('/api/state', { cache:'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       render(data);
+      if (peerRefreshCount % 4 === 0) {
+        updatePeers();
+      }
+      peerRefreshCount++;
     } catch (error) {
       $('refresh').textContent = `Connection error: ${error.message}`;
     }

@@ -13,49 +13,34 @@ description: >-
 AITeam provides an automated software engineering workflow that coordinates specialized subagents through structured, mechanically enforced quality gates.
 
 ```
-Request ──► Intake/PRD ──► 🛑 PRD APPROVAL ──► Architecture ──► 🛑 TRD APPROVAL
-                                                                       │
-                                                                       ▼
-                                                                  Task Planning
-                                                                       │
-                 ┌───────────────────────────────────────────────────────┴────────┐
-                 ▼                                                                ▼
-        [Task N: Implementation]                                       [Next Task 1..N]
-                 │
-                 ▼
-        [Code Review Gate]  ── (Fail) ──► Needs Rework
-                 │ (Pass)
-                 ▼
-        [QA Black-Box Gate] ── (Fail) ──► Needs Rework
-                 │ (auto-pass)
-                 ▼
-        🛑 QA SIGN-OFF (per-task)
-                 │ (approved)
-                 ▼
-        [Maintainer Git Commit]
+Intake interview → PRD → human PRD approval
+  → Architecture → UI Design → Planning → QA Test Planning → Critical Review
+  → human TRD approval → Environment Readiness
+  → [Task: Implementation → independent Code Review → independent QA
+       → required human QA sign-off (or existing automation-only bypass)
+       → Maintainer Integration] → next task
 
-  🛑 = HARD HUMAN-APPROVAL GATE — the workflow does not advance, and NOTHING is
-      committed, until the user explicitly approves it in the Watcher Dashboard
-      Portal or in chat. Same-turn self-approval is blocked (AITEAM_SELF_APPROVAL_BLOCKED).
+Human decisions must be real Watcher/chat responses. Viewing evidence or
+passing automated tests does not supply approval. Fingerprint checks remain.
 ```
 
 ---
 
 ## Human Approval Gates & Mechanical Enforcement (MANDATORY)
 
-Every AITeam run has **three hard human-approval gates** plus **strict per-stage artifact and order checks**:
+AITeam has **three human-approval gate types**, plus the intake interview and strict per-stage artifact/order checks. The per-task QA human gate applies only when manual validation is required; eligible automation-only tasks retain their existing bypass:
 
 | Gate | When it opens | Enforced Disk Prerequisite | User Action |
 |------|---------------|----------------------------|-------------|
 | **PRD** | After `intake` completes | `.aiteam/docs/prd.html` must exist and be non-empty | Click **Approve Gate** in Watcher Portal or reply `APPROVED` in chat |
-| **TRD** | After `architecture` completes | `.aiteam/docs/trd.html` must exist and be non-empty | Click **Approve Gate** in Watcher Portal or reply `APPROVED` in chat |
+| **TRD** | After `architecture` → `ui-design` → `planning` → `qa-planning` → `critical-review` | `.aiteam/docs/trd.html` must exist and be non-empty | Click **Approve Gate** in Watcher Portal or reply `APPROVED` in chat |
 | **QA (per-task)** | After `qa` passes | Automated test in `tests/qa/` must exist on disk & pass | Click **Pass & Approve** in Watcher Portal or reply `PASS: …` in chat |
 
 **Coordinator protocol at each gate (NEVER self-approve):**
 1. Present the artifact (`.aiteam/docs/prd.html` / `.aiteam/docs/trd.html`) or QA verification checklist to the user.
 2. **Immediately call `aiteam_wait_for_approval`** (or run `node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "$PWD" --gate <prd|trd|qa> [--taskId <id>]`).
-3. This command **blocks and polls `.aiteam/session.json`** until the user clicks **Approve Gate** or **Request Changes** in the Watcher Dashboard Portal (`http://localhost:4317`), then automatically resolves with the user's decision so you continue immediately without requiring terminal input:
-   - If **`APPROVED`** → immediately execute the next stage (`architecture`, `planning`, or `integration`).
+3. This command **blocks and polls `.aiteam/session.json`** until the user clicks **Approve Gate** or **Request Changes** in the Watcher Dashboard Portal at the actual repository-specific URL, then automatically resolves with the user's decision so you continue immediately without requiring terminal input:
+   - If **`APPROVED`** → immediately execute the exact returned server directive; never guess or skip the next stage.
    - If **`CHANGES_REQUESTED`** → revise the artifact (or route the task back to rework) per the returned feedback notes, call `stage-complete` / `aiteam_advance`, and call `wait-approval` again.
 
 ---
@@ -73,12 +58,9 @@ When asked to build or maintain a project using AITeam:
      ```
    - **Resumed run**: Inspect `.aiteam/session.json` (or call `aiteam_status`) to identify current stage and active gate.
 
-2. **Auto-Launch Watcher & Communicate URL (Mandatory)**:
-   Always ensure the watcher is running on the project:
-   ```bash
-   nohup /home/brad/aiteam/bin/aiteam-watch "$PWD" --port 4317 >/dev/null 2>&1 &
-   ```
-   **Rule:** Proactively report the watcher URL (e.g. `http://localhost:4317`) in your initial response so the user can view PRD/TRD artifacts and approve gates directly in the portal.
+2. **Verify Watcher & Communicate Its Actual URL (Mandatory)**:
+   Prefer the current MCP start/status result and report its exact repository-specific Watcher URL. Never assume port 4317 or that a prior process survived. Before reusing a preview, inspect its actual bind address, process, repository and served content; a localhost URL does not establish loopback binding.
+   For a new local preview, use the verified public Node CLI with `--host 127.0.0.1` and an inspected unused high port (1024–65535), or the wrapper's supported `AITEAM_WATCH_HOST=127.0.0.1` and `AITEAM_WATCH_PORT` environment inputs. The public CLI rejects port `0`; only API fixtures may request an ephemeral port. Handle port races by selecting another port, never terminating its occupant. See [the complete launch/verification procedure](guides/manual-qa-approval-pages.md).
 
 ---
 
@@ -109,15 +91,23 @@ When asked to build or maintain a project using AITeam:
   ```bash
   node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage architecture --result '{"outcome":"PASS","summary":"TRD drafted"}'
   ```
-- **🛑 TRD GATE (hard stop):** Present `.aiteam/docs/trd.html` to the user and **end your turn**. Wait for their approval in the Watcher Portal or chat.
+- Architecture advances to **UI Design**, not TRD approval.
 
-### Stage 3: Task Planning & Ledger Creation (`skill/contracts/planner.md`)
-- (Unblocked once **both the PRD and TRD gates are approved**.)
-- Decompose the architecture into an ordered list of modular tasks in `TASK_LEDGER.md` (`### T1: Title` and `- [ ] AC-1: ...` bullets) following `/home/brad/aiteam/skill/contracts/planner.md`.
-- Register the task ledger:
-  ```bash
-  node /home/brad/aiteam/skill/lib/state-bridge.mjs update-ledger --repo "$PWD" --ledger TASK_LEDGER.md
-  ```
+### Stage 3: UI/UX Design (`skill/contracts/ui-designer.md`)
+- Append user flows, layouts, interaction states and accessibility rules to the TRD, then complete `ui-design`.
+
+### Stage 4: Task Planning (`skill/contracts/planner.md`)
+- After UI Design, write `TASK_LEDGER.md` with `### T1: Title` and `- [ ] AC-1: ...` entries, append the implementation plan to the TRD, and complete `planning` with its ledger path.
+
+### Stage 5: QA Test Planning (`skill/contracts/qa-planner.md`)
+- Author the pre-implementation black-box plan and regression strategy in the TRD, including the review-page plan when manual QA is required. Complete `qa-planning` before Critical Review.
+
+### Stage 6: Critical Review and Human TRD Approval
+- Audit the complete architecture, UI, tasks and QA plan using `skill/contracts/critical-reviewer.md`; complete `critical-review`.
+- Present the finalized TRD and immediately invoke the active `aiteam_wait_for_approval(gate="trd")` listener. Process the actual recorded decision and continue the server directive; do not merely post links and end the workflow.
+
+### Stage 7: Environment Readiness (`skill/contracts/environment-readiness.md`)
+- Only after actual TRD approval, verify the required build/runtime/browser capabilities and complete `environment-readiness` before task implementation.
 
 ---
 
@@ -159,7 +149,10 @@ For each task in `TASK_LEDGER.md`, execute these 4 gates in strict sequential or
   ```bash
   node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage qa --taskId "<task-id>" --result '<json-result>'
   ```
-- **🛑 QA SIGN-OFF GATE (for tasks requiring human manual verification):** Present the automated results and manual verification checklist to the user and **end your turn**. Wait for their decision in the Watcher Portal or chat.
+- **Manual QA approval page (required for every existing manual QA gate):** Follow [the canonical procedure](guides/manual-qa-approval-pages.md) and adapt [the reusable HTML template](templates/manual-qa-review.html) to `.aiteam/docs/qa-<safe-task-id>.html`. Publish and verify it before opening the gate. Include task/revision identity, acceptance criteria, exact service startup/readiness/manual actions/expected results/cleanup, tests actually performed, useful screenshot/video/output and pending human judgment. Label failed/skipped/unrun/stale/example evidence and explain N/A media honestly.
+- **Durable packet links:** Keep evidence in `.aiteam/reviews/<task>/` and use origin-relative `/review-assets/` references alongside `/artifacts/` pages. Audit all outbound links/media/receipts/sources/archives/fragments and manual URLs against intended content, with real browser navigation. Recheck after restart/resume; do not hand off only a healthy top-level page whose other links rely on dead fixture servers.
+- **Freeform, usable evidence:** Choose task-appropriate pictures, video, real interactive/browser content or output; no screenshot-only format is required. Evidence must be readable at useful desktop size. Show working controls or a live/full-page artifact when interaction matters, not only an image containing buttons. Verify the actual approval-page Before/After/playback/frame behavior and mobile/no-JavaScript fallback without changing approval semantics.
+- **🛑 QA SIGN-OFF:** Present the verified clickable HTTP(S) page and concise checks; immediately invoke the active `aiteam_wait_for_approval(gate="qa", taskId="...")` listener. The page is evidence-only. A Watcher decision resumes its exact server directive; an actual chat decision is recorded verbatim using `aiteam_record_approval` before continuing. Timeout is not approval: check status for a saved response or re-establish a listener for a still-pending gate. Never request an already recorded approval again. Existing automation-only bypass and fingerprint protections remain unchanged.
 
 ### Gate 4: Maintainer Git Integration (`maintainer`)
 - **Blocked until the QA sign-off gate passes or automated QA bypass is recorded** (`AITEAM_GATE_BLOCKED` / `AITEAM_STAGE_ORDER_VIOLATION`).

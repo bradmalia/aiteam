@@ -355,6 +355,70 @@ function sendArtifact(response, repo, pathname) {
   return response.end(fs.readFileSync(artifactPath));
 }
 
+function sendReviewAsset(request, response, repo, pathname) {
+  let relative;
+  try { relative = decodeURIComponent(pathname.slice('/review-assets/'.length)); }
+  catch { return sendJson(response, { error: 'Invalid review asset path.' }, 400); }
+  if (!relative || relative.includes('\0') || relative.includes('\\')) {
+    return sendJson(response, { error: 'Invalid review asset path.' }, 400);
+  }
+  const inside = (root, file) => {
+    const part = path.relative(root, file);
+    return part !== '' && part !== '..' && !part.startsWith(`..${path.sep}`) && !path.isAbsolute(part);
+  };
+  const root = path.resolve(repo, '.aiteam', 'reviews');
+  const candidate = path.resolve(root, relative);
+  if (!inside(root, candidate)) return sendJson(response, { error: 'Review asset is outside its root.' }, 403);
+  let file;
+  let size;
+  try {
+    const realRoot = fs.realpathSync(root);
+    file = fs.realpathSync(candidate);
+    if (realRoot !== path.join(fs.realpathSync(repo), '.aiteam', 'reviews') || !inside(realRoot, file)) {
+      return sendJson(response, { error: 'Review asset is outside its root.' }, 403);
+    }
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return sendJson(response, { error: 'Review asset not found.' }, 404);
+    size = stat.size;
+  } catch { return sendJson(response, { error: 'Review asset not found.' }, 404); }
+  const types = {
+    '.html':'text/html; charset=utf-8', '.json':'application/json; charset=utf-8', '.css':'text/css; charset=utf-8',
+    '.txt':'text/plain; charset=utf-8', '.log':'text/plain; charset=utf-8',
+    '.md':'text/plain; charset=utf-8', '.mjs':'text/plain; charset=utf-8', '.js':'text/plain; charset=utf-8',
+    '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp',
+    '.gif':'image/gif', '.svg':'image/svg+xml', '.mp4':'video/mp4', '.webm':'video/webm', '.ogg':'video/ogg',
+    '.pdf':'application/pdf'
+  };
+  const contentType = types[path.extname(file).toLowerCase()];
+  if (!contentType) return sendJson(response, { error: 'Unsupported review asset format.' }, 415);
+  const headers = {
+    'Content-Type':contentType, 'Content-Length':size, 'Cache-Control':'no-store',
+    'X-Content-Type-Options':'nosniff', 'Accept-Ranges':'bytes'
+  };
+  let start = 0;
+  let end = size - 1;
+  let status = 200;
+  if (request.method === 'GET' && request.headers.range) {
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
+    if (range && (range[1] || range[2])) {
+      start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+    }
+    if (!range || (!range[1] && !range[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+      response.writeHead(416, { 'Content-Range':`bytes */${size}`, 'Cache-Control':'no-store' });
+      return response.end();
+    }
+    status = 206;
+    headers['Content-Length'] = end - start + 1;
+    headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  }
+  response.writeHead(status, headers);
+  if (request.method === 'HEAD' || size === 0) return response.end();
+  const stream = fs.createReadStream(file, { start, end });
+  stream.on('error', () => response.destroy());
+  return stream.pipe(response);
+}
+
 function sendScreenshot(response, activeRepo, requestedPath) {
   if (!requestedPath || typeof requestedPath !== 'string') {
     return sendJson(response, { error: 'path query parameter is required' }, 400);
@@ -460,10 +524,49 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
       return;
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return sendJson(response, { error: 'Only GET and HEAD are supported.' }, 405);
+    if (url.pathname === '/api/peers') {
+      const probePorts = async () => {
+        const peers = [];
+        const base = 4317;
+        for (let p = base; p <= base + 15; p++) {
+          try {
+            const peer = await new Promise((resPeer) => {
+              const reqPeer = http.get(`http://127.0.0.1:${p}/api/state`, (r) => {
+                if (r.statusCode !== 200) return resPeer(null);
+                let b = '';
+                r.on('data', chunk => b += chunk);
+                r.on('end', () => {
+                  try {
+                    const d = JSON.parse(b);
+                    if (d && d.repository) {
+                      resPeer({
+                        port: p,
+                        repository: d.repository,
+                        name: path.basename(d.repository),
+                        stage: d.session ? d.session.currentStage : null,
+                        status: d.session ? d.session.status : null,
+                        active: p === port
+                      });
+                    } else resPeer(null);
+                  } catch { resPeer(null); }
+                });
+              });
+              reqPeer.on('error', () => resPeer(null));
+              reqPeer.setTimeout(250, () => { reqPeer.destroy(); resPeer(null); });
+            });
+            if (peer) peers.push(peer);
+          } catch {}
+        }
+        return peers;
+      };
+      probePorts().then(peers => sendJson(response, { peers })).catch(err => sendJson(response, { peers: [], error: err.message }));
+      return;
+    }
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
     if (url.pathname === '/api/screenshot') return sendScreenshot(response, activeRepo, url.searchParams.get('path'));
     if (url.pathname.startsWith('/artifacts/')) return sendArtifact(response, activeRepo, url.pathname);
+    if (url.pathname.startsWith('/review-assets/')) return sendReviewAsset(request, response, activeRepo, url.pathname);
     if (url.pathname === '/' || url.pathname === '/index.html') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       return response.end(fs.readFileSync(dashboardPath));

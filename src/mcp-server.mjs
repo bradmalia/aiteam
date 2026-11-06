@@ -36,35 +36,57 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
 const VERSION = PACKAGE_JSON.version || '0.7.0';
 
-// Ensure the Watcher dashboard is running for the repo
-function ensureWatcher(repo, port = 4317) {
+// Probe a port to see if a Watcher is running, and if so, for which repo
+function checkWatcherPort(http, targetRepo, port) {
   return new Promise((resolve) => {
-    try {
-      // Check if watcher is already up
-      import('node:http').then(({ default: http }) => {
-        const req = http.get(`http://127.0.0.1:${port}/api/state`, (res) => {
-          if (res.statusCode === 200) return resolve(`http://localhost:${port}`);
-          spawnWatcher();
-        });
-        req.on('error', spawnWatcher);
-        req.setTimeout(500, () => { req.destroy(); spawnWatcher(); });
+    const req = http.get(`http://127.0.0.1:${port}/api/state`, (res) => {
+      if (res.statusCode !== 200) return resolve({ running: false, port });
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const isMatch = Boolean(data && data.repository && path.resolve(data.repository) === path.resolve(targetRepo));
+          resolve({ running: true, match: isMatch, repo: data.repository, port });
+        } catch {
+          resolve({ running: true, match: false, port });
+        }
       });
-    } catch {
-      spawnWatcher();
+    });
+    req.on('error', () => resolve({ running: false, port }));
+    req.setTimeout(500, () => { req.destroy(); resolve({ running: false, port }); });
+  });
+}
+
+// Ensure the Watcher dashboard is running for the repo on an appropriate port
+async function ensureWatcher(repo, basePort = 4317) {
+  try {
+    const { default: http } = await import('node:http');
+    const resolvedTarget = path.resolve(repo);
+    let chosenPort = null;
+
+    // Scan ports 4317..4330
+    for (let p = basePort; p <= basePort + 15; p++) {
+      const res = await checkWatcherPort(http, resolvedTarget, p);
+      if (res.running && res.match) {
+        return `http://localhost:${p}`;
+      }
+      if (!res.running && chosenPort === null) {
+        chosenPort = p;
+      }
     }
 
-    function spawnWatcher() {
-      try {
-        const binPath = path.join(ROOT_DIR, 'bin', 'aiteam-watch');
-        const child = spawn(binPath, [repo, '--port', String(port)], {
-          detached: true,
-          stdio: 'ignore'
-        });
-        child.unref();
-      } catch {}
-      resolve(`http://localhost:${port}`);
-    }
-  });
+    const spawnPort = chosenPort || basePort;
+    const binPath = path.join(ROOT_DIR, 'bin', 'aiteam-watch');
+    const child = spawn(binPath, [resolvedTarget, '--port', String(spawnPort)], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    return `http://localhost:${spawnPort}`;
+  } catch {
+    return `http://localhost:${basePort}`;
+  }
 }
 
 function resolveRepo(rawRepo) {
