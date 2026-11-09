@@ -6,7 +6,7 @@
   "description": "Lightweight, skill-based agentic engineering team and live progress dashboard",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/watch-server.mjs && node --check skill/lib/state-bridge.mjs && node --check skill/lib/runner-adapter.mjs && node --check skill/lib/fingerprint.mjs"
+    "check": "node --check src/mcp-server.mjs && node --check src/watcher-discovery.mjs && node --check src/watch-server.mjs && node --check skill/lib/state-bridge.mjs && node --check skill/lib/runner-adapter.mjs && node --check skill/lib/fingerprint.mjs"
   },
   "engines": {
     "node": ">=20"

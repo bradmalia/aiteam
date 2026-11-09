@@ -105,6 +105,12 @@ aiteam-watch . --port 22924
 ```
 Open `http://localhost:22924` in your browser.
 
+MCP start/status calls reuse a watcher only after verifying its repository. They
+search ports 4317–4332, skip occupied ports, and verify a new watcher is ready
+before returning its URL. If discovery or startup fails, the tool reports an
+error instead of returning a fallback address. Use the URL returned by the tool;
+port 4317 may belong to another project.
+
 ![AITeam Watcher Dashboard](docs/images/aiteam-watcher-dashboard.png)
 
 ### 2. Trigger the Workflow
