@@ -50,5 +50,5 @@ else
 fi
 
 echo "=== AITeam Skill successfully installed into $target_repo ==="
-echo "Launch the live watcher anytime with:"
-echo "  $aiteam_home/bin/aiteam-watch \"$target_repo\" --port 22924"
+echo "Launch or discover the live watcher anytime with:"
+echo "  $aiteam_home/bin/aiteam-watch \"$target_repo\""

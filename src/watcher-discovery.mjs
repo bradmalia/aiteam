@@ -41,6 +41,8 @@ function portAvailable(port) {
   });
 }
 
+const spawnedWatchers = new Map();
+
 function launchWatcher(repo, port) {
   return spawn(process.execPath, [fileURLToPath(new URL('./watch-server.mjs', import.meta.url)),
     '--repo', repo, '--host', '127.0.0.1', '--port', String(port)],
@@ -58,9 +60,26 @@ export async function ensureWatcher(repo, options = {}) {
   try { return await operation; } finally { pending.delete(key); }
 }
 
+export async function stopWatcher(repo) {
+  const identity = repositoryIdentity(repo);
+  const entry = spawnedWatchers.get(identity);
+  if (entry) {
+    spawnedWatchers.delete(identity);
+    try {
+      if (entry.child && entry.child.exitCode === null && !entry.child.signalCode) {
+        entry.child.kill('SIGTERM');
+      }
+    } catch {}
+  }
+}
+
 async function discover(repo, { basePort = 4317, portCount = 16,
   startupTimeoutMs = 5000, launch = launchWatcher } = {}) {
-  const ports = Array.from({ length: portCount }, (_, i) => basePort + i);
+  const envPort = Number(process.env.AITEAM_WATCH_PORT);
+  const basePorts = Array.from({ length: portCount }, (_, i) => basePort + i);
+  const ports = (Number.isInteger(envPort) && envPort >= 1024 && envPort <= 65535 && !basePorts.includes(envPort))
+    ? [envPort, ...basePorts]
+    : basePorts;
   // Search the whole range for an existing matching watcher before allocating.
   for (const port of ports) {
     if (await matchesRepository(repo, port)) return `http://localhost:${port}`;
@@ -74,7 +93,10 @@ async function discover(repo, { basePort = 4317, portCount = 16,
     const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
       // Verify actual repository ownership, including a possible bind race.
-      if (await matchesRepository(repo, port)) return `http://localhost:${port}`;
+      if (await matchesRepository(repo, port)) {
+        spawnedWatchers.set(repo, { child, port });
+        return `http://localhost:${port}`;
+      }
       if (failure || child.exitCode !== null || child.signalCode) break;
       await delay(50);
     }

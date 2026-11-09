@@ -29,7 +29,7 @@ The state engine enforces a strict **two-step intake process**. You CANNOT jump 
      }
      ```
    - Present the numbered questions clearly to the user in chat, then **immediately call `aiteam_wait_for_approval(gate="intake")`** (or run `node .agents/skills/aiteam/lib/state-bridge.mjs wait-approval --repo "$PWD" --gate intake`).
-   - The user can answer each question directly in the Watcher Dashboard Portal (`http://localhost:4317`) or reply in chat.
+   - The user can answer each question directly in the Watcher Dashboard Portal (using the exact repository-specific Watcher URL returned by `aiteam_start` / `aiteam_advance`) or reply in chat.
 
 ### Step 2: Author `.aiteam/docs/prd.html` (`outcome: "PASS"`)
 1. **Incorporate All User Answers**:

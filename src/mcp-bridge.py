@@ -84,7 +84,7 @@ def aiteam_advance(
 
 @mcp.tool()
 def aiteam_wait_for_approval(gate: str, taskId: str = "", repository: str = "") -> str:
-    """Block and wait until the human user clicks 'Approve Gate' or 'Request Changes' in the Watcher Dashboard Portal for an open PRD, TRD, or per-task QA gate, then automatically return the next directive."""
+    """Block and wait until the human user submits answers or clicks 'Approve Gate' / 'Request Changes' in the Watcher Dashboard Portal for an open intake, PRD, TRD, or per-task QA gate, then automatically return the next directive."""
     return call_node("aiteam_wait_for_approval", {
         "gate": gate,
         "taskId": taskId,
@@ -93,7 +93,7 @@ def aiteam_wait_for_approval(gate: str, taskId: str = "", repository: str = "") 
 
 @mcp.tool()
 def aiteam_record_approval(gate: str, decision: str, taskId: str = "", response: str = "", repository: str = "") -> str:
-    """Record human approval or change requests for PRD, TRD, or per-task QA gates ONLY after the human user replies in chat."""
+    """Record human approval or change requests for intake, PRD, TRD, or per-task QA gates ONLY after the human user replies in chat."""
     return call_node("aiteam_record_approval", {
         "gate": gate,
         "decision": decision,

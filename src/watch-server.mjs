@@ -468,17 +468,20 @@ function sendScreenshot(response, activeRepo, requestedPath) {
   return response.end(fs.readFileSync(resolved));
 }
 
-export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) {
-  let activeRepo = path.resolve(repo);
+export function createWatchServer({ repo, port = 4317, host = '0.0.0.0', exitOnMissingRepo = false } = {}) {
+  const activeRepo = path.resolve(repo);
+  let repoCheckTimer = null;
+  if (exitOnMissingRepo) {
+    repoCheckTimer = setInterval(() => {
+      if (!fs.existsSync(activeRepo)) {
+        clearInterval(repoCheckTimer);
+        server.close(() => process.exit(0));
+      }
+    }, 5000);
+    repoCheckTimer.unref();
+  }
   const server = http.createServer((request, response) => {
     const url = new URL(request.url || '/', `http://${host}:${port}`);
-    if (url.pathname === '/api/set-repo' && (request.method === 'GET' || request.method === 'POST')) {
-      const newRepo = url.searchParams.get('repo');
-      if (newRepo) {
-        activeRepo = path.resolve(newRepo);
-      }
-      return sendJson(response, { ok: true, repository: activeRepo });
-    }
     if (url.pathname === '/api/approve' && request.method === 'POST') {
       let body = '';
       request.on('data', (chunk) => { body += chunk; });
@@ -527,6 +530,7 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
     if (url.pathname === '/api/peers') {
       const probePorts = async () => {
         const peers = [];
+        const seenRepos = new Set();
         const base = 4317;
         for (let p = base; p <= base + 15; p++) {
           try {
@@ -538,14 +542,20 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
                 r.on('end', () => {
                   try {
                     const d = JSON.parse(b);
-                    if (d && d.repository) {
+                    const isSelf = p === port;
+                    const repoExists = Boolean(d && d.repository && fs.existsSync(d.repository));
+                    const hasSession = Boolean(d && d.session);
+                    if (repoExists && (isSelf || hasSession)) {
+                      let repoKey = path.resolve(d.repository);
+                      try { repoKey = fs.realpathSync(d.repository); } catch {}
                       resPeer({
                         port: p,
                         repository: d.repository,
+                        repoKey,
                         name: path.basename(d.repository),
                         stage: d.session ? d.session.currentStage : null,
                         status: d.session ? d.session.status : null,
-                        active: p === port
+                        active: isSelf
                       });
                     } else resPeer(null);
                   } catch { resPeer(null); }
@@ -554,7 +564,18 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0' } = {}) 
               reqPeer.on('error', () => resPeer(null));
               reqPeer.setTimeout(250, () => { reqPeer.destroy(); resPeer(null); });
             });
-            if (peer) peers.push(peer);
+            if (peer) {
+              if (peer.active) {
+                // Always keep self; remove any earlier duplicate for the same repo
+                const dupIdx = peers.findIndex(x => x.repoKey === peer.repoKey);
+                if (dupIdx !== -1) peers.splice(dupIdx, 1);
+                seenRepos.add(peer.repoKey);
+                peers.push(peer);
+              } else if (!seenRepos.has(peer.repoKey)) {
+                seenRepos.add(peer.repoKey);
+                peers.push(peer);
+              }
+            }
           } catch {}
         }
         return peers;
@@ -582,7 +603,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const repo = repoArgument();
     const port = portArgument();
     const host = hostArgument();
-    const server = createWatchServer({ repo, port, host });
+    const server = createWatchServer({ repo, port, host, exitOnMissingRepo: true });
     server.once('listening', () => process.stdout.write(`AITEAM watch: http://${host}:${port}/\nRepository: ${repo}\n`));
     server.on('error', (error) => { process.stderr.write(`AITEAM watch failed: ${error.message}\n`); process.exitCode = 1; });
   } catch (error) {

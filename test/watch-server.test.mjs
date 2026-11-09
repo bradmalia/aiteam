@@ -25,7 +25,7 @@ test('watch server presents Agy stdout when stderr has no Codex progress stream'
   fs.writeFileSync(path.join(repo, '.aiteam', 'runs', `${runBase}.stderr.txt`), 'non-fatal warning\n');
 
   const server = createWatchServer({ repo, port: 0 });
-  t.after(() => server.close());
+  t.after(() => { server.close(); fs.rmSync(repo, { recursive: true, force: true }); });
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -52,7 +52,7 @@ test('watch server serves screenshots via /api/screenshot endpoint', async (t) =
   fs.writeFileSync(path.join(shotsDir, 'modal-preview.png'), testPng);
 
   const server = createWatchServer({ repo, port: 0 });
-  t.after(() => server.close());
+  t.after(() => { server.close(); fs.rmSync(repo, { recursive: true, force: true }); });
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);

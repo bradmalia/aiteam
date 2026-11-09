@@ -703,7 +703,10 @@
         if (p.active) {
           return `<span style="background:rgba(87,230,237,0.18); border:1px solid var(--cyan); color:var(--cyan); padding:3px 10px; border-radius:12px; font-weight:600;">● ${esc(p.name)} (this dashboard)</span>`;
         }
-        const stageTag = p.stage ? ` <span style="font-size:11px; color:var(--amber);">[${esc(p.stage)}]</span>` : '';
+        const isComplete = p.status === 'COMPLETE';
+        const stageText = isComplete ? 'complete' : p.stage;
+        const stageColor = isComplete ? 'var(--green)' : 'var(--amber)';
+        const stageTag = stageText ? ` <span style="font-size:11px; color:${stageColor};">[${esc(stageText)}]</span>` : '';
         return `<a href="http://localhost:${p.port}" target="_blank" style="text-decoration:none; background:rgba(255,255,255,0.06); border:1px solid var(--border); color:var(--text); padding:3px 10px; border-radius:12px; transition:border-color 0.15s, background 0.15s;" onmouseover="this.style.borderColor='var(--cyan)'; this.style.background='rgba(87,230,237,0.08)'" onmouseout="this.style.borderColor='var(--border)'; this.style.background='rgba(255,255,255,0.06)'">↗ ${esc(p.name)} (port ${p.port})${stageTag}</a>`;
       }).join('');
     } catch {}

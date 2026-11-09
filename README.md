@@ -101,11 +101,11 @@ This sets up:
 ### 1. Start the Live Watcher Dashboard
 Run the dashboard in the target project repository:
 ```bash
-aiteam-watch . --port 22924
+aiteam-watch .
 ```
-Open `http://localhost:22924` in your browser.
+`aiteam-watch` automatically reuses an existing Watcher for the repository or launches a verified Watcher on an available port in `4317–4332` and prints its exact URL.
 
-MCP start/status calls reuse a watcher only after verifying its repository. They
+MCP start/status/advance calls also reuse a watcher only after verifying its repository. They
 search ports 4317–4332, skip occupied ports, and verify a new watcher is ready
 before returning its URL. If discovery or startup fails, the tool reports an
 error instead of returning a fallback address. Use the URL returned by the tool;

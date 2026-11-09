@@ -52,7 +52,7 @@ function isTaskIntegrated(t) {
 /**
  * Computes prescriptive next-action directive for the coordinator
  */
-function getDirective(session, repo) {
+function getDirective(session, repo, watchUrl = null) {
   if (!session) {
     return {
       status: 'NO_SESSION',
@@ -76,6 +76,7 @@ function getDirective(session, repo) {
     const cliTaskArg = pending.taskId ? ` --taskId "${pending.taskId}"` : '';
     const isIntakeGate = pending.gate === 'intake';
     const formattedQuestions = (pending.questions || []).map((q, i) => `  ${i + 1}. ${q}`).join('\n');
+    const portalRef = watchUrl ? `in the Watcher Dashboard Portal (${watchUrl})` : 'in the Watcher Dashboard Portal';
     return {
       status: 'GATE_BLOCKED',
       gate: pending.gate,
@@ -84,8 +85,8 @@ function getDirective(session, repo) {
       taskId: pending.taskId || null,
       questions: pending.questions || [],
       instruction: isIntakeGate
-        ? `🛑 INTAKE CLARIFYING INTERVIEW OPEN. Present these clarifying questions clearly to the user in chat:\n${formattedQuestions}\nThen IMMEDIATELY wait for the user's answers in the Watcher Dashboard Portal by calling aiteam_wait_for_approval(gate="intake") (or run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate intake && call aiteam_status). If the user replies in chat instead, record their answers via aiteam_record_approval(gate="intake", decision="approved", response="<user's answers>").`
-        : `🛑 GATE OPEN (${pending.gate.toUpperCase()}). Present ${pending.doc || 'the QA verification checklist'} briefly to the user, then IMMEDIATELY wait for the Watcher Portal click by calling aiteam_wait_for_approval(gate="${pending.gate}"${taskArg}) (or if that tool is not in your schema, run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate ${pending.gate}${cliTaskArg} && call aiteam_status). It will block and automatically resume the moment the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`,
+        ? `🛑 INTAKE CLARIFYING INTERVIEW OPEN. Present these clarifying questions clearly to the user in chat:\n${formattedQuestions}\nThen IMMEDIATELY wait for the user's answers ${portalRef} by calling aiteam_wait_for_approval(gate="intake") (or run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate intake && call aiteam_status). DO NOT stop or end your turn without calling aiteam_wait_for_approval! If the user replies in chat instead, record their answers via aiteam_record_approval(gate="intake", decision="approved", response="<user's answers>").`
+        : `🛑 GATE OPEN (${pending.gate.toUpperCase()}). Present ${pending.doc || 'the QA verification checklist'} briefly to the user, then IMMEDIATELY wait for the Watcher Portal click ${portalRef} by calling aiteam_wait_for_approval(gate="${pending.gate}"${taskArg}) (or if that tool is not in your schema, run bash: node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "${repo}" --gate ${pending.gate}${cliTaskArg} && call aiteam_status). DO NOT stop or end your turn without calling aiteam_wait_for_approval! It will block and automatically resume the moment the user clicks "Approve Gate" or "Request Changes" in the Watcher Dashboard Portal.`,
       nextTool: 'aiteam_wait_for_approval'
     };
   }
@@ -374,7 +375,7 @@ export async function handleToolCall(name, args = {}) {
     const watchUrl = await ensureWatcher(repo);
     initSession(repo, args.request);
     startStage(repo, 'intake');
-    const directive = getDirective(readSession(repo), repo);
+    const directive = getDirective(readSession(repo), repo, watchUrl);
 
     return {
       content: [
@@ -400,7 +401,7 @@ export async function handleToolCall(name, args = {}) {
   if (name === 'aiteam_status') {
     const session = readSession(repo);
     const watchUrl = await ensureWatcher(repo);
-    const directive = getDirective(session, repo);
+    const directive = getDirective(session, repo, watchUrl);
 
     return {
       content: [
@@ -423,13 +424,14 @@ export async function handleToolCall(name, args = {}) {
   }
 
   if (name === 'aiteam_wait_for_approval') {
+    const watchUrl = await ensureWatcher(repo);
     const { session, approval } = await waitForApproval(repo, {
       gate: args.gate,
       taskId: args.taskId || null,
       pollMs: args.pollMs || 750,
       timeoutMs: args.timeoutMs || 3600000
     });
-    const directive = getDirective(session, repo);
+    const directive = getDirective(session, repo, watchUrl);
 
     return {
       content: [
@@ -438,6 +440,7 @@ export async function handleToolCall(name, args = {}) {
           text: [
             `✅ Watcher Portal Gate [${approval.gate}${approval.taskId ? ':' + approval.taskId : ''}] decided by human: ${approval.decision}`,
             approval.response ? `💬 Human Notes: "${approval.response}"` : '',
+            `📊 Live Dashboard: ${watchUrl}`,
             '',
             `👉 NEXT DIRECTIVE:`,
             directive.instruction
@@ -446,11 +449,13 @@ export async function handleToolCall(name, args = {}) {
       ],
       approval,
       directive,
-      session
+      session,
+      watchUrl
     };
   }
 
   if (name === 'aiteam_record_approval') {
+    const watchUrl = await ensureWatcher(repo);
     const result = recordApproval(repo, {
       gate: args.gate,
       taskId: args.taskId || null,
@@ -461,7 +466,7 @@ export async function handleToolCall(name, args = {}) {
     });
 
     const session = readSession(repo);
-    const directive = getDirective(session, repo);
+    const directive = getDirective(session, repo, watchUrl);
 
     return {
       content: [
@@ -469,6 +474,7 @@ export async function handleToolCall(name, args = {}) {
           type: 'text',
           text: [
             `✅ Approval recorded: Gate [${args.gate}] = ${args.decision.toUpperCase()}`,
+            `📊 Live Dashboard: ${watchUrl}`,
             '',
             `👉 NEXT DIRECTIVE:`,
             directive.instruction
@@ -477,13 +483,15 @@ export async function handleToolCall(name, args = {}) {
       ],
       approval: result,
       directive,
-      session
+      session,
+      watchUrl
     };
   }
 
   if (name === 'aiteam_advance') {
     let session = readSession(repo);
     if (!session) throw new Error(`No active AITeam session found in ${repo}. Run aiteam_start first.`);
+    const watchUrl = await ensureWatcher(repo);
 
     const stage = args.stage || session.currentStage;
     const action = args.action || 'complete';
@@ -527,7 +535,7 @@ export async function handleToolCall(name, args = {}) {
     }
 
     session = readSession(repo);
-    const directive = getDirective(session, repo);
+    const directive = getDirective(session, repo, watchUrl);
 
     return {
       content: [
@@ -536,6 +544,7 @@ export async function handleToolCall(name, args = {}) {
           text: [
             `🔄 AITeam advanced: stage [${stage}] ${action}ed (outcome: ${args.outcome || 'PASS'}).`,
             `Status: ${session.status}`,
+            `📊 Live Dashboard: ${watchUrl}`,
             '',
             `👉 NEXT DIRECTIVE:`,
             directive.instruction
@@ -543,7 +552,8 @@ export async function handleToolCall(name, args = {}) {
         }
       ],
       directive,
-      session
+      session,
+      watchUrl
     };
   }
 

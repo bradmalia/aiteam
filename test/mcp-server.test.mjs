@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { handleToolCall } from '../src/mcp-server.mjs';
+import { stopWatcher } from '../src/watcher-discovery.mjs';
 
 test('AITeam Pure State MCP: full 9-stage setup pipeline and 4-gate task loop with hard gates', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-mcp-test-'));
@@ -274,6 +275,7 @@ test('AITeam Pure State MCP: full 9-stage setup pipeline and 4-gate task loop wi
     assert.equal(intRes.session.status, 'COMPLETE');
     assert.equal(intRes.directive.status, 'COMPLETE');
   } finally {
+    await stopWatcher(tmpDir);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
