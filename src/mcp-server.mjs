@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   readSession,
+  writeSession,
   initSession,
   startStage,
   completeStage,
@@ -28,7 +29,8 @@ import {
   waitForApproval,
   updateTaskLedger,
   parseTaskLedgerMarkdown,
-  writeActiveLog
+  writeActiveLog,
+  checkAndInvalidateStaleTasks
 } from '../skill/lib/state-bridge.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +61,12 @@ function getDirective(session, repo, watchUrl = null) {
       instruction: 'Call aiteam_start with your request to initialize the AITeam workflow.',
       nextTool: 'aiteam_start'
     };
+  }
+
+  if (repo && Array.isArray(session.taskLedger)) {
+    if (checkAndInvalidateStaleTasks(repo, session)) {
+      writeSession(repo, session);
+    }
   }
 
   if (session.status === 'COMPLETE') {
@@ -242,7 +250,14 @@ function getDirective(session, repo, watchUrl = null) {
     taskStage = 'qa';
     taskRole = 'qa';
     contract = 'skill/contracts/qa.md';
-    instruction = `Spawn an isolated QA Engineer subagent (skill/contracts/qa.md) to author and execute dedicated black-box tests in tests/qa/${nextTask.id}.test.* covering ${nextTask.id}. Call aiteam_advance with stage="qa", taskId="${nextTask.id}", outcome="PASS"|"FAIL", and checks.`;
+    const obligations = nextTask.acceptanceObligations || {};
+    const obNotes = [];
+    if (obligations.actualInput) obNotes.push('actual-input execution');
+    if (obligations.renderedChecks) obNotes.push('rendered-property measurements');
+    if (obligations.motionEvidence) obNotes.push('native motion capture evidence (.webm/frame sequence)');
+    if (obligations.humanReview) obNotes.push('human visual review gate');
+    const obString = obNotes.length ? ` Required acceptance obligations: [${obNotes.join(', ')}].` : '';
+    instruction = `Spawn an isolated QA Engineer subagent (skill/contracts/qa.md) to author and execute dedicated black-box tests in tests/qa/${nextTask.id}.test.* covering ${nextTask.id}.${obString} Call aiteam_advance with stage="qa", taskId="${nextTask.id}", outcome="PASS"|"FAIL", checks=[...], and any required motion/visual evidence.`;
   } else if (nextTask.status === 'qa-auto-passed') {
     return {
       status: 'GATE_BLOCKED',
@@ -255,7 +270,11 @@ function getDirective(session, repo, watchUrl = null) {
     taskStage = 'integration';
     taskRole = 'maintainer';
     contract = 'skill/contracts/maintainer.md';
-    instruction = `Execute Maintainer Git integration (skill/contracts/maintainer.md) for ${nextTask.id}: verify unchanged SHA-256 fingerprint, stage ONLY [${(nextTask.filesChanged || []).join(', ')}], create a conventional git commit, and call aiteam_advance with stage="integration", taskId="${nextTask.id}", outcome="PASS".`;
+    const isAutoBypass = session.approvals?.[`qa:${nextTask.id}`]?.approvedBy === 'qa-automated-bypass';
+    const bypassNote = isAutoBypass
+      ? `Automated QA passed with zero manual checks (qa-automated-bypass: no human QA gate required — do NOT stop or prompt the user for sign-off; proceed immediately). `
+      : '';
+    instruction = `${bypassNote}Execute Maintainer Git integration (skill/contracts/maintainer.md) for ${nextTask.id}: verify unchanged SHA-256 fingerprint, stage ONLY [${(nextTask.filesChanged || []).join(', ')}], create a conventional git commit, and call aiteam_advance with stage="integration", taskId="${nextTask.id}", outcome="PASS".`;
   }
 
   return {
@@ -309,6 +328,14 @@ export const toolDefs = [
         checks: { type: 'array', items: { type: 'object' }, description: 'QA black-box check results (if stage="qa").' },
         manualChecks: { type: 'array', items: { type: 'string' }, description: 'Checklist of manual verification steps for human validation (e.g. browser UI checks). If empty or omitted and outcome="PASS", the human QA gate is bypassed.' },
         screenshots: { type: 'array', items: { type: 'object' }, description: 'Visual verification screenshots for UI/layout testing (array of {caption, path}). Rendered directly in Watcher dashboard.' },
+        motionEvidence: {
+          description: 'Path(s) or manifest object for native motion evidence video (.webm/.mp4) or frame sequence.',
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } },
+            { type: 'object' }
+          ]
+        },
         requiresManualValidation: { type: 'boolean', description: 'Explicit flag indicating whether human manual testing is required. If false/omitted and manualChecks is empty, human QA gate is bypassed.' },
         commitMessage: { type: 'string', description: 'Git commit message created during integration.' },
         ledger: { type: 'string', description: 'Path to TASK_LEDGER.md when completing the planning stage.' }
@@ -526,6 +553,7 @@ export async function handleToolCall(name, args = {}) {
         checks: args.checks || [],
         manualChecks: args.manualChecks || [],
         screenshots: args.screenshots || [],
+        motionEvidence: args.motionEvidence || null,
         requiresManualValidation: args.requiresManualValidation ?? null,
         commitMessage: args.commitMessage || null
       });

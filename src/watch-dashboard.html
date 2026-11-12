@@ -22,11 +22,18 @@
     .screenshot-card img { width: 100%; height: 160px; object-fit: cover; background: #000; cursor: pointer; display: block; border-bottom: 1px solid rgba(255,255,255,0.1); }
     .screenshot-caption { padding: 8px 10px; font-size: 12px; color: var(--text); line-height: 1.35; flex: 1; }
     .screenshot-meta { font-size: 11px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+    .motion-gallery { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+    .motion-card { background: rgba(0,0,0,0.5); border: 1px solid rgba(87,230,237,0.3); border-radius: 6px; padding: 12px; }
+    .motion-card video { width: 100%; max-height: 480px; background: #000; border-radius: 4px; display: block; border: 1px solid var(--border); }
+    .obligations-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .obligations-table th { padding: 6px 10px; background: rgba(255,255,255,0.04); text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); }
+    .obligations-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
     .lightbox-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+    .lightbox-modal[hidden] { display: none !important; }
     .lightbox-content { max-width: 95vw; max-height: 85vh; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 40px #000; object-fit: contain; background: #0e0917; }
     .lightbox-title { margin-top: 12px; font-size: 14px; color: var(--cyan); font-weight: 600; text-align: center; }
-    .lightbox-close { position: absolute; top: 16px; right: 24px; font-size: 28px; color: var(--muted); cursor: pointer; background: transparent; border: 0; font-family: inherit; }
-    .lightbox-close:hover { color: var(--text); }
+    .lightbox-close { position: absolute; top: 16px; right: 24px; z-index: 10000; width: 40px; height: 40px; line-height: 36px; text-align: center; border-radius: 50%; font-size: 28px; color: var(--text); cursor: pointer; background: rgba(33, 22, 45, 0.8); border: 1px solid var(--border); font-family: inherit; }
+    .lightbox-close:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(56, 32, 74, 0.95); }
     a { color:var(--cyan); overflow-wrap:anywhere; } a:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
     @media (max-width:950px) { body { padding:14px; } .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } header { display:block; } }
   </style>
@@ -81,6 +88,18 @@
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const formatDuration = (seconds) => seconds == null ? '—' : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2,'0')}s`;
   let isExpanded = false;
+  let liveLogUserScrolledUp = false;
+  
+  function initLiveLogScroll() {
+    const el = $('liveLog');
+    if (el && !el.hasAttribute('data-scroll-listener')) {
+      el.setAttribute('data-scroll-listener', 'true');
+      el.addEventListener('scroll', () => {
+        const distanceFromBottom = (el.scrollHeight - el.clientHeight) - el.scrollTop;
+        liveLogUserScrolledUp = distanceFromBottom > 35;
+      });
+    }
+  }
   
   function renderText(text, markdown = false) {
     const template = document.createElement('template');
@@ -191,25 +210,178 @@
       `</div>`;
   }
 
+  function extractMotionEvidence(text, rawMotion) {
+    const list = [];
+    const seen = new Set();
+
+    if (rawMotion) {
+      const items = Array.isArray(rawMotion) ? rawMotion : [rawMotion];
+      for (const item of items) {
+        if (typeof item === 'string') {
+          const p = item.trim();
+          if (!seen.has(p)) {
+            seen.add(p);
+            const name = p.split('/').pop() || 'Motion Clip';
+            list.push({ path: p, name, caption: name });
+          }
+        } else if (item && typeof item === 'object') {
+          const p = item.path || item.videoPath || item.url || '';
+          if (p && !seen.has(p)) {
+            seen.add(p);
+            list.push({
+              path: p,
+              name: item.name || p.split('/').pop() || 'Motion Clip',
+              caption: item.caption || item.scenario || item.name || 'Motion Demonstration',
+              scenario: item.scenario || null,
+              mime: item.mime || (p.endsWith('.webm') ? 'video/webm' : 'video/mp4')
+            });
+          }
+        }
+      }
+    }
+
+    if (typeof text === 'string') {
+      const regex = /(?:(?:\/[\w.-]+)+\.(?:webm|mp4|ogg)|(?:tests\/[^\s"']+\.(?:webm|mp4|ogg))|(?:\.aiteam\/[^\s"']+\.(?:webm|mp4|ogg))|(?:docs\/[^\s"']+\.(?:webm|mp4|ogg))|(?:https?:\/\/[^\s"'<>]+\.(?:webm|mp4|ogg)))/gi;
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const p = match[0].trim();
+        if (!seen.has(p)) {
+          seen.add(p);
+          const base = p.split('/').pop() || 'Motion Clip';
+          list.push({ path: p, name: base, caption: base });
+        }
+      }
+    }
+
+    return list;
+  }
+
+  function renderMotionGallery(clips) {
+    if (!clips || !clips.length) return '';
+    const cards = clips.map((c) => {
+      let src = c.path;
+      if (src.startsWith('/review-assets/') || src.startsWith('/artifacts/')) {
+        // origin-relative URL already
+      } else if (src.startsWith('.aiteam/reviews/')) {
+        src = `/review-assets/${src.slice('.aiteam/reviews/'.length)}`;
+      } else if (!src.startsWith('http://') && !src.startsWith('https://')) {
+        src = `/api/media?path=${encodeURIComponent(c.path)}`;
+      }
+      const caption = c.caption || c.name || 'Motion Demonstration';
+      const scenarioTag = c.scenario ? `<span style="font-size:11px; background:rgba(87,230,237,0.15); border:1px solid var(--cyan); color:var(--cyan); padding:1px 6px; border-radius:4px; margin-left:6px;">${esc(c.scenario)}</span>` : '';
+      const mime = c.mime || (c.path.endsWith('.webm') ? 'video/webm' : 'video/mp4');
+
+      return `<div class="motion-card">` +
+        `<div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:8px;">🎥 ${esc(caption)}${scenarioTag}</div>` +
+        `<video controls preload="metadata" style="width:100%; max-height:420px; border-radius:4px; background:#000;">` +
+        `<source src="${esc(src)}" type="${esc(mime)}">` +
+        `Your browser does not support HTML5 video preview.` +
+        `</video>` +
+        `<div style="font-size:11px; color:var(--muted); margin-top:6px; font-family:monospace;">${esc(c.path)}</div>` +
+        `</div>`;
+    }).join('');
+
+    return `<div style="margin-top:14px;">` +
+      `<div style="font-weight:600; color:var(--cyan); font-size:13px; margin-bottom:8px;">🎬 Native Motion Previews (Actual Gameplay / Rendering):</div>` +
+      `<div class="motion-gallery">${cards}</div>` +
+      `</div>`;
+  }
+
+  function renderCriteriaObligationsTable(task, qa) {
+    const ob = task?.acceptanceObligations;
+    const acs = task?.acceptanceCriteria || [];
+    if (!acs.length) return '';
+
+    const checks = qa?.checks || [];
+    const checkMap = new Map();
+    for (const c of checks) {
+      if (c && c.name) checkMap.set(c.name.toLowerCase(), c);
+    }
+
+    const rows = acs.map((ac) => {
+      const acIdMatch = ac.match(/^(AC-\d+)/i);
+      const acId = acIdMatch ? acIdMatch[1].toUpperCase() : '';
+      const mapItem = ob?.criteriaMap?.[acId] || {};
+      const method = mapItem.requiredMethod || (mapItem.actualInput ? 'actual-input' : mapItem.renderedChecks ? 'rendered-measurement' : 'component');
+
+      // find matching check
+      let matchingCheck = null;
+      for (const [k, c] of checkMap.entries()) {
+        if (acId && k.includes(acId.toLowerCase())) {
+          matchingCheck = c;
+          break;
+        }
+      }
+
+      const methodBadge = `<span style="font-size:11px; padding:1px 5px; border-radius:3px; background:rgba(255,255,255,0.06); border:1px solid var(--border);">${esc(method)}</span>`;
+      const obBadges = [];
+      if (mapItem.actualInput || (ob?.actualInput && !acId)) obBadges.push('🕹️ input');
+      if (mapItem.renderedChecks || (ob?.renderedChecks && !acId)) obBadges.push('📐 render');
+      if (mapItem.motionEvidence || (ob?.motionEvidence && !acId)) obBadges.push('🎥 motion');
+      if (mapItem.humanReview || (ob?.humanReview && !acId)) obBadges.push('👁️ review');
+      const reqHtml = obBadges.length ? obBadges.map(b => `<span style="font-size:10px; margin-right:4px;">${b}</span>`).join('') : '<span style="color:var(--muted); font-size:11px;">automated</span>';
+
+      let statusBadge = '<span style="color:var(--muted); font-size:11px;">○ planned</span>';
+      if (matchingCheck) {
+        statusBadge = matchingCheck.passed !== false
+          ? `<span style="color:var(--green); font-weight:600; font-size:11px;">✓ Passed</span>`
+          : `<span style="color:var(--red); font-weight:600; font-size:11px;">✗ Failed</span>`;
+      } else if (qa) {
+        statusBadge = `<span style="color:var(--amber); font-size:11px;">⏳ pending review</span>`;
+      }
+
+      return `<tr>` +
+        `<td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.05); font-weight:600; color:var(--cyan); white-space:nowrap;">${esc(acId || 'AC')}</td>` +
+        `<td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:12px; line-height:1.4;">${md(ac)}</td>` +
+        `<td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.05); white-space:nowrap;">${methodBadge}</td>` +
+        `<td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.05); white-space:nowrap;">${reqHtml}</td>` +
+        `<td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,0.05); white-space:nowrap;">${statusBadge}</td>` +
+        `</tr>`;
+    }).join('');
+
+    return `<div style="margin-top:14px;">` +
+      `<div style="font-weight:600; color:var(--cyan); font-size:13px; margin-bottom:6px;">📋 Acceptance Criteria &amp; Obligations Matrix:</div>` +
+      `<div style="overflow-x:auto;"><table class="obligations-table">` +
+      `<thead><tr>` +
+      `<th>Criterion</th>` +
+      `<th>Requirement</th>` +
+      `<th>Method</th>` +
+      `<th>Obligations</th>` +
+      `<th>Status</th>` +
+      `</tr></thead>` +
+      `<tbody>${rows}</tbody>` +
+      `</table></div>` +
+      `</div>`;
+  }
+
   function openLightbox(src, title) {
     let lb = $('lightboxModal');
     if (!lb) {
       lb = document.createElement('div');
       lb.id = 'lightboxModal';
       lb.className = 'lightbox-modal';
-      lb.onclick = (e) => { if (e.target === lb || e.target.className === 'lightbox-close') closeLightbox(); };
+      lb.onclick = (e) => { if (e.target === lb || e.target.closest('.lightbox-close')) closeLightbox(); };
       document.body.appendChild(lb);
     }
-    lb.innerHTML = `<button class="lightbox-close" onclick="closeLightbox()">&times;</button>` +
+    lb.innerHTML = `<button type="button" class="lightbox-close" aria-label="Close preview" onclick="closeLightbox()">&times;</button>` +
       `<img class="lightbox-content" src="${esc(src)}" alt="${esc(title)}">` +
       `<div class="lightbox-title">${esc(title)}</div>`;
     lb.hidden = false;
+    lb.style.display = 'flex';
   }
 
   function closeLightbox() {
     const lb = $('lightboxModal');
-    if (lb) lb.hidden = true;
+    if (lb) {
+      lb.hidden = true;
+      lb.style.display = 'none';
+      lb.remove();
+    }
   }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('lightboxModal')) closeLightbox();
+  });
 
   function renderResult(result, evidence) {
     if (!result) return 'No result yet.';
@@ -380,12 +552,29 @@
         qaHtml += `</ul></div>`;
       }
 
+      qaHtml += renderCriteriaObligationsTable(task, qa);
+
+      const taskMotion = extractMotionEvidence(
+        `${qa?.summary || ''} ${(qa?.evidence || []).join(' ')}`,
+        qa?.motionEvidence
+      );
+      if (taskMotion.length) {
+        qaHtml += renderMotionGallery(taskMotion);
+      }
+
       const taskScreenshots = extractScreenshots(
         `${qa?.summary || ''} ${(qa?.evidence || []).join(' ')}`,
         qa?.screenshots || []
       );
       if (taskScreenshots.length) {
         qaHtml += renderScreenshotGallery(taskScreenshots);
+      }
+
+      if (task.qaFingerprint) {
+        qaHtml += `<div style="margin-top:10px; font-size:11px; color:var(--muted); font-family:monospace;">🔑 Build Fingerprint: <span style="color:var(--text);">${esc(task.qaFingerprint.slice(0, 16))}...</span> (${esc(task.qaFingerprint)})</div>`;
+      }
+      if (task.staleReason) {
+        qaHtml += `<div style="margin-top:10px; padding:8px 12px; background:rgba(255,107,107,0.12); border:1px solid var(--red); border-radius:4px; font-size:12px; color:var(--red);">⚠️ ${esc(task.staleReason)}</div>`;
       }
 
       const isCurrentActive = task.id === currentTaskId;
@@ -454,29 +643,62 @@
       liveLogEl.style.height = 'auto';
       liveLogEl.style.borderColor = 'var(--amber)';
       liveLogEl.style.background = 'rgba(255, 209, 102, 0.08)';
-      const manualKey = `manual:${session.pendingUserInput.gateId || ''}:${(session.pendingUserInput.questions || []).join('|')}:${(session.pendingUserInput.screenshots || []).map(s=>s.path).join('|')}`;
+      const manualKey = `manual:${session.pendingUserInput.gateId || ''}:${(session.pendingUserInput.questions || []).join('|')}:${(session.pendingUserInput.screenshots || []).map(s=>s.path).join('|')}:${(session.pendingUserInput.motionClips || []).map(m=>m.path).join('|')}`;
       if (liveLogEl.getAttribute('data-mode-key') !== manualKey) {
         const savedManualNote = $('manualQaNote')?.value || '';
+        const targetTaskId = session.pendingUserInput.taskId;
+        const targetTask = (session.taskLedger || []).find((t) => t.id === targetTaskId);
+
         const pendingScreenshots = extractScreenshots(
           (session.pendingUserInput.questions || []).join(' '),
           session.pendingUserInput.screenshots || []
         );
         const screenshotsHtml = renderScreenshotGallery(pendingScreenshots);
 
-        liveLogEl.innerHTML = `<div style="color:var(--amber); font-weight:bold; font-size:14px; margin-bottom:8px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL VERIFICATION</div>` +
-          `<div style="color:var(--text); font-size:13px; line-height:1.6;">Open the project in the application or environment named by the checks, then perform each step below:<br>` +
-          `<ol style="margin:6px 0 0 20px; color:#fffae0;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
+        const pendingMotion = (session.pendingUserInput.motionClips && session.pendingUserInput.motionClips.length)
+          ? session.pendingUserInput.motionClips
+          : extractMotionEvidence(
+              (targetTask?.qa?.evidence || []).join(' ') + ' ' + (session.pendingUserInput.questions || []).join(' '),
+              targetTask?.qa?.motionEvidence
+            );
+        const motionHtml = renderMotionGallery(pendingMotion);
+
+        const matrixHtml = renderCriteriaObligationsTable(targetTask, targetTask?.qa);
+
+        let buildBadge = '';
+        if (targetTask?.qaFingerprint) {
+          buildBadge = `<div style="display:inline-block; font-size:11px; background:rgba(87,230,237,0.1); border:1px solid rgba(87,230,237,0.3); border-radius:4px; padding:3px 8px; color:var(--cyan); font-family:monospace;">🔑 Build: ${esc(targetTask.qaFingerprint.slice(0, 16))}... (${esc(targetTask.qaFingerprint)})</div>`;
+        }
+
+        let filesHtml = '';
+        if (targetTask?.filesChanged?.length) {
+          filesHtml = `<div style="margin-bottom:10px; font-size:12px; color:var(--text);"><span style="color:var(--muted); font-weight:600;">📁 Files modified in this build:</span> <code style="color:var(--cyan);">${esc(targetTask.filesChanged.join(', '))}</code></div>`;
+        }
+
+        liveLogEl.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">` +
+          `<div style="color:var(--amber); font-weight:bold; font-size:14px;">🛑 QA PASSED AUTOMATED CHECKS — AWAITING MANUAL &amp; VISUAL ACCEPTANCE</div>` +
+          buildBadge +
+          `</div>` +
+          filesHtml +
+          `<div style="color:var(--text); font-size:13px; line-height:1.6; margin-bottom:10px;">` +
+          `Verify the behavior and visual output in the running environment, review the motion captures, and complete the checklist below:` +
+          `</div>` +
+          motionHtml +
+          matrixHtml +
           screenshotsHtml +
-          `<div style="margin-top:12px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
-          `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision & Feedback:</div>` +
+          `<div style="margin-top:12px; font-weight:600; color:var(--text); font-size:13px;">Manual Verification Steps:</div>` +
+          `<ol style="margin:6px 0 0 20px; color:#fffae0; font-size:13px; line-height:1.5;">${(session.pendingUserInput.questions || []).map(q => `<li>${md(q)}</li>`).join('')}</ol>` +
+          `<div style="margin-top:14px; padding:12px; background:rgba(0,0,0,0.5); border:1px solid rgba(255,209,102,0.3); border-radius:6px; font-size:13px;">` +
+          `<div style="font-weight:600; color:var(--amber); margin-bottom:8px;">Decision &amp; Feedback:</div>` +
           `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">` +
-          `<input type="text" id="manualQaNote" value="${esc(savedManualNote)}" placeholder="Verification notes (e.g. All manual checks confirmed)..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:220px; font-family:inherit; font-size:13px;">` +
-          `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'approved', $('manualQaNote')?.value)" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Pass & Approve</button>` +
+          `<input type="text" id="manualQaNote" value="${esc(savedManualNote)}" placeholder="Verification notes or rework requirements..." style="background:#0c0814; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; flex:1; min-width:220px; font-family:inherit; font-size:13px;">` +
+          `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'approved', $('manualQaNote')?.value)" style="background:#1b4d3e; color:var(--green); border:1px solid var(--green); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✓ Pass &amp; Approve</button>` +
           `<button onclick="submitGateDecision('qa', '${esc(session.pendingUserInput.taskId || '')}', 'changes_requested', $('manualQaNote')?.value)" style="background:#4d1b28; color:var(--red); border:1px solid var(--red); border-radius:4px; padding:6px 14px; font-weight:600; cursor:pointer; font-family:inherit;">✗ Fail / Request Rework</button>` +
-          `</div></div></div>`;
+          `</div></div>`;
         liveLogEl.setAttribute('data-mode-key', manualKey);
       }
     } else if (data.activeLogTail) {
+      initLiveLogScroll();
       $('liveActivityPanel').hidden = false;
       $('liveAgentTag').style.color = 'var(--amber)';
       if (active) {
@@ -490,15 +712,16 @@
       }
       liveLogEl.style.borderColor = 'rgba(255,209,102,0.25)';
       liveLogEl.style.background = '#0c0814';
-      liveLogEl.removeAttribute('data-mode-key');
-      const prevScroll = liveLogEl.scrollTop;
-      const isScrolledToBottom = liveLogEl.scrollHeight - liveLogEl.clientHeight <= prevScroll + 50;
+      if (liveLogEl.hasAttribute('data-mode-key')) {
+        liveLogEl.removeAttribute('data-mode-key');
+        liveLogUserScrolledUp = false;
+      }
+      const isInitial = !liveLogEl.hasAttribute('data-has-rendered');
       if (liveLogEl.textContent !== data.activeLogTail) {
         liveLogEl.innerHTML = renderText(data.activeLogTail);
-        if (isScrolledToBottom) {
+        liveLogEl.setAttribute('data-has-rendered', 'true');
+        if (isInitial || !liveLogUserScrolledUp) {
           liveLogEl.scrollTop = liveLogEl.scrollHeight;
-        } else {
-          liveLogEl.scrollTop = prevScroll;
         }
       }
     } else {
@@ -571,6 +794,9 @@
       logEl.style.height = '110px';
       btn.textContent = '⛶ Expand';
     }
+    if (!liveLogUserScrolledUp) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
   }
 
   let popoutWindow = null;
@@ -603,6 +829,12 @@
   </header>
   <pre id="popoutLog">Waiting for live specialist stream…</pre>
   ` + '<' + `script>
+    let userScrolledUp = false;
+    let isInitial = true;
+    window.addEventListener('scroll', () => {
+      const atBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 50);
+      userScrolledUp = !atBottom;
+    });
     async function update() {
       try {
         const res = await fetch('/api/state', { cache: 'no-store' });
@@ -621,9 +853,11 @@
           tag.textContent = '[' + repoName + '] · [idle]';
         }
         if (data.activeLogTail) {
-          const isBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 50;
           log.textContent = data.activeLogTail;
-          if (isBottom) window.scrollTo(0, document.body.scrollHeight);
+          if (isInitial || !userScrolledUp) {
+            window.scrollTo(0, document.body.scrollHeight);
+            isInitial = false;
+          }
         }
       } catch (err) {}
     }

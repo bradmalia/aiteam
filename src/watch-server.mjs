@@ -69,35 +69,19 @@ function tailEvents(file, repo, limit = 80) {
   }
 }
 
-function tailQwenLiveTranscript(repo, minTimeMs) {
+function parseQwenJsonlFile(filePath, repoPrefix, minTimeMs) {
   try {
-    const escapedRepo = path.resolve(repo).replace(/[^a-zA-Z0-9]/g, '-');
-    const chatDir = path.join(os.homedir(), '.qwen', 'projects', escapedRepo, 'chats');
-    if (!fs.existsSync(chatDir)) return [];
-    const files = fs
-      .readdirSync(chatDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => {
-        const full = path.join(chatDir, f);
-        const st = fs.statSync(full);
-        return { full, mtimeMs: st.mtimeMs, size: st.size };
-      })
-      .filter((x) => !Number.isFinite(minTimeMs) || x.mtimeMs >= minTimeMs)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs);
-    if (!files.length) return [];
-
-    const latest = files[0];
-    const readSize = Math.min(latest.size, 131072);
+    const st = fs.statSync(filePath);
+    const readSize = Math.min(st.size, 131072);
     if (readSize <= 0) return [];
-    const fd = fs.openSync(latest.full, 'r');
+    const fd = fs.openSync(filePath, 'r');
     const buf = Buffer.alloc(readSize);
-    fs.readSync(fd, buf, 0, readSize, latest.size - readSize);
+    fs.readSync(fd, buf, 0, readSize, st.size - readSize);
     fs.closeSync(fd);
 
     const rawLines = buf.toString('utf8').split(/\r?\n/);
-    const linesToParse = latest.size > readSize ? rawLines.slice(1) : rawLines;
+    const linesToParse = st.size > readSize ? rawLines.slice(1) : rawLines;
     const entries = [];
-    const repoPrefix = path.resolve(repo) + path.sep;
 
     for (const line of linesToParse) {
       if (!line.trim()) continue;
@@ -149,6 +133,112 @@ function tailQwenLiveTranscript(repo, minTimeMs) {
         }
       } catch {}
     }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+function parseQwenStreamTail(filePath, minStreamTimeMs) {
+  try {
+    const st = fs.statSync(filePath);
+    const readSize = Math.min(st.size, 16384);
+    if (readSize <= 0) return null;
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(readSize);
+    fs.readSync(fd, buf, 0, readSize, st.size - readSize);
+    fs.closeSync(fd);
+    const rawLines = buf.toString('utf8').split(/\r?\n/).filter(Boolean);
+    const valid = [];
+    for (const l of rawLines) {
+      try { valid.push(JSON.parse(l)); } catch {}
+    }
+    if (!valid.length) return null;
+    const last = valid[valid.length - 1];
+    const round = last.round;
+    const thought = last.thought;
+    const lastTime = last.timestamp;
+    if (Number.isFinite(minStreamTimeMs) && lastTime <= minStreamTimeMs) return null;
+    const matching = [];
+    for (let i = valid.length - 1; i >= 0; i--) {
+      if (valid[i].round === round && valid[i].thought === thought) {
+        matching.unshift(valid[i]);
+      } else {
+        break;
+      }
+    }
+    const text = matching.map((m) => m.text).join('').replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    const ts = new Date(lastTime).toISOString();
+    return {
+      t: lastTime,
+      text: `[${ts}] ${thought ? '💭' : '💬'} ${text.slice(-145)} ⏳`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function tailQwenLiveTranscript(repo, minTimeMs) {
+  try {
+    const escapedRepo = path.resolve(repo).replace(/[^a-zA-Z0-9]/g, '-');
+    const qwenBase = path.join(os.homedir(), '.qwen', 'projects', escapedRepo);
+    const chatDir = path.join(qwenBase, 'chats');
+    const subagentsDir = path.join(qwenBase, 'subagents');
+    const repoPrefix = path.resolve(repo) + path.sep;
+    const entries = [];
+
+    if (fs.existsSync(chatDir)) {
+      const files = fs
+        .readdirSync(chatDir)
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => {
+          const full = path.join(chatDir, f);
+          const st = fs.statSync(full);
+          return { full, mtimeMs: st.mtimeMs, size: st.size };
+        })
+        .filter((x) => !Number.isFinite(minTimeMs) || x.mtimeMs >= minTimeMs)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      if (files.length) {
+        entries.push(...parseQwenJsonlFile(files[0].full, repoPrefix, minTimeMs));
+      }
+    }
+
+    if (fs.existsSync(subagentsDir)) {
+      const subagentFiles = [];
+      try {
+        const subDirs = fs.readdirSync(subagentsDir);
+        for (const sd of subDirs) {
+          const sdp = path.join(subagentsDir, sd);
+          try {
+            if (!fs.statSync(sdp).isDirectory()) continue;
+            for (const f of fs.readdirSync(sdp)) {
+              if (f.endsWith('.jsonl')) {
+                const full = path.join(sdp, f);
+                const st = fs.statSync(full);
+                if (!Number.isFinite(minTimeMs) || st.mtimeMs >= minTimeMs) {
+                  subagentFiles.push({ full, mtimeMs: st.mtimeMs });
+                }
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+      subagentFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      for (const sf of subagentFiles.slice(0, 3)) {
+        const subEntries = parseQwenJsonlFile(sf.full, repoPrefix, minTimeMs);
+        entries.push(...subEntries);
+        const maxCompletedTime = subEntries.length ? Math.max(...subEntries.map((e) => e.t)) : (minTimeMs || 0);
+        const streamFile = sf.full + '.stream';
+        if (fs.existsSync(streamFile)) {
+          const streamEntry = parseQwenStreamTail(streamFile, maxCompletedTime);
+          if (streamEntry) {
+            entries.push(streamEntry);
+          }
+        }
+      }
+    }
+
     return entries;
   } catch {
     return [];
@@ -218,37 +308,46 @@ function snapshot(repo) {
       if (activeLogContent) {
         const lines = activeLogContent.split(/\r?\n/).filter(Boolean);
         let lastSeenTime = 0;
-        let sawAnyTimestamp = false;
-        const fileMtime = fs.statSync(activeLogPath).mtimeMs;
         for (const line of lines) {
           const m = line.match(/^\[(\d{4}-\d{2}-\d{2}T[^\]]+)\]/);
           if (m) {
-            sawAnyTimestamp = true;
             const lt = Date.parse(m[1]);
             if (Number.isFinite(lt)) lastSeenTime = lt;
             if (Number.isFinite(minSessionTime) && Number.isFinite(lt) && lt < minSessionTime) {
               continue; // skip stale lines from prior sessions/milestones
             }
             mergedEntries.push({ t: lastSeenTime, text: line });
-          } else {
-            const effectiveTime = sawAnyTimestamp ? lastSeenTime : fileMtime;
-            if (Number.isFinite(minSessionTime) && effectiveTime < minSessionTime) {
-              continue;
-            }
-            mergedEntries.push({ t: effectiveTime, text: line });
+          } else if (mergedEntries.length > 0) {
+            // Continuation line belonging to previous entry
+            mergedEntries[mergedEntries.length - 1].text += ' ' + line.trim();
           }
         }
       }
     }
 
-    const qwenEntries = tailQwenLiveTranscript(repo, minSessionTime);
+    const qwenMinTime = Number.isFinite(startedAt) ? Math.max(startedAt - 30000, minSessionTime || 0) : minSessionTime;
+    let qwenEntries = tailQwenLiveTranscript(repo, qwenMinTime);
+    if (!qwenEntries.length && Number.isFinite(minSessionTime) && qwenMinTime !== minSessionTime) {
+      qwenEntries = tailQwenLiveTranscript(repo, minSessionTime);
+    }
     if (qwenEntries.length) {
       mergedEntries.push(...qwenEntries);
     }
 
     if (mergedEntries.length) {
       mergedEntries.sort((a, b) => a.t - b.t);
-      activeLogTail = mergedEntries.slice(-80).map((e) => e.text).join('\n').trim();
+      if (activeRun && Number.isFinite(startedAt)) {
+        const runWindow = startedAt - 5000;
+        const currentRunEntries = mergedEntries.filter((e) => e.t >= runWindow);
+        if (currentRunEntries.length >= 3) {
+          activeLogTail = currentRunEntries.slice(-80).map((e) => e.text).join('\n').trim();
+        } else {
+          // Specialist just started: include recent context plus active run entries
+          activeLogTail = mergedEntries.slice(-15).map((e) => e.text).join('\n').trim();
+        }
+      } else {
+        activeLogTail = mergedEntries.slice(-30).map((e) => e.text).join('\n').trim();
+      }
     }
 
     if (!activeLogTail && fs.existsSync(runsDir)) {
@@ -428,7 +527,7 @@ function sendScreenshot(response, activeRepo, requestedPath) {
   // Safe resolution: absolute path or relative to active repository
   const resolved = path.isAbsolute(raw) ? path.normalize(raw) : path.normalize(path.join(activeRepo, raw));
 
-  // Only allow serving image extensions
+  // Allow serving image and video extensions
   const ext = path.extname(resolved).toLowerCase();
   const mimeTypes = {
     '.png': 'image/png',
@@ -436,12 +535,15 @@ function sendScreenshot(response, activeRepo, requestedPath) {
     '.jpeg': 'image/jpeg',
     '.webp': 'image/webp',
     '.svg': 'image/svg+xml',
-    '.gif': 'image/gif'
+    '.gif': 'image/gif',
+    '.webm': 'video/webm',
+    '.mp4': 'video/mp4',
+    '.ogg': 'video/ogg'
   };
 
   const contentType = mimeTypes[ext];
   if (!contentType) {
-    return sendJson(response, { error: `Unsupported image format: ${ext || 'none'}` }, 400);
+    return sendJson(response, { error: `Unsupported media format: ${ext || 'none'}` }, 400);
   }
 
   // Security bounds: must be inside active repo, /home/brad, or /tmp
@@ -457,7 +559,7 @@ function sendScreenshot(response, activeRepo, requestedPath) {
   }
 
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
-    return sendJson(response, { error: `Screenshot file not found: ${raw}` }, 404);
+    return sendJson(response, { error: `Media file not found: ${raw}` }, 404);
   }
 
   response.writeHead(200, {
@@ -466,6 +568,84 @@ function sendScreenshot(response, activeRepo, requestedPath) {
     'Access-Control-Allow-Origin': '*'
   });
   return response.end(fs.readFileSync(resolved));
+}
+
+function sendMedia(request, response, activeRepo, requestedPath) {
+  if (!requestedPath || typeof requestedPath !== 'string') {
+    return sendJson(response, { error: 'path query parameter is required' }, 400);
+  }
+
+  const raw = requestedPath.trim();
+  const resolved = path.isAbsolute(raw) ? path.normalize(raw) : path.normalize(path.join(activeRepo, raw));
+
+  const ext = path.extname(resolved).toLowerCase();
+  const mimeTypes = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.gif': 'image/gif',
+    '.webm': 'video/webm',
+    '.mp4': 'video/mp4',
+    '.ogg': 'video/ogg'
+  };
+
+  const contentType = mimeTypes[ext];
+  if (!contentType) {
+    return sendJson(response, { error: `Unsupported media format: ${ext || 'none'}` }, 400);
+  }
+
+  const homeDir = os.homedir();
+  const isAllowed = resolved.startsWith(activeRepo) ||
+    resolved.startsWith(path.join(homeDir, '.gemini')) ||
+    resolved.startsWith(path.join(homeDir, '.qwen')) ||
+    resolved.startsWith(homeDir) ||
+    resolved.startsWith('/tmp');
+
+  if (!isAllowed) {
+    return sendJson(response, { error: 'Access denied: path is outside allowed directories.' }, 403);
+  }
+
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    return sendJson(response, { error: `Media file not found: ${raw}` }, 404);
+  }
+
+  const stat = fs.statSync(resolved);
+  const size = stat.size;
+
+  const headers = {
+    'Content-Type': contentType,
+    'Content-Length': size,
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+    'Accept-Ranges': 'bytes'
+  };
+
+  let start = 0;
+  let end = size - 1;
+  let status = 200;
+
+  if (request.method === 'GET' && request.headers.range) {
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
+    if (range && (range[1] || range[2])) {
+      start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      end = range[1] && range[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+    }
+    if (!range || (!range[1] && !range[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Cache-Control': 'no-store' });
+      return response.end();
+    }
+    status = 206;
+    headers['Content-Length'] = end - start + 1;
+    headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+  }
+
+  response.writeHead(status, headers);
+  if (request.method === 'HEAD' || size === 0) return response.end();
+  const stream = fs.createReadStream(resolved, { start, end });
+  stream.on('error', () => response.destroy());
+  return stream.pipe(response);
 }
 
 export function createWatchServer({ repo, port = 4317, host = '0.0.0.0', exitOnMissingRepo = false } = {}) {
@@ -586,6 +766,7 @@ export function createWatchServer({ repo, port = 4317, host = '0.0.0.0', exitOnM
     if (url.pathname === '/api/state') return sendJson(response, snapshot(activeRepo));
     if (url.pathname === '/health') return sendJson(response, { ok: true, repository: activeRepo });
     if (url.pathname === '/api/screenshot') return sendScreenshot(response, activeRepo, url.searchParams.get('path'));
+    if (url.pathname === '/api/media') return sendMedia(request, response, activeRepo, url.searchParams.get('path'));
     if (url.pathname.startsWith('/artifacts/')) return sendArtifact(response, activeRepo, url.pathname);
     if (url.pathname.startsWith('/review-assets/')) return sendReviewAsset(request, response, activeRepo, url.pathname);
     if (url.pathname === '/' || url.pathname === '/index.html') {

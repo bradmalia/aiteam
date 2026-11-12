@@ -3,6 +3,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { computeFingerprint, verifyFingerprint } from './fingerprint.mjs';
+import { validateMotionEvidence } from './motion-evidence.mjs';
+
+export const OBLIGATION_TYPES = {
+  ACTUAL_INPUT: 'actualInput',
+  RENDERED_CHECKS: 'renderedChecks',
+  MOTION_EVIDENCE: 'motionEvidence',
+  HUMAN_REVIEW: 'humanReview'
+};
+
+export const EXECUTION_METHODS = {
+  COMPONENT: 'component',
+  INTEGRATED: 'integrated',
+  ACTUAL_INPUT: 'actual-input',
+  RENDERED_MEASUREMENT: 'rendered-measurement',
+  HUMAN_JUDGMENT: 'human-judgment'
+};
 
 export const DEFAULT_PHASE_PLAN = [
   'intake',
@@ -237,6 +253,143 @@ function isRedundantIntakeApprovalQuestion(question) {
   return asksForApproval && targetsWholeArtifact;
 }
 
+export function determineAcceptanceObligations(taskData, repoContext = {}) {
+  const text = [
+    taskData.title || '',
+    taskData.description || '',
+    ...(taskData.acceptanceCriteria || [])
+  ].join(' ');
+
+  // 1. Explicit obligations declaration in description or markdown block
+  let explicitActualInput = null;
+  let explicitRenderedChecks = null;
+  let explicitMotionEvidence = null;
+  let explicitHumanReview = null;
+
+  const obMatch = text.match(/(?:obligations?|acceptance obligations?):\s*([^\n\r]+)/i);
+  if (obMatch) {
+    const obList = obMatch[1].toLowerCase();
+    if (obList.includes('actual-input') || obList.includes('actualinput') || obList.includes('input')) explicitActualInput = true;
+    if (obList.includes('rendered') || obList.includes('renderedchecks') || obList.includes('geometry')) explicitRenderedChecks = true;
+    if (obList.includes('motion') || obList.includes('video') || obList.includes('motionevidence') || obList.includes('gameplay')) explicitMotionEvidence = true;
+    if (obList.includes('human') || obList.includes('humanreview') || obList.includes('visual-review') || obList.includes('manual')) explicitHumanReview = true;
+    if (obList.includes('none') || obList.includes('automated-only') || obList.includes('headless')) {
+      explicitActualInput = false;
+      explicitRenderedChecks = false;
+      explicitMotionEvidence = false;
+      explicitHumanReview = false;
+    }
+  }
+
+  // 2. Semantic evaluation based on task context and criteria
+  const gameplayRegex = /\b(gameplay|motion|animation|chase|pursuit|locomotion|walk|jump|dodge|lunge|retreat|attack|velocity|physics|traversal|controller|gamepad|keyboard\s+input|actual[- ]input|flight|patrol|scuttle|frames?|fps|actor|enemy|player|sprite)\b/i;
+  const visualUiRegex = /\b(ui|ux|layout|screen|dialog|hud|meter|canvas|render(ed|ing)?|viewport|visual|css|responsive|theme|palette)\b/i;
+  const nonVisualRegex = /\b(backend|api|dedup|database|sql|algorithm|headless|parser|cli|documentation|docs|config|setup|script)\b/i;
+
+  const isGameplay = gameplayRegex.test(text);
+  const isVisualUi = visualUiRegex.test(text);
+  const isPureBackend = nonVisualRegex.test(text) && !isGameplay && !isVisualUi;
+
+  const actualInput = explicitActualInput !== null ? explicitActualInput : (isGameplay ? true : false);
+  const renderedChecks = explicitRenderedChecks !== null ? explicitRenderedChecks : (isGameplay || isVisualUi ? true : false);
+  const motionEvidence = explicitMotionEvidence !== null ? explicitMotionEvidence : (isGameplay ? true : false);
+  const humanReview = explicitHumanReview !== null ? explicitHumanReview : ((isGameplay || isVisualUi) && !isPureBackend ? true : false);
+
+  const criteriaMap = {};
+  for (const ac of (taskData.acceptanceCriteria || [])) {
+    const acIdMatch = ac.match(/^(AC-\d+)/i);
+    const acId = acIdMatch ? acIdMatch[1].toUpperCase() : ac.slice(0, 30);
+    const acGameplay = gameplayRegex.test(ac);
+    const acVisual = visualUiRegex.test(ac);
+
+    let method = 'component';
+    if (ac.toLowerCase().includes('actual-input') || (acGameplay && (ac.toLowerCase().includes('traversal') || ac.toLowerCase().includes('input') || ac.toLowerCase().includes('control')))) {
+      method = 'actual-input';
+    } else if (ac.toLowerCase().includes('render') || ac.toLowerCase().includes('geometry') || acVisual || ac.toLowerCase().includes('floor') || ac.toLowerCase().includes('contact')) {
+      method = 'rendered-measurement';
+    } else if (acGameplay) {
+      method = 'integrated';
+    }
+
+    criteriaMap[acId] = {
+      id: acId,
+      criterion: ac,
+      requiredMethod: method,
+      actualInput: explicitActualInput !== null ? explicitActualInput : acGameplay,
+      renderedChecks: explicitRenderedChecks !== null ? explicitRenderedChecks : (acGameplay || acVisual),
+      motionEvidence: explicitMotionEvidence !== null ? explicitMotionEvidence : acGameplay,
+      humanReview: explicitHumanReview !== null ? explicitHumanReview : (acGameplay || acVisual)
+    };
+  }
+
+  return {
+    actualInput,
+    renderedChecks,
+    motionEvidence,
+    humanReview,
+    criteriaMap
+  };
+}
+
+export function validateArtifactReferences(repo, result) {
+  const refs = [];
+  if (Array.isArray(result.evidence)) {
+    for (const e of result.evidence) {
+      if (typeof e === 'string') {
+        const urlMatch = e.match(/https?:\/\/[^\s"'<>]+/i);
+        const pathMatch = e.match(/(?:(?:\.aiteam|\/|\.\/|tests\/|scripts\/|docs\/)[^\s"'<>]+)/i);
+        if (urlMatch) refs.push(urlMatch[0]);
+        else if (pathMatch) refs.push(pathMatch[0]);
+      }
+    }
+  }
+  if (Array.isArray(result.screenshots)) {
+    for (const s of result.screenshots) {
+      if (s?.path) refs.push(s.path);
+    }
+  }
+  if (result.motionEvidence) {
+    if (typeof result.motionEvidence === 'string') {
+      refs.push(result.motionEvidence);
+    } else if (Array.isArray(result.motionEvidence)) {
+      for (const m of result.motionEvidence) {
+        if (typeof m === 'string') refs.push(m);
+        else if (m?.path || m?.videoPath) refs.push(m.path || m.videoPath);
+      }
+    } else if (typeof result.motionEvidence === 'object' && result.motionEvidence !== null) {
+      if (result.motionEvidence.path || result.motionEvidence.videoPath) {
+        refs.push(result.motionEvidence.path || result.motionEvidence.videoPath);
+      }
+    }
+  }
+
+  for (const ref of refs) {
+    let checkPath = null;
+    if (ref.startsWith('http://') || ref.startsWith('https://')) {
+      try {
+        const u = new URL(ref);
+        if (u.pathname.startsWith('/artifacts/')) {
+          checkPath = path.join(repo, '.aiteam', 'docs', decodeURIComponent(u.pathname.slice('/artifacts/'.length)));
+        } else if (u.pathname.startsWith('/review-assets/')) {
+          checkPath = path.join(repo, '.aiteam', 'reviews', decodeURIComponent(u.pathname.slice('/review-assets/'.length)));
+        }
+      } catch {}
+    } else if (ref.startsWith('/review-assets/')) {
+      checkPath = path.join(repo, '.aiteam', 'reviews', decodeURIComponent(ref.slice('/review-assets/'.length)));
+    } else if (ref.startsWith('/artifacts/')) {
+      checkPath = path.join(repo, '.aiteam', 'docs', decodeURIComponent(ref.slice('/artifacts/'.length)));
+    } else if (ref.includes('.') && !ref.includes(' ') && !ref.includes('\n')) {
+      checkPath = path.isAbsolute(ref) ? ref : path.resolve(repo, ref);
+    }
+
+    if (checkPath && !fs.existsSync(checkPath)) {
+      throw new Error(
+        `AITEAM_ARTIFACT_REFERENCE_BROKEN: Referenced evidence file or asset does not exist on disk: "${ref}" (resolved: "${checkPath}").`
+      );
+    }
+  }
+}
+
 /**
  * Validates that required disk artifacts and structured evidence exist before
  * allowing a stage to complete with PASS (or AWAITING_USER for intake).
@@ -327,11 +480,67 @@ function validateStageCompletion(repo, session, stage, taskId, result) {
         `AITEAM_EVIDENCE_MISSING: Cannot PASS stage "qa" for task "${taskId}" without reporting executed "checks" or "evidence".`
       );
     }
+
+    const task = (session.taskLedger || []).find((t) => t.id === taskId);
+    // Explicit policy for legacy tasks: if obligations missing, infer from requiresManualValidation or manualChecks
+    const obligations = task?.acceptanceObligations || {
+      humanReview: Boolean(result.requiresManualValidation === true || (Array.isArray(result.manualChecks) && result.manualChecks.length > 0)),
+      motionEvidence: false,
+      actualInput: false,
+      renderedChecks: false
+    };
+
+    // 1. Conflict check: pre-established human review / motion evidence vs empty manual checks or requiresManualValidation=false
+    if (obligations.humanReview || obligations.motionEvidence) {
+      const isManualExplicitlyFalse = result.requiresManualValidation === false;
+      const isManualChecksEmpty = !Array.isArray(result.manualChecks) || result.manualChecks.length === 0;
+      if (outcome === 'PASS' && (isManualExplicitlyFalse || isManualChecksEmpty)) {
+        const reasons = [];
+        if (obligations.motionEvidence) reasons.push('native motion evidence');
+        if (obligations.actualInput) reasons.push('actual-input traversal');
+        if (obligations.renderedChecks) reasons.push('rendered-property measurements');
+        if (obligations.humanReview) reasons.push('human visual/gameplay review');
+        throw new Error(
+          `AITEAM_ACCEPTANCE_OBLIGATION_CONFLICT: Task "${taskId}" has pre-established obligations requiring ${reasons.join(', ')}. QA submission cannot bypass human review with requiresManualValidation=false or empty manualChecks. Provide concrete manual verification checks and required evidence, or set outcome="PASS_WITH_MANUAL_VALIDATION".`
+        );
+      }
+    }
+
+    // 2. Motion evidence check
+    if (obligations.motionEvidence) {
+      const motionInput = result.motionEvidence || (Array.isArray(result.evidence) ? result.evidence.filter((e) => typeof e === 'string' && (/\.(?:webm|mp4|ogg|json)$/i.test(e) || e.includes('/review-assets/'))) : null);
+      const motionCheck = validateMotionEvidence(repo, motionInput);
+      if (!motionCheck.valid) {
+        throw new Error(
+          `AITEAM_MOTION_EVIDENCE_MISSING: Task "${taskId}" requires native motion evidence (video clip or verified frame capture sequence demonstrating requested behavior under actual execution), but: ${motionCheck.errors.join('; ')}`
+        );
+      }
+    }
+
+    // 3. Rendered checks check
+    if (obligations.renderedChecks) {
+      const checks = Array.isArray(result.checks) ? result.checks : [];
+      const hasRendered = checks.some((c) => {
+        const name = (c.name || '').toLowerCase();
+        const exp = (c.expected || '').toLowerCase();
+        const act = (c.actual || '').toLowerCase();
+        const method = (c.executionMethod || '').toLowerCase();
+        return method === 'rendered-measurement' || /\b(render|geometry|bounds|pixel|px|viewport|layout|meter|coordinate|floor|collision|feet|camera|canvas|dimension|resolution|size|width|height|screen|display|position)\b/i.test(`${name} ${exp} ${act}`);
+      });
+      if (!hasRendered) {
+        throw new Error(
+          `AITEAM_RENDERED_CHECKS_MISSING: Task "${taskId}" requires rendered-property or geometry measurements. Recorded checks must verify rendered output rather than only internal flags or configuration.`
+        );
+      }
+    }
+
+    // 4. Artifact reference integrity check
+    validateArtifactReferences(repo, result);
   }
 }
 
 // Mutates an in-memory session to open a human-approval gate (pendingUserInput).
-function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions, screenshots }) {
+function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions, screenshots, motionClips, criteriaObligations }) {
   const gateId = taskId ? `${gate}:${taskId}` : gate;
   const now = new Date().toISOString();
   session.currentStage = stage || GATE_STAGE_FOR_GATE[gate] || gate;
@@ -346,6 +555,8 @@ function openGateOnSession(session, { gate, kind, stage, taskId, doc, questions,
     doc: doc || null,
     questions: questions || defaultGateQuestions(gate, taskId, doc),
     screenshots: Array.isArray(screenshots) ? screenshots : (session.pendingUserInput?.screenshots || []),
+    motionClips: Array.isArray(motionClips) ? motionClips : (session.pendingUserInput?.motionClips || []),
+    criteriaObligations: criteriaObligations || session.pendingUserInput?.criteriaObligations || null,
     response: null,
     openedAt: now
   };
@@ -400,10 +611,20 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
     if (!targetTask) {
       throw new Error(`AITEAM_TASK_NOT_FOUND: Task "${taskId}" does not exist in session.taskLedger.`);
     }
-    if (approved && targetTask.status !== 'qa-auto-passed' && targetTask.status !== 'qa-passed') {
-      throw new Error(
-        `AITEAM_STAGE_ORDER_VIOLATION: Cannot approve QA gate for task "${taskId}" because its current status is "${targetTask.status}" (must pass automated "qa" stage first).`
-      );
+    if (approved) {
+      if (targetTask.status !== 'qa-auto-passed' && targetTask.status !== 'qa-passed') {
+        throw new Error(
+          `AITEAM_STAGE_ORDER_VIOLATION: Cannot approve QA gate for task "${taskId}" because its current status is "${targetTask.status}" (must pass automated "qa" stage first).`
+        );
+      }
+      if (targetTask.qaFingerprint && Array.isArray(targetTask.filesChanged) && targetTask.filesChanged.length > 0) {
+        const valid = verifyFingerprint(repo, targetTask.filesChanged, targetTask.qaFingerprint);
+        if (!valid) {
+          throw new Error(
+            `AITEAM_EVIDENCE_STALE: Source files (${targetTask.filesChanged.join(', ')}) were modified after QA verification. Approval invalidated; re-verification required.`
+          );
+        }
+      }
     }
   }
 
@@ -437,14 +658,14 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
     session.taskLedger = (session.taskLedger || []).map((t) => {
       if (t.id !== taskId) return t;
       if (!Array.isArray(t.attemptHistory)) t.attemptHistory = [];
-      t.attemptHistory.push({ stage: 'qa-manual', at: now, outcome: approved ? 'PASS' : 'FAIL' });
+      t.attemptHistory.push({ stage: 'qa-manual', at: now, outcome: approved ? 'PASS' : 'FAIL', feedback: response });
       if (approved) {
         t.status = 'qa-passed';
         t.completedAt = now;
         if (!session.completedTasks.includes(taskId)) session.completedTasks.push(taskId);
       } else {
         t.status = 'needs-rework';
-        t.qaFailure = { ...t.qaFailure, decision: 'CHANGES_REQUESTED', response };
+        t.qaFailure = { ...t.qaFailure, decision: 'CHANGES_REQUESTED', response, at: now };
       }
       return t;
     });
@@ -605,6 +826,54 @@ export function readSession(repo) {
   } catch {
     return null;
   }
+}
+
+export function checkAndInvalidateStaleTasks(repo, session) {
+  if (!session || !Array.isArray(session.taskLedger)) return false;
+  let invalidatedAny = false;
+
+  session.taskLedger = session.taskLedger.map((t) => {
+    if ((t.status === 'qa-auto-passed' || t.status === 'qa-passed') && t.qaFingerprint && Array.isArray(t.filesChanged) && t.filesChanged.length > 0) {
+      const valid = verifyFingerprint(repo, t.filesChanged, t.qaFingerprint);
+      if (!valid) {
+        invalidatedAny = true;
+        const now = new Date().toISOString();
+        const reason = `AITEAM_EVIDENCE_STALE: Material source files (${t.filesChanged.join(', ')}) were modified after QA verification. Evidence and approval invalidated. Task routed back to implementation.`;
+        t.status = 'needs-rework';
+        t.staleReason = reason;
+        t.qaFailure = {
+          decision: 'EVIDENCE_STALE',
+          response: reason,
+          at: now
+        };
+        t.qa = null;
+        t.qaFingerprint = null;
+        t.review = null;
+        t.integration = null;
+
+        if (session.approvals) {
+          delete session.approvals[`qa:${t.id}`];
+        }
+        if (session.completedTasks) {
+          session.completedTasks = session.completedTasks.filter((id) => id !== t.id);
+        }
+        if (session.pendingUserInput?.taskId === t.id) {
+          session.pendingUserInput = null;
+        }
+        if (session.currentTaskId === t.id && (session.currentStage === 'integration' || session.currentStage === 'qa-manual')) {
+          session.currentStage = 'implementation';
+        }
+        appendEvent(repo, {
+          type: 'workflow_evidence_invalidated',
+          taskId: t.id,
+          reason
+        });
+      }
+    }
+    return t;
+  });
+
+  return invalidatedAny;
 }
 
 export function writeSession(repo, session) {
@@ -784,8 +1053,15 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
           updated['code-reviewFailure'] = result;
         }
       } else if (stage === 'qa') {
+        const obligations = updated.acceptanceObligations || {};
         const hasManualChecks = Array.isArray(result.manualChecks) && result.manualChecks.length > 0;
-        const requiresManual = outcome === 'PASS_WITH_MANUAL_VALIDATION' || result.requiresManualValidation === true || hasManualChecks;
+        const requiresManual = Boolean(
+          obligations.humanReview ||
+          obligations.motionEvidence ||
+          outcome === 'PASS_WITH_MANUAL_VALIDATION' ||
+          result.requiresManualValidation === true ||
+          hasManualChecks
+        );
 
         if (outcome === 'PASS' && !requiresManual) {
           // Pure automated QA pass for headless/backend task with no manual human testing needed.
@@ -814,6 +1090,8 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
           updated.qa = result;
           updated.qaFailure = null;
           updated.qaFingerprint = computeFingerprint(repo, updated.filesChanged || []);
+          if (!Array.isArray(updated.attemptHistory)) updated.attemptHistory = [];
+          updated.attemptHistory.push({ stage: 'qa-automated', at: now, outcome: 'PASS_AWAITING_HUMAN' });
         } else {
           updated.status = 'needs-rework';
           updated.qaFailure = result;
@@ -930,12 +1208,15 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
   } else if (stage === 'qa') {
     const qt = (session.taskLedger || []).find((x) => x.id === taskId);
     if (qt && qt.status === 'qa-auto-passed') {
+      const motionCheck = validateMotionEvidence(repo, result.motionEvidence || (Array.isArray(result.evidence) ? result.evidence : []));
       openGateOnSession(session, {
         gate: 'qa',
         kind: 'qa-manual',
         taskId,
         questions: qaManualQuestions(taskId, result),
-        screenshots: result.screenshots || []
+        screenshots: result.screenshots || [],
+        motionClips: motionCheck.clips || [],
+        criteriaObligations: qt.acceptanceObligations || null
       });
     } else if (qt && qt.status === 'qa-passed') {
       session.currentStage = 'integration';
@@ -969,7 +1250,7 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
   return session;
 }
 
-export function parseTaskLedgerMarkdown(content) {
+export function parseTaskLedgerMarkdown(content, repoContext = {}) {
   const tasks = [];
   const taskBlocks = String(content || '').split(/^###\s+/m).slice(1);
   for (const block of taskBlocks) {
@@ -983,13 +1264,15 @@ export function parseTaskLedgerMarkdown(content) {
       ? acMatches
       : [...block.matchAll(/^\s*-\s*(?:\[[ xX]\]\s*)?(.+)$/gm)].map((m) => m[1].trim()).filter(Boolean);
 
-    tasks.push({
+    const taskObj = {
       id,
       title,
       status: 'planned',
       description: block.slice(0, 400).trim(),
       acceptanceCriteria: bulletMatches.length ? bulletMatches : ['Pass all assigned unit and integration tests.']
-    });
+    };
+    taskObj.acceptanceObligations = determineAcceptanceObligations(taskObj, repoContext);
+    tasks.push(taskObj);
   }
   return tasks;
 }
@@ -997,12 +1280,45 @@ export function parseTaskLedgerMarkdown(content) {
 export function updateTaskLedger(repo, tasks) {
   const session = readSession(repo);
   if (!session) throw new Error(`No active session found in ${repo}`);
-  session.taskLedger = tasks;
+  
+  // Immutability: pre-established obligations cannot be downgraded or dropped
+  const existingMap = new Map((session.taskLedger || []).map((t) => [t.id, t]));
+  const mergedTasks = tasks.map((newTask) => {
+    const existing = existingMap.get(newTask.id);
+    const taskObj = { ...newTask };
+    if (!taskObj.acceptanceObligations) {
+      taskObj.acceptanceObligations = determineAcceptanceObligations(taskObj);
+    }
+    if (existing && existing.acceptanceObligations) {
+      const oldOb = existing.acceptanceObligations;
+      const newOb = taskObj.acceptanceObligations;
+      taskObj.acceptanceObligations = {
+        actualInput: Boolean(oldOb.actualInput || newOb.actualInput),
+        renderedChecks: Boolean(oldOb.renderedChecks || newOb.renderedChecks),
+        motionEvidence: Boolean(oldOb.motionEvidence || newOb.motionEvidence),
+        humanReview: Boolean(oldOb.humanReview || newOb.humanReview),
+        criteriaMap: {
+          ...(oldOb.criteriaMap || {}),
+          ...(newOb.criteriaMap || {})
+        }
+      };
+    }
+    if (existing) {
+      // Preserve status and progress unless planning explicitly resets
+      taskObj.status = existing.status || taskObj.status;
+      if (existing.filesChanged) taskObj.filesChanged = existing.filesChanged;
+      if (existing.qaFingerprint) taskObj.qaFingerprint = existing.qaFingerprint;
+      if (existing.attemptHistory) taskObj.attemptHistory = existing.attemptHistory;
+    }
+    return taskObj;
+  });
+
+  session.taskLedger = mergedTasks;
   if (!session.completedStages.includes('planning')) {
     session.completedStages.push('planning');
   }
   writeSession(repo, session);
-  appendEvent(repo, { type: 'task_ledger_updated', taskCount: tasks.length });
+  appendEvent(repo, { type: 'task_ledger_updated', taskCount: mergedTasks.length });
   return session;
 }
 
@@ -1048,6 +1364,12 @@ export async function waitForApproval(repo, { gate, taskId = null, pollMs = 750,
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     session = readSession(repo);
+    if (checkAndInvalidateStaleTasks(repo, session)) {
+      writeSession(repo, session);
+      if (gateId.startsWith('qa:') && gateId === `qa:${taskId}`) {
+        throw new Error(`AITEAM_EVIDENCE_STALE: Source files modified while waiting for approval on gate "${gateId}". Verification invalidated.`);
+      }
+    }
     const approval = session?.approvals?.[gateId];
     if (approval && (approval.decision === 'APPROVED' || approval.decision === 'CHANGES_REQUESTED')) {
       writeActiveLog(
