@@ -368,29 +368,37 @@ test('AITeam Skill: Brownfield projects automatically archive existing PRD/TRD d
     fs.writeFileSync(prdPath, '<h1>PRD v1</h1>', 'utf8');
     fs.writeFileSync(trdPath, '<h1>TRD v1</h1>', 'utf8');
 
-    // Starting intake archives the existing PRD
+    // Starting intake archives and moves the prior-milestone PRD and TRD into archive/
     startStage(tmpRepo, 'intake', null, 'analyst', 'Analyst');
     const archiveDir = path.join(docsDir, 'archive');
     assert.ok(fs.existsSync(archiveDir));
     const archivedPrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('prd-') && f.endsWith('.html'));
     assert.equal(archivedPrds.length, 1);
     assert.equal(fs.readFileSync(path.join(archiveDir, archivedPrds[0]), 'utf8'), '<h1>PRD v1</h1>');
+    assert.equal(fs.existsSync(prdPath), false, 'stale v1 PRD removed from .aiteam/docs/');
+    assert.equal(fs.existsSync(trdPath), false, 'stale v1 TRD removed from .aiteam/docs/');
 
-    // Ask intake question, answer, approve PRD and start architecture
+    const archivedTrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('trd-') && f.endsWith('.html'));
+    assert.equal(archivedTrds.length, 1);
+    assert.equal(fs.readFileSync(path.join(archiveDir, archivedTrds[0]), 'utf8'), '<h1>TRD v1</h1>');
+
+    // Ask intake question, answer, write PRD v2, approve PRD and start architecture
     completeStage(tmpRepo, 'intake', null, {
       outcome: 'AWAITING_USER',
       summary: 'Clarifying questions',
       questions: ['1. Target viewport sizes? (Recommended default: 320px-1440px)']
     });
     recordApproval(tmpRepo, { gate: 'intake', decision: 'approved', response: 'Q1: 320px-1440px' });
+    fs.writeFileSync(prdPath, '<h1>PRD v2</h1>', 'utf8');
     completeStage(tmpRepo, 'intake', null, { outcome: 'PASS', summary: 'PRD v2 drafted' });
     recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'PRD v2 approved' });
-    
-    // Starting architecture archives the existing TRD
+
+    // Starting architecture archives any new/existing TRD safely
+    fs.writeFileSync(trdPath, '<h1>TRD v1.5</h1>', 'utf8');
     startStage(tmpRepo, 'architecture', null, 'architect', 'Architect');
-    const archivedTrds = fs.readdirSync(archiveDir).filter((f) => f.startsWith('trd-') && f.endsWith('.html'));
-    assert.equal(archivedTrds.length, 1);
-    assert.equal(fs.readFileSync(path.join(archiveDir, archivedTrds[0]), 'utf8'), '<h1>TRD v1</h1>');
+    const archivedTrdsAfter = fs.readdirSync(archiveDir).filter((f) => f.startsWith('trd-') && f.endsWith('.html'));
+    assert.equal(archivedTrdsAfter.length, 2);
+    assert.equal(fs.existsSync(trdPath), false, 'stale TRD removed before new architecture TRD is generated');
   } finally {
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }

@@ -764,7 +764,7 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
       if (!session.stageEvidence) session.stageEvidence = {};
       session.stageEvidence[reviewStage] = { completedAt: now, result: { outcome: 'PASS', approval: { approvedBy, response } } };
       if (gate === 'prd' && session.currentStage === 'prd-review') {
-        archiveDocIfPresent(repo, '.aiteam/docs/trd.html');
+        archiveDocIfPresent(repo, '.aiteam/docs/trd.html', { removeSource: true });
         session.currentStage = 'architecture';
       } else if (gate === 'trd' && session.currentStage === 'trd-review') {
         session.currentStage = 'environment-readiness';
@@ -881,7 +881,7 @@ export function docsArchiveDir(repo) {
   return path.join(docsDir(repo), 'archive');
 }
 
-export function archiveDocIfPresent(repo, docRelPath) {
+export function archiveDocIfPresent(repo, docRelPath, { removeSource = false } = {}) {
   ensureStateDir(repo);
   const baseName = path.basename(docRelPath);
   const sourcePath = path.isAbsolute(docRelPath) ? docRelPath : path.join(repo, docRelPath);
@@ -899,6 +899,9 @@ export function archiveDocIfPresent(repo, docRelPath) {
     if (existing.length > 0) {
       const latestArchive = path.join(archiveDir, existing.at(-1));
       if (fs.readFileSync(latestArchive, 'utf8') === sourceContent) {
+        if (removeSource) {
+          try { fs.unlinkSync(sourcePath); } catch {}
+        }
         return path.relative(repo, latestArchive);
       }
     }
@@ -909,11 +912,15 @@ export function archiveDocIfPresent(repo, docRelPath) {
   const destPath = path.join(archiveDir, archivedName);
 
   fs.copyFileSync(sourcePath, destPath);
+  if (removeSource) {
+    try { fs.unlinkSync(sourcePath); } catch {}
+  }
   const archiveRelPath = path.relative(repo, destPath);
   appendEvent(repo, {
     type: 'doc_archived',
     source: docRelPath,
     archivedPath: archiveRelPath,
+    removedSource: removeSource,
     archivedAt: new Date().toISOString()
   });
   return archiveRelPath;
@@ -1048,6 +1055,8 @@ export function appendEvent(repo, event) {
 
 export function initSession(repo, request) {
   const dir = ensureStateDir(repo);
+  archiveDocIfPresent(repo, '.aiteam/docs/prd.html', { removeSource: true });
+  archiveDocIfPresent(repo, '.aiteam/docs/trd.html', { removeSource: true });
   const activeLogFile = path.join(dir, 'runs', 'active.log');
   try {
     if (fs.existsSync(activeLogFile)) {
@@ -1100,12 +1109,17 @@ export function startStage(repo, stage, taskId = null, agentId = null, role = nu
   // Strict per-task stage ordering
   enforceTaskStageOrder(session, stage, taskId);
 
-  // In brownfield projects, if a previous PRD or TRD exists when re-entering
-  // intake or architecture, archive it so it is never overwritten or lost.
+  // In brownfield projects, if a previous PRD or TRD exists when starting a new
+  // milestone, move it into .aiteam/docs/archive/ so stale prior-milestone docs
+  // are never shown as current before the new milestone's docs are generated.
   if (stage === 'intake') {
-    archiveDocIfPresent(repo, '.aiteam/docs/prd.html');
+    const hasPrdApproval = Boolean(session.approvals?.prd);
+    archiveDocIfPresent(repo, '.aiteam/docs/prd.html', { removeSource: !hasPrdApproval });
+    if (!hasPrdApproval) {
+      archiveDocIfPresent(repo, '.aiteam/docs/trd.html', { removeSource: true });
+    }
   } else if (stage === 'architecture') {
-    archiveDocIfPresent(repo, '.aiteam/docs/trd.html');
+    archiveDocIfPresent(repo, '.aiteam/docs/trd.html', { removeSource: !session.approvals?.trd });
   }
 
   const now = new Date().toISOString();
@@ -1715,7 +1729,7 @@ if (isMain) {
           console.error('Usage: state-bridge.mjs archive-doc --doc <relative-path> [--repo <repo>]');
           process.exit(1);
         }
-        const archivedPath = archiveDocIfPresent(repo, doc);
+        const archivedPath = archiveDocIfPresent(repo, doc, { removeSource: args.includes('--remove') });
         console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
       } else if (cmd === 'status') {
         const watchUrl = await maybeEnsureWatcher(repo);
