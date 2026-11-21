@@ -485,12 +485,8 @@ export async function handleToolCall(name, args = {}) {
 
   if (name === 'aiteam_status') {
     const watchUrl = await ensureWatcher(repo);
-    const upgradeInfo = offerUpgradeIfAvailable(repo);
     const session = readSession(repo);
     const directive = getDirective(session, repo, watchUrl);
-    const upgradeBanner = upgradeInfo.upgradeAvailable
-      ? `⬆️ Upgrade Available: ${upgradeInfo.check.summary}`
-      : null;
 
     return {
       content: [
@@ -500,16 +496,14 @@ export async function handleToolCall(name, args = {}) {
             `AITeam Status: ${session ? session.status : 'NO SESSION'}`,
             `Stage: ${session ? session.currentStage : '—'}`,
             `Watcher: ${watchUrl}`,
-            upgradeBanner,
             '',
             `👉 DIRECTIVE:`,
             directive.instruction
-          ].filter((x) => x !== null).join('\n')
+          ].join('\n')
         }
       ],
       session,
       directive,
-      upgrade: upgradeInfo.check,
       watchUrl
     };
   }

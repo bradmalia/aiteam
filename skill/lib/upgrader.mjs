@@ -209,23 +209,27 @@ export function checkForUpgrade(targetRepo, options = {}) {
   let installedProjectCommit = null;
   let agentsMdOutdated = false;
   let installMetadataMissing = false;
+  let symlinkValid = false;
 
   if (targetRepo && path.resolve(targetRepo) !== aiteamRoot) {
     const repoPath = path.resolve(targetRepo);
     const meta = readInstallMetadata(repoPath);
     if (!meta) {
       installMetadataMissing = true;
-      projectOutdated = true;
     } else {
       installedProjectVersion = meta.version || null;
       installedProjectCommit = meta.commit || null;
-      if (
-        (targetVersion && installedProjectVersion !== targetVersion) ||
-        (targetCommit && targetCommit !== 'unknown' && installedProjectCommit !== targetCommit)
-      ) {
-        projectOutdated = true;
-      }
     }
+
+    const skillTarget = path.join(repoPath, '.agents', 'skills', 'aiteam');
+    const desiredSkillSource = path.join(aiteamRoot, 'skill');
+    try {
+      const lstat = fs.lstatSync(skillTarget);
+      if (lstat.isSymbolicLink()) {
+        const linked = path.resolve(path.dirname(skillTarget), fs.readlinkSync(skillTarget));
+        symlinkValid = linked === path.resolve(desiredSkillSource);
+      }
+    } catch {}
 
     const templatePath = path.join(aiteamRoot, 'skill', 'templates', 'AGENTS.skill.md');
     const agentsPath = path.join(repoPath, 'AGENTS.md');
@@ -235,10 +239,41 @@ export function checkForUpgrade(targetRepo, options = {}) {
         const currentAgents = fs.existsSync(agentsPath) ? fs.readFileSync(agentsPath, 'utf8') : '';
         if (!currentAgents.includes(expectedTemplate)) {
           agentsMdOutdated = true;
-          projectOutdated = true;
         }
       }
     } catch {}
+
+    if (!githubBehind && symlinkValid && !agentsMdOutdated) {
+      if (
+        !meta ||
+        meta.version !== targetVersion ||
+        (targetCommit && targetCommit !== 'unknown' && meta.commit !== targetCommit)
+      ) {
+        try {
+          fs.mkdirSync(path.join(repoPath, '.aiteam'), { recursive: true });
+          fs.writeFileSync(
+            installMetadataPath(repoPath),
+            JSON.stringify(
+              {
+                version: targetVersion,
+                commit: targetCommit,
+                updatedAt: new Date().toISOString(),
+                aiteamRoot
+              },
+              null,
+              2
+            ) + '\n',
+            'utf8'
+          );
+          installedProjectVersion = targetVersion;
+          installedProjectCommit = targetCommit;
+          installMetadataMissing = false;
+        } catch {}
+      }
+      projectOutdated = false;
+    } else {
+      projectOutdated = Boolean(agentsMdOutdated || !symlinkValid);
+    }
   }
 
   const upgradeAvailable = githubBehind || projectOutdated;

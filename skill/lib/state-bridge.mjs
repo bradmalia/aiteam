@@ -1733,12 +1733,10 @@ if (isMain) {
         console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
       } else if (cmd === 'status') {
         const watchUrl = await maybeEnsureWatcher(repo);
-        const upgrade = maybeOfferUpgrade(repo);
         const sess = readSession(repo);
         console.log(JSON.stringify({
           ...(sess || { status: 'NO_SESSION' }),
-          ...(watchUrl ? { watchUrl } : {}),
-          ...(upgrade ? { upgrade } : {})
+          ...(watchUrl ? { watchUrl } : {})
         }, null, 2));
       } else {
         console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|update-ledger|request-approval|wait-approval|record-approval|archive-doc|log|status> [options]');
