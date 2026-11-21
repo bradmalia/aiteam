@@ -1574,20 +1574,52 @@ if (isMain) {
   }
 
   const repo = path.resolve(getArg('--repo', process.cwd()));
+  const forceWatch = args.includes('--watch');
+  const skipUpgradeCheck = args.includes('--no-upgrade-check');
+  const isTestEnv = Boolean(process.env.NODE_TEST_CONTEXT || process.env.AITEAM_TEST_MODE === '1');
+
+  async function maybeEnsureWatcher(targetRepo) {
+    if (isTestEnv && !forceWatch) return null;
+    try {
+      const { ensureWatcher } = await import('../../src/watcher-discovery.mjs');
+      return await ensureWatcher(targetRepo);
+    } catch {
+      return null;
+    }
+  }
+
+  function maybeOfferUpgrade(targetRepo) {
+    if (isTestEnv || skipUpgradeCheck) return null;
+    try {
+      const res = offerUpgradeIfAvailable(targetRepo);
+      return res?.upgradeAvailable ? res.check : null;
+    } catch {
+      return null;
+    }
+  }
 
   (async () => {
     try {
       if (cmd === 'init') {
         const request = getArg('--request', 'AITeam Managed Workflow');
         const sess = initSession(repo, request);
-        console.log(JSON.stringify({ ok: true, sessionId: sess.id, status: sess.status }));
+        const watchUrl = await maybeEnsureWatcher(repo);
+        const upgrade = maybeOfferUpgrade(repo);
+        console.log(JSON.stringify({
+          ok: true,
+          sessionId: sess.id,
+          status: sess.status,
+          ...(watchUrl ? { watchUrl } : {}),
+          ...(upgrade ? { upgrade } : {})
+        }));
       } else if (cmd === 'stage-start') {
         const stage = getArg('--stage');
         const taskId = getArg('--taskId');
         const agentId = getArg('--agentId');
         const role = getArg('--role');
         const run = startStage(repo, stage, taskId, agentId, role);
-        console.log(JSON.stringify({ ok: true, run }));
+        const watchUrl = await maybeEnsureWatcher(repo);
+        console.log(JSON.stringify({ ok: true, run, ...(watchUrl ? { watchUrl } : {}) }));
       } else if (cmd === 'stage-complete') {
         const stage = getArg('--stage');
         const taskId = getArg('--taskId');
@@ -1595,7 +1627,8 @@ if (isMain) {
         let result = {};
         try { result = JSON.parse(resultRaw); } catch {}
         const sess = completeStage(repo, stage, taskId, result);
-        console.log(JSON.stringify({ ok: true, stage, taskId, status: sess.status }));
+        const watchUrl = await maybeEnsureWatcher(repo);
+        console.log(JSON.stringify({ ok: true, stage, taskId, status: sess.status, ...(watchUrl ? { watchUrl } : {}) }));
       } else if (cmd === 'update-ledger') {
         const session = readSession(repo);
         if (!session) throw new Error(`No active session found in ${repo}`);
@@ -1611,7 +1644,13 @@ if (isMain) {
           throw new Error(`AITEAM_LEDGER_EMPTY: No tasks ("### T1: Title") found in "${ledgerArg}".`);
         }
         const sess = updateTaskLedger(repo, tasks);
-        console.log(JSON.stringify({ ok: true, taskCount: sess.taskLedger.length, tasks: sess.taskLedger.map((t) => t.id) }));
+        const watchUrl = await maybeEnsureWatcher(repo);
+        console.log(JSON.stringify({
+          ok: true,
+          taskCount: sess.taskLedger.length,
+          tasks: sess.taskLedger.map((t) => t.id),
+          ...(watchUrl ? { watchUrl } : {})
+        }));
       } else if (cmd === 'request-approval') {
         const gate = getArg('--gate');
         const taskId = getArg('--taskId');
@@ -1624,13 +1663,21 @@ if (isMain) {
         let screenshots = null;
         const sRaw = getArg('--screenshots');
         if (sRaw) { try { screenshots = JSON.parse(sRaw); } catch {} }
-        const sess = openGate(repo, { gate, taskId, kind, doc, stage, questions, screenshots });
-        console.log(JSON.stringify({ ok: true, gate, gateId: taskId ? `${gate}:${taskId}` : gate, status: 'AWAITING_APPROVAL' }));
+        openGate(repo, { gate, taskId, kind, doc, stage, questions, screenshots });
+        const watchUrl = await maybeEnsureWatcher(repo);
+        console.log(JSON.stringify({
+          ok: true,
+          gate,
+          gateId: taskId ? `${gate}:${taskId}` : gate,
+          status: 'AWAITING_APPROVAL',
+          ...(watchUrl ? { watchUrl } : {})
+        }));
       } else if (cmd === 'wait-approval') {
         const gate = getArg('--gate');
         const taskId = getArg('--taskId');
         const timeoutMs = Number(getArg('--timeoutMs', '3600000'));
         const pollMs = Number(getArg('--pollMs', '750'));
+        const watchUrl = await maybeEnsureWatcher(repo);
         const { session, approval } = await waitForApproval(repo, { gate, taskId, pollMs, timeoutMs });
         console.log(JSON.stringify({
           ok: true,
@@ -1639,7 +1686,8 @@ if (isMain) {
           decision: approval.decision,
           response: approval.response || '',
           currentStage: session.currentStage,
-          currentTaskId: session.currentTaskId
+          currentTaskId: session.currentTaskId,
+          ...(watchUrl ? { watchUrl } : {})
         }));
       } else if (cmd === 'record-approval') {
         const gate = getArg('--gate');
@@ -1649,7 +1697,14 @@ if (isMain) {
         const approvedBy = getArg('--approvedBy', 'user');
         const gateId = taskId ? `${gate}:${taskId}` : gate;
         const sess = recordApproval(repo, { gate, taskId, decision, response, approvedBy, enforceDwell: true });
-        console.log(JSON.stringify({ ok: true, gate, taskId, decision: sess.approvals[gateId]?.decision }));
+        const watchUrl = await maybeEnsureWatcher(repo);
+        console.log(JSON.stringify({
+          ok: true,
+          gate,
+          taskId,
+          decision: sess.approvals[gateId]?.decision,
+          ...(watchUrl ? { watchUrl } : {})
+        }));
       } else if (cmd === 'log') {
         const text = getArg('--text', '');
         writeActiveLog(repo, text);
@@ -1663,8 +1718,14 @@ if (isMain) {
         const archivedPath = archiveDocIfPresent(repo, doc);
         console.log(JSON.stringify({ ok: true, archived: Boolean(archivedPath), archivedPath }));
       } else if (cmd === 'status') {
+        const watchUrl = await maybeEnsureWatcher(repo);
+        const upgrade = maybeOfferUpgrade(repo);
         const sess = readSession(repo);
-        console.log(JSON.stringify(sess || { status: 'NO_SESSION' }, null, 2));
+        console.log(JSON.stringify({
+          ...(sess || { status: 'NO_SESSION' }),
+          ...(watchUrl ? { watchUrl } : {}),
+          ...(upgrade ? { upgrade } : {})
+        }, null, 2));
       } else {
         console.error('Usage: state-bridge.mjs <init|stage-start|stage-complete|update-ledger|request-approval|wait-approval|record-approval|archive-doc|log|status> [options]');
         process.exit(1);
