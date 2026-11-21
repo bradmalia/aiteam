@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-11-21
+
+- **Automatic GitHub Upgrade Check & Project Self-Upgrade (`skill/lib/upgrader.mjs`)**:
+  - `aiteam_start` and `aiteam_status` automatically check `origin/main` on GitHub for newer AITeam releases and check whether the target project's `AGENTS.md` / `.aiteam/install.json` is out of date.
+  - Opens an interactive `upgrade` gate (`gate="upgrade"`) presenting the version diff and recent commit changelog; approving in chat (`aiteam_record_approval` / `aiteam_upgrade`) or the Watcher Portal pulls the latest commits via fast-forward (`git pull --ff-only`), refreshes `.agents/skills/aiteam` and `AGENTS.md` (preserving any project-specific header), writes `.aiteam/install.json`, and seamlessly resumes the workflow.
+  - Upgraded `bin/aiteam-install` to refresh existing `AGENTS.md` files and write `.aiteam/install.json`.
+- **Adversarial Critical Review Overhaul**:
+  - Enforced isolated read-only subagent execution for `critical-review` (`skill/contracts/critical-reviewer.md`) and moved final TRD traceability assembly to `qa-planning`.
+  - Added 6 mandatory falsification dimensions (`prd-traceability`, `repo-grounding`, `state-and-failure-modes`, `math-and-layout-sanity`, `task-and-assembly-integrity`, `qa-falsifiability`), `AITEAM_REVIEW_CONFLICT` rejection on `PASS` with `BLOCKER`/`MAJOR` findings, and `FAIL` + `repairStage` routing (`architecture` | `ui-design` | `planning` | `qa-planning`) with `session.lockedCriticalFindings` and `VERIFY_REPAIRS` mode.
+- **Deepened Multi-Round Intake**:
+  - Upgraded `skill/contracts/analyst.md` and `mcp-server.mjs` intake directives to require pre-interview codebase discovery (`evidence`), 4–8 dimension-tagged clarifying questions across 5 dimensions, explicit `(Decision required: ...)` vs `(Recommended default: ...)` framing, and optional multi-round follow-up interviews.
+- **State-Engine & Runner Adapter Fixes**:
+  - Made `hasQaTestFiles(repo, taskId)` task-scoped so `T1` tests cannot satisfy `T2..TN`.
+  - Required non-empty `.aiteam/docs/trd.html` for `ui-design` and `qa-planning`, prevented `FAIL` outcomes from marking stages complete in `session.completedStages`, removed the 400-character task description truncation in `parseTaskLedgerMarkdown`, fixed `resolveSandboxMode` in `skill/lib/runner-adapter.mjs`, and synced `src/mcp-bridge.py`.
+
 ## 0.7.0 - 2026-09-20
 
 - Mandatory **hard human-approval gates** at three points in the workflow:

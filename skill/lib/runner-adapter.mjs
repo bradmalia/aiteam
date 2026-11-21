@@ -16,6 +16,41 @@ export function detectEnvironment() {
   return 'cli-fallback';
 }
 
+const WRITE_ROLES = new Set([
+  'programmer',
+  'implementation',
+  'coder',
+  'qa',
+  'maintainer',
+  'integration',
+  'analyst',
+  'intake',
+  'architect',
+  'architecture',
+  'ui-designer',
+  'ui-design',
+  'planner',
+  'planning',
+  'qa-planner',
+  'qa-planning'
+]);
+
+const READ_ONLY_ROLES = new Set([
+  'reviewer',
+  'code-reviewer',
+  'code-review',
+  'critical-reviewer',
+  'critical-review',
+  'environment-readiness'
+]);
+
+export function resolveSandboxMode(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  if (READ_ONLY_ROLES.has(normalized)) return 'read-only';
+  if (WRITE_ROLES.has(normalized)) return 'danger-full-access';
+  return 'read-only';
+}
+
 /**
  * Build CLI command and arguments for a specialist when invoked outside of native subagents.
  */
@@ -29,7 +64,7 @@ export function buildCliInvocation({ repo, role, contractPath, taskPrompt, model
     const args = [
       'exec',
       '-C', repo,
-      '--sandbox', role === 'coder' || role === 'qa' ? 'danger-full-access' : 'read-only',
+      '--sandbox', resolveSandboxMode(role),
       '-c', 'approval_policy="never"'
     ];
     if (model) args.push('--model', model);

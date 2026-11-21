@@ -30,8 +30,10 @@ import {
   updateTaskLedger,
   parseTaskLedgerMarkdown,
   writeActiveLog,
-  checkAndInvalidateStaleTasks
+  checkAndInvalidateStaleTasks,
+  offerUpgradeIfAvailable
 } from '../skill/lib/state-bridge.mjs';
+import { performUpgrade } from '../skill/lib/upgrader.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -49,6 +51,19 @@ function isTaskIntegrated(t) {
     t.status === 'integrated' ||
     t.status === 'completed'
   );
+}
+
+function formatLockedFindingsBanner(session) {
+  const locked = Array.isArray(session?.lockedCriticalFindings) ? session.lockedCriticalFindings : [];
+  if (locked.length === 0) return '';
+  const lines = locked.map((f, i) => {
+    const id = f?.id || `CR-${i + 1}`;
+    const sev = f?.severity || 'MAJOR';
+    const desc = f?.description || f?.impact || JSON.stringify(f);
+    const rec = f?.recommendation ? ` Fix: ${f.recommendation}` : '';
+    return `- [${sev}] ${id}: ${desc}${rec}`;
+  });
+  return `⚠️ CRITICAL REVIEW REWORK REQUIRED — Resolve these locked findings and update .aiteam/docs/trd.html / TASK_LEDGER.md before advancing:\n${lines.join('\n')}\n\n`;
 }
 
 /**
@@ -83,8 +98,21 @@ function getDirective(session, repo, watchUrl = null) {
     const taskArg = pending.taskId ? `, taskId="${pending.taskId}"` : '';
     const cliTaskArg = pending.taskId ? ` --taskId "${pending.taskId}"` : '';
     const isIntakeGate = pending.gate === 'intake';
+    const isUpgradeGate = pending.gate === 'upgrade';
     const formattedQuestions = (pending.questions || []).map((q, i) => `  ${i + 1}. ${q}`).join('\n');
     const portalRef = watchUrl ? `in the Watcher Dashboard Portal (${watchUrl})` : 'in the Watcher Dashboard Portal';
+    if (isUpgradeGate) {
+      return {
+        status: 'GATE_BLOCKED',
+        gate: 'upgrade',
+        kind: pending.kind || 'upgrade',
+        doc: null,
+        taskId: null,
+        questions: pending.questions || [],
+        instruction: `⬆️ AITEAM GITHUB UPGRADE AVAILABLE! Present the available upgrade and changelog to the user:\n${formattedQuestions}\nAsk the user if they want to upgrade AITeam now (or they can click "Approve Gate" in the Watcher Portal ${portalRef}):\n- If the user says YES in chat: call aiteam_record_approval(gate="upgrade", decision="approved", response="<user reply>") (or call aiteam_upgrade) to automatically pull from GitHub and update this project.\n- If the user says NO / skip: call aiteam_record_approval(gate="upgrade", decision="changes_requested", response="skip") to skip the upgrade and continue.\n- Or call aiteam_wait_for_approval(gate="upgrade") to wait for their Watcher Portal click.`,
+        nextTool: 'aiteam_wait_for_approval'
+      };
+    }
     return {
       status: 'GATE_BLOCKED',
       gate: pending.gate,
@@ -116,9 +144,13 @@ function getDirective(session, repo, watchUrl = null) {
     if (prdFeedback) {
       instruction = `User requested changes on the PRD: "${prdFeedback}". Revise .aiteam/docs/prd.html accordingly, then call aiteam_advance with stage="intake", outcome="PASS", and summary.`;
     } else if (!session.intakeClarified) {
-      instruction = 'STEP 1 OF 2 (MANDATORY INTAKE CLARIFYING INTERVIEW): Inspect the repository first so your questions are grounded in the existing codebase, then formulate 3-5 concrete, high-impact clarifying questions covering ambiguous scope, user flows, edge cases, or visual/UX behavior (include a recommended default in parentheses for each question). Do NOT write .aiteam/docs/prd.html yet — the state engine rejects intake PASS until clarifying questions are asked and answered. Call aiteam_advance with stage="intake", outcome="AWAITING_USER", questions=["1. ...", "2. ..."], and summary.';
+      const round = (session.intakeRound || 0) + 1;
+      instruction = `STEP 1 OF 2 — ROUND ${round} (MULTI-DIMENSIONAL DISCOVERY & CLARIFYING INTERVIEW): Inspect the repository (files, package.json, tests, .aiteam/docs/archive/) first so your questions are grounded in the codebase. Formulate 4-8 high-impact, dimension-tagged clarifying questions covering: (1) [User Flow & State Transitions], (2) [Edge Cases & Failure Modes], (3) [Domain Rules & Visual/Quantitative Precision], (4) [Brownfield Integration & Data Lifecycle], and (5) [Scope Boundaries & Falsifiable Verification] (append "(Recommended default: ...)" or "(Decision required: Option A vs Option B)" to each). Do NOT write .aiteam/docs/prd.html yet — the state engine rejects intake PASS until all rounds are answered. Call aiteam_advance with stage="intake", outcome="AWAITING_USER", evidence=[...discovery notes...], questions=[...], and summary.`;
     } else {
-      instruction = `STEP 2 OF 2 (AUTHOR PRD FROM USER ANSWERS): The user answered the intake clarifying questions: "${session.intakeAnswers || 'Use recommended defaults'}". Incorporate all user answers into a comprehensive Product Requirements Document at .aiteam/docs/prd.html following skill/contracts/analyst.md (including a "Clarifications & Product Decisions" table). When .aiteam/docs/prd.html is written on disk, call aiteam_advance with stage="intake", outcome="PASS", and summary.`;
+      const historySummary = Array.isArray(session.intakeHistory) && session.intakeHistory.length > 0
+        ? session.intakeHistory.map((h, idx) => `Round ${idx + 1}: "${h.answers}"`).join(' | ')
+        : `"${session.intakeAnswers || 'Use recommended defaults'}"`;
+      instruction = `STEP 2 OF 2 (EVALUATE FOLLOW-UP OR AUTHOR PRD): User answers recorded (${historySummary}). If any answer introduced a new material ambiguity or uncovered a complex subsystem needing clarification, execute another interview round via aiteam_advance(stage="intake", outcome="AWAITING_USER", questions=[...]). Otherwise, write a comprehensive .aiteam/docs/prd.html following skill/contracts/analyst.md (granular PRD-R1..N, PRD-A1..N, Edge Cases & Failure Modes, Non-Functional Requirements, Scope Boundaries, and a Clarifications & Product Decisions table covering all intake rounds), then call aiteam_advance with stage="intake", outcome="PASS", and summary.`;
     }
     return {
       status: 'ACTIVE',
@@ -140,12 +172,14 @@ function getDirective(session, repo, watchUrl = null) {
     };
   }
 
+  const lockedFindingsBanner = formatLockedFindingsBanner(session);
+
   if (activeStage === 'architecture') {
     return {
       status: 'ACTIVE',
       stage: 'architecture',
       role: 'architect',
-      instruction: 'Execute the Systems Architect stage (skill/contracts/architect.md): define component boundaries, interfaces, data models, and initialize .aiteam/docs/trd.html. When done, call aiteam_advance with stage="architecture", outcome="PASS", and summary.',
+      instruction: `${lockedFindingsBanner}Execute the Systems Architect stage (skill/contracts/architect.md): define component boundaries, interfaces, data models, and initialize/update .aiteam/docs/trd.html. When done, call aiteam_advance with stage="architecture", outcome="PASS", and summary.`,
       contractFile: 'skill/contracts/architect.md',
       nextTool: 'aiteam_advance'
     };
@@ -156,7 +190,7 @@ function getDirective(session, repo, watchUrl = null) {
       status: 'ACTIVE',
       stage: 'ui-design',
       role: 'ui-designer',
-      instruction: 'Execute the UI/UX Designer stage (skill/contracts/ui-designer.md): define user flows, screen mockups, layout hierarchy, design tokens, and interaction states, and append the UI/UX section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="ui-design", outcome="PASS", and summary.',
+      instruction: `${lockedFindingsBanner}Execute the UI/UX Designer stage (skill/contracts/ui-designer.md): define user flows, screen mockups, layout hierarchy, design tokens, and interaction states, and append/update the UI/UX section in .aiteam/docs/trd.html. Then call aiteam_advance with stage="ui-design", outcome="PASS", and summary.`,
       contractFile: 'skill/contracts/ui-designer.md',
       nextTool: 'aiteam_advance'
     };
@@ -168,7 +202,7 @@ function getDirective(session, repo, watchUrl = null) {
       stage: 'planning',
       role: 'planner',
       contractFile: 'skill/contracts/planner.md',
-      instruction: 'Execute the Technical Planner stage (skill/contracts/planner.md): create TASK_LEDGER.md with explicit acceptance criteria (### T1: Title and - [ ] AC-1: ...) and append the Implementation Plan section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="planning", ledger="TASK_LEDGER.md", outcome="PASS".',
+      instruction: `${lockedFindingsBanner}Execute the Technical Planner stage (skill/contracts/planner.md): create/update TASK_LEDGER.md with explicit acceptance criteria (### T1: Title and - [ ] AC-1: ...) and append/update the Implementation Plan section in .aiteam/docs/trd.html. Then call aiteam_advance with stage="planning", ledger="TASK_LEDGER.md", outcome="PASS".`,
       nextTool: 'aiteam_advance'
     };
   }
@@ -179,21 +213,26 @@ function getDirective(session, repo, watchUrl = null) {
       stage: 'qa-planning',
       role: 'qa-planner',
       contractFile: 'skill/contracts/qa-planner.md',
-      instruction: 'Execute the QA Test Planner stage (skill/contracts/qa-planner.md): design pre-implementation black-box test plans and regression strategy for every task in TASK_LEDGER.md, and append the QA Testing Plan section to .aiteam/docs/trd.html. Then call aiteam_advance with stage="qa-planning", outcome="PASS", and summary.',
+      instruction: `${lockedFindingsBanner}Execute the QA Test Planner stage (skill/contracts/qa-planner.md): design pre-implementation black-box test plans and regression strategy for every task in TASK_LEDGER.md, and append/update the QA Testing Plan and Requirements-to-Task-to-QA Traceability Matrix sections in .aiteam/docs/trd.html. Then call aiteam_advance with stage="qa-planning", outcome="PASS", and summary.`,
       nextTool: 'aiteam_advance'
     };
   }
 
   if (activeStage === 'critical-review') {
     const trdFeedback = session.approvals?.trd?.decision === 'CHANGES_REQUESTED' ? session.approvals.trd.response : null;
+    const hasLockedFindings = Array.isArray(session.lockedCriticalFindings) && session.lockedCriticalFindings.length > 0;
+    const modePrompt = hasLockedFindings
+      ? `VERIFY_REPAIRS MODE: Inspect .aiteam/docs/trd.html, TASK_LEDGER.md, and repository files to verify whether every locked finding below is genuinely resolved without regressions:\n${JSON.stringify(session.lockedCriticalFindings, null, 2)}`
+      : `COMPREHENSIVE ADVERSARIAL FALSIFICATION MODE: Audit .aiteam/docs/trd.html, TASK_LEDGER.md, and repository files against .aiteam/docs/prd.html across all 6 dimensions in skill/contracts/critical-reviewer.md: (1) prd-traceability, (2) repo-grounding, (3) state-and-failure-modes, (4) math-and-layout-sanity, (5) task-and-assembly-integrity, and (6) qa-falsifiability.`;
+    const feedbackNote = trdFeedback
+      ? `User also requested changes on the TRD: "${trdFeedback}". Ensure all requested changes are addressed or routed back cleanly.\n`
+      : '';
     return {
       status: 'ACTIVE',
       stage: 'critical-review',
       role: 'critical-reviewer',
       contractFile: 'skill/contracts/critical-reviewer.md',
-      instruction: trdFeedback
-        ? `User requested changes on the TRD: "${trdFeedback}". Revise .aiteam/docs/trd.html and TASK_LEDGER.md as needed, then call aiteam_advance with stage="critical-review", outcome="PASS", and summary to re-open the TRD approval gate.`
-        : 'Execute the Critical Reviewer stage (skill/contracts/critical-reviewer.md): audit Architecture, UI Design, TASK_LEDGER.md, and QA Plan against .aiteam/docs/prd.html, and finalize .aiteam/docs/trd.html. Then call aiteam_advance with stage="critical-review", outcome="PASS", and summary (which opens the 🛑 TRD Approval Gate).',
+      instruction: `Spawn an isolated Critical Reviewer subagent in READ-ONLY mode (skill/contracts/critical-reviewer.md — do NOT self-review inline in the context that authored the TRD/Task Ledger).\n${feedbackNote}${modePrompt}\nIf ANY BLOCKER or MAJOR design flaw, missing edge case, ungrounded file assumption, or weak QA test plan is found, call aiteam_advance with stage="critical-review", outcome="FAIL", repairStage="architecture"|"ui-design"|"planning"|"qa-planning", findings=[...], and auditMatrix=[...]. Only call aiteam_advance with outcome="PASS", repairStage="none", findings=[], and auditMatrix=[...] when zero BLOCKER or MAJOR findings remain (which opens the 🛑 TRD Approval Gate).`,
       nextTool: 'aiteam_advance'
     };
   }
@@ -324,7 +363,9 @@ export const toolDefs = [
         questions: { type: 'array', items: { type: 'string' }, description: 'Clarifying questions for the user when completing intake with outcome="AWAITING_USER".' },
         evidence: { type: 'array', items: { type: 'string' }, description: 'Supporting evidence, test outputs, or findings.' },
         filesChanged: { type: 'array', items: { type: 'string' }, description: 'List of files modified during implementation.' },
-        findings: { type: 'array', items: { type: 'object' }, description: 'Code review findings array (if stage="code-review").' },
+        findings: { type: 'array', items: { type: 'object' }, description: 'Code review or critical review findings array (if stage="code-review" or "critical-review").' },
+        repairStage: { type: 'string', enum: ['architecture', 'ui-design', 'planning', 'qa-planning', 'none'], description: 'Upstream setup stage to route repairs to when stage="critical-review" fails, or "none" on pass.' },
+        auditMatrix: { type: 'array', items: { type: 'object' }, description: '6-dimension falsification audit summary when stage="critical-review".' },
         checks: { type: 'array', items: { type: 'object' }, description: 'QA black-box check results (if stage="qa").' },
         manualChecks: { type: 'array', items: { type: 'string' }, description: 'Checklist of manual verification steps for human validation (e.g. browser UI checks). If empty or omitted and outcome="PASS", the human QA gate is bypassed.' },
         screenshots: { type: 'array', items: { type: 'object' }, description: 'Visual verification screenshots for UI/layout testing (array of {caption, path}). Rendered directly in Watcher dashboard.' },
@@ -344,12 +385,12 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_wait_for_approval',
-    description: 'Block and wait until the human user submits answers or clicks "Approve Gate" / "Request Changes" in the Watcher Dashboard Portal for an open intake, PRD, TRD, or per-task QA gate, then automatically return the next directive.',
+    description: 'Block and wait until the human user submits answers or clicks "Approve Gate" / "Request Changes" in the Watcher Dashboard Portal for an open upgrade, intake, PRD, TRD, or per-task QA gate, then automatically return the next directive.',
     inputSchema: {
       type: 'object',
       properties: {
         repository: { type: 'string', description: 'Target git repository path.' },
-        gate: { type: 'string', enum: ['intake', 'prd', 'trd', 'qa'], description: 'The open gate to wait on (intake, prd, trd, or qa).' },
+        gate: { type: 'string', enum: ['upgrade', 'intake', 'prd', 'trd', 'qa'], description: 'The open gate to wait on (upgrade, intake, prd, trd, or qa).' },
         taskId: { type: 'string', description: 'Task ID if waiting on a per-task QA gate.' }
       },
       required: ['gate']
@@ -357,17 +398,27 @@ export const toolDefs = [
   },
   {
     name: 'aiteam_record_approval',
-    description: 'Record the human user answers or decision for intake, PRD, TRD, or per-task QA gates ONLY AFTER the human user has explicitly replied in chat. Prefer aiteam_wait_for_approval so the user can interact in the Watcher Portal.',
+    description: 'Record the human user answers or decision for upgrade, intake, PRD, TRD, or per-task QA gates ONLY AFTER the human user has explicitly replied in chat. Prefer aiteam_wait_for_approval so the user can interact in the Watcher Portal.',
     inputSchema: {
       type: 'object',
       properties: {
         repository: { type: 'string', description: 'Target git repository path.' },
-        gate: { type: 'string', enum: ['intake', 'prd', 'trd', 'qa'], description: 'The gate being decided.' },
+        gate: { type: 'string', enum: ['upgrade', 'intake', 'prd', 'trd', 'qa'], description: 'The gate being decided.' },
         decision: { type: 'string', enum: ['approved', 'changes_requested'], description: 'The human decision.' },
         taskId: { type: 'string', description: 'Task ID if deciding a per-task QA gate.' },
         response: { type: 'string', description: 'Exact verbatim words or answers from the human user reply.' }
       },
       required: ['gate', 'decision']
+    }
+  },
+  {
+    name: 'aiteam_upgrade',
+    description: 'Pull the latest AITeam release from GitHub (origin/main) and sync skill links, AGENTS.md instructions, and install metadata into the target project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repository: { type: 'string', description: 'Target git repository path.' }
+      }
     }
   },
   {
@@ -402,7 +453,12 @@ export async function handleToolCall(name, args = {}) {
     const watchUrl = await ensureWatcher(repo);
     initSession(repo, args.request);
     startStage(repo, 'intake');
-    const directive = getDirective(readSession(repo), repo, watchUrl);
+    const upgradeInfo = offerUpgradeIfAvailable(repo);
+    const currentSession = readSession(repo);
+    const directive = getDirective(currentSession, repo, watchUrl);
+    const upgradeBanner = upgradeInfo.upgradeAvailable
+      ? `⬆️ Upgrade Available: ${upgradeInfo.check.summary}`
+      : null;
 
     return {
       content: [
@@ -412,23 +468,29 @@ export async function handleToolCall(name, args = {}) {
             `🚀 AITeam v${VERSION} session started!`,
             `📁 Repository: ${repo}`,
             `📊 Live Dashboard: ${watchUrl}`,
-            `🎯 Current Stage: intake`,
+            `🎯 Current Stage: ${currentSession?.currentStage || 'intake'}`,
+            upgradeBanner,
             '',
             `👉 NEXT DIRECTIVE:`,
             directive.instruction
-          ].join('\n')
+          ].filter((x) => x !== null).join('\n')
         }
       ],
-      session: readSession(repo),
+      session: currentSession,
       directive,
+      upgrade: upgradeInfo.check,
       watchUrl
     };
   }
 
   if (name === 'aiteam_status') {
-    const session = readSession(repo);
     const watchUrl = await ensureWatcher(repo);
+    const upgradeInfo = offerUpgradeIfAvailable(repo);
+    const session = readSession(repo);
     const directive = getDirective(session, repo, watchUrl);
+    const upgradeBanner = upgradeInfo.upgradeAvailable
+      ? `⬆️ Upgrade Available: ${upgradeInfo.check.summary}`
+      : null;
 
     return {
       content: [
@@ -438,14 +500,64 @@ export async function handleToolCall(name, args = {}) {
             `AITeam Status: ${session ? session.status : 'NO SESSION'}`,
             `Stage: ${session ? session.currentStage : '—'}`,
             `Watcher: ${watchUrl}`,
+            upgradeBanner,
             '',
             `👉 DIRECTIVE:`,
             directive.instruction
-          ].join('\n')
+          ].filter((x) => x !== null).join('\n')
         }
       ],
       session,
       directive,
+      upgrade: upgradeInfo.check,
+      watchUrl
+    };
+  }
+
+  if (name === 'aiteam_upgrade') {
+    const watchUrl = await ensureWatcher(repo);
+    const existing = readSession(repo);
+    let upgradeSummary;
+    if (existing?.pendingUserInput?.gate === 'upgrade' && !existing.pendingUserInput.response) {
+      recordApproval(repo, {
+        gate: 'upgrade',
+        decision: 'approved',
+        response: 'Upgraded via aiteam_upgrade',
+        approvedBy: 'user',
+        enforceDwell: false
+      });
+      const updated = readSession(repo);
+      upgradeSummary = `Upgraded AITeam to v${updated?.aiteamVersion || VERSION} (${updated?.aiteamCommit || 'latest'}) and synced project files.`;
+    } else {
+      const upg = performUpgrade(repo);
+      if (existing) {
+        existing.aiteamVersion = upg.version;
+        existing.aiteamCommit = upg.commit;
+        existing.pendingUpgrade = null;
+        writeSession(repo, existing);
+      }
+      upgradeSummary = upg.summary;
+    }
+
+    const session = readSession(repo);
+    const directive = getDirective(session, repo, watchUrl);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: [
+            `⬆️ ${upgradeSummary}`,
+            `📊 Live Dashboard: ${watchUrl}`,
+            '',
+            `👉 NEXT DIRECTIVE:`,
+            directive.instruction
+          ].join('\n')
+        }
+      ],
+      upgradeSummary,
+      directive,
+      session,
       watchUrl
     };
   }
@@ -550,6 +662,8 @@ export async function handleToolCall(name, args = {}) {
         evidence: args.evidence || [],
         filesChanged: args.filesChanged || [],
         findings: args.findings || [],
+        repairStage: args.repairStage || null,
+        auditMatrix: args.auditMatrix || [],
         checks: args.checks || [],
         manualChecks: args.manualChecks || [],
         screenshots: args.screenshots || [],

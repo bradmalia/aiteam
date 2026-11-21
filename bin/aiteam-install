@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 # AITeam Skill Project Installer
-# Links the AITeam Skill into any repository, creates .aiteam state directory,
-# and configures git exclusion.
+# Links the AITeam Skill into any repository, refreshes AGENTS.md, creates .aiteam state
+# directory, writes .aiteam/install.json, and configures git exclusion.
 
 target_repo="${1:-$PWD}"
 target_repo="$(cd "$target_repo" && pwd)"
@@ -11,44 +11,7 @@ script_path="$(realpath "${BASH_SOURCE[0]}")"
 aiteam_home="$(cd "$(dirname "$script_path")/.." && pwd)"
 
 echo "=== Installing AITeam Skill into $target_repo ==="
-
-# 1. Ensure .aiteam state directory exists
-mkdir -p "$target_repo/.aiteam/runs"
-mkdir -p "$target_repo/.aiteam/docs"
-
-# 2. Configure .git/info/exclude so .aiteam/ is never committed
-if [ -d "$target_repo/.git" ]; then
-  exclude_file="$target_repo/.git/info/exclude"
-  mkdir -p "$(dirname "$exclude_file")"
-  touch "$exclude_file"
-  if ! grep -q "^\.aiteam/" "$exclude_file"; then
-    echo ".aiteam/" >> "$exclude_file"
-    echo "Added .aiteam/ to $exclude_file"
-  fi
-fi
-
-# 3. Create .agents/skills/aiteam link or copy
-mkdir -p "$target_repo/.agents/skills"
-skill_target="$target_repo/.agents/skills/aiteam"
-rm -rf "$skill_target"
-ln -sf "$aiteam_home/skill" "$skill_target"
-echo "Linked skill to $skill_target -> $aiteam_home/skill"
-
-# 4. Provide AGENTS.md instructions with quick-trigger rules
-agents_md="$target_repo/AGENTS.md"
-template_md="$aiteam_home/skill/templates/AGENTS.skill.md"
-
-if [ ! -f "$agents_md" ]; then
-  cp "$template_md" "$agents_md"
-  echo "Created initial $agents_md from template"
-else
-  if ! grep -q "resume aiteam" "$agents_md"; then
-    echo "" >> "$agents_md"
-    cat "$template_md" >> "$agents_md"
-    echo "Appended AITeam quick-trigger instructions to $agents_md"
-  fi
-fi
-
+node "$aiteam_home/skill/lib/upgrader.mjs" install --repo "$target_repo"
 echo "=== AITeam Skill successfully installed into $target_repo ==="
 echo "Launch or discover the live watcher anytime with:"
 echo "  $aiteam_home/bin/aiteam-watch \"$target_repo\""

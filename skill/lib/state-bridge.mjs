@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { computeFingerprint, verifyFingerprint } from './fingerprint.mjs';
 import { validateMotionEvidence } from './motion-evidence.mjs';
+import { checkForUpgrade, performUpgrade } from './upgrader.mjs';
 
 export const OBLIGATION_TYPES = {
   ACTUAL_INPUT: 'actualInput',
@@ -117,6 +118,9 @@ function defaultGateQuestions(gate, taskId, doc = null) {
   if (gate === 'qa') {
     return [`Automated QA PASSED for ${taskId || 'this task'}. Confirm the behavior works in the running app/environment, then approve in the Watcher Portal or reply "PASS: ..." in chat to proceed to commit, or "FAIL: <defects>" to route the task back to the programmer.`];
   }
+  if (gate === 'upgrade') {
+    return ['A newer version of AITeam is available on GitHub. Approve in the Watcher Portal or reply "yes" in chat to pull from GitHub and update this project now, or click Request Changes / reply "skip" to continue without upgrading.'];
+  }
   return ['Approve in the Watcher Portal or reply APPROVED in chat to proceed, or describe the changes you want.'];
 }
 
@@ -228,21 +232,51 @@ function enforceTaskStageOrder(session, stage, taskId) {
   }
 }
 
-function hasQaTestFiles(repo) {
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function collectQaFiles(dir, rootDir, out = []) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectQaFiles(full, rootDir, out);
+    } else if (
+      entry.isFile() &&
+      /\.(?:test|spec)\.[a-z0-9]+$|\.(?:mjs|cjs|js|ts|tsx|py|sh|gd)$/i.test(entry.name)
+    ) {
+      const stat = fs.statSync(full);
+      if (stat.size > 0) {
+        out.push(path.relative(rootDir, full).replace(/\\/g, '/'));
+      }
+    }
+  }
+  return out;
+}
+
+export function hasQaTestFiles(repo, taskId = null) {
   const qaDir = path.join(repo, 'tests', 'qa');
   if (!fs.existsSync(qaDir)) return false;
   try {
-    const entries = fs.readdirSync(qaDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && /\.(?:test|spec)\.[a-z0-9]+$|\.(?:mjs|cjs|js|ts|tsx|py|sh)$/i.test(entry.name)) {
-        const stat = fs.statSync(path.join(qaDir, entry.name));
-        if (stat.size > 0) return true;
+    const files = collectQaFiles(qaDir, qaDir);
+    if (files.length === 0) return false;
+    if (!taskId) return true;
+
+    const idLower = String(taskId).trim().toLowerCase();
+    const stem = idLower.replace(/[^a-z0-9]+/g, '');
+    const idBoundaryRe = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(idLower)}(?:$|[^a-z0-9])`);
+    const stemBoundaryRe = stem ? new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(stem)}(?:$|[^0-9])`) : null;
+
+    return files.some((relPath) => {
+      const relLower = relPath.toLowerCase();
+      if (idBoundaryRe.test(relLower)) return true;
+      if (stemBoundaryRe) {
+        const relCompact = relLower.replace(/[-_\s]+/g, '');
+        if (stemBoundaryRe.test(relCompact)) return true;
       }
-      if (entry.isDirectory()) {
-        const subEntries = fs.readdirSync(path.join(qaDir, entry.name));
-        if (subEntries.length > 0) return true;
-      }
-    }
+      return false;
+    });
   } catch {}
   return false;
 }
@@ -415,12 +449,36 @@ function validateStageCompletion(repo, session, stage, taskId, result) {
     return;
   }
 
+  if (stage === 'critical-review') {
+    const findings = Array.isArray(result.findings) ? result.findings : [];
+    const severe = findings.filter((f) => f && (f.severity === 'BLOCKER' || f.severity === 'MAJOR'));
+    if (outcome === 'PASS' && severe.length > 0) {
+      throw new Error(
+        `AITEAM_REVIEW_CONFLICT: Cannot PASS "critical-review" when ${severe.length} BLOCKER/MAJOR finding(s) are present. Set outcome="FAIL" and specify repairStage ("architecture", "ui-design", "planning", or "qa-planning").`
+      );
+    }
+    if (outcome === 'FAIL') {
+      if (severe.length === 0) {
+        throw new Error(
+          `AITEAM_CRITICAL_REVIEW_FINDINGS_REQUIRED: Cannot FAIL "critical-review" without at least one BLOCKER or MAJOR finding in findings=[...].`
+        );
+      }
+      const repairStage = result.repairStage || severe[0]?.repairStage;
+      if (!['architecture', 'ui-design', 'planning', 'qa-planning'].includes(repairStage)) {
+        throw new Error(
+          `AITEAM_INVALID_REPAIR_STAGE: Failed "critical-review" must specify repairStage as one of: "architecture", "ui-design", "planning", or "qa-planning".`
+        );
+      }
+      return;
+    }
+  }
+
   if (outcome !== 'PASS' && outcome !== 'PASS_WITH_MANUAL_VALIDATION') return;
 
   if (stage === 'intake') {
     if (!session.intakeClarified) {
       throw new Error(
-        `AITEAM_INTAKE_INTERVIEW_REQUIRED: Cannot complete stage "intake" with PASS before asking the user clarifying questions! First inspect the repository, formulate 3-5 concrete product/UX/scope clarifying questions (each with a recommended default), and call aiteam_advance with stage="intake", outcome="AWAITING_USER", and questions=[...]. Wait for the user's answers before generating .aiteam/docs/prd.html and completing intake with PASS.`
+        `AITEAM_INTAKE_INTERVIEW_REQUIRED: Cannot complete stage "intake" with PASS before asking the user clarifying questions! First inspect the repository, formulate 4-8 concrete multi-dimensional product/UX/scope clarifying questions, and call aiteam_advance with stage="intake", outcome="AWAITING_USER", and questions=[...]. Wait for the user's answers before generating .aiteam/docs/prd.html and completing intake with PASS.`
       );
     }
     const prdPath = path.join(docsDir(repo), 'prd.html');
@@ -429,7 +487,7 @@ function validateStageCompletion(repo, session, stage, taskId, result) {
         `AITEAM_ARTIFACT_MISSING: Cannot complete stage "intake" with PASS because ".aiteam/docs/prd.html" does not exist or is empty. You must generate the PRD HTML document before completing intake.`
       );
     }
-  } else if (stage === 'architecture' || stage === 'critical-review') {
+  } else if (stage === 'architecture' || stage === 'ui-design' || stage === 'qa-planning' || stage === 'critical-review') {
     const trdPath = path.join(docsDir(repo), 'trd.html');
     if (!fs.existsSync(trdPath) || fs.statSync(trdPath).size === 0) {
       throw new Error(
@@ -468,9 +526,9 @@ function validateStageCompletion(repo, session, stage, taskId, result) {
       );
     }
   } else if (stage === 'qa' && taskId) {
-    if (!hasQaTestFiles(repo)) {
+    if (!hasQaTestFiles(repo, taskId)) {
       throw new Error(
-        `AITEAM_QA_TEST_MISSING: Cannot PASS stage "qa" for task "${taskId}" because no automated black-box test files exist under "tests/qa/". Per the QA contract, you must author and run dedicated black-box tests in tests/qa/ before completing QA.`
+        `AITEAM_QA_TEST_MISSING: Cannot PASS stage "qa" for task "${taskId}" because no automated black-box test file matching "${taskId}" exists under "tests/qa/" (e.g. tests/qa/${taskId}.test.*). Per the QA contract, you must author and run dedicated black-box tests for this task before completing QA.`
       );
     }
     const hasChecks = Array.isArray(result.checks) && result.checks.length > 0;
@@ -589,6 +647,7 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
     }
 
     if (
+      gate !== 'upgrade' &&
       enforceDwell &&
       !process.env.NODE_TEST_CONTEXT &&
       process.env.AITEAM_TEST_MODE !== '1' &&
@@ -636,7 +695,30 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
   }
 
   const reviewStage = GATE_STAGE_FOR_GATE[gate];
-  if (gate === 'intake') {
+  if (gate === 'upgrade') {
+    const upgradeOptions = session.pendingUpgrade?.options || {};
+    const resumeStage = session.pendingUserInput?.resumeStage || (session.currentStage === 'upgrade' ? 'intake' : session.currentStage) || 'intake';
+    const resumeTaskId = session.pendingUserInput?.resumeTaskId ?? session.currentTaskId ?? null;
+    if (approved) {
+      const upg = performUpgrade(repo, upgradeOptions);
+      session.aiteamVersion = upg.version;
+      session.aiteamCommit = upg.commit;
+      session.pendingUpgrade = null;
+      appendEvent(repo, {
+        type: 'aiteam_upgraded',
+        version: upg.version,
+        commit: upg.commit,
+        summary: upg.summary,
+        at: now
+      });
+      writeActiveLog(repo, `⬆️ ${upg.summary}`, 'coordinator');
+    } else {
+      session.declinedUpgradeCommit = session.pendingUpgrade?.remoteCommit || 'declined';
+      session.pendingUpgrade = null;
+    }
+    session.currentStage = resumeStage;
+    session.currentTaskId = resumeTaskId;
+  } else if (gate === 'intake') {
     if (approved) {
       session.intakeClarified = true;
       session.intakeAnswers = response || 'Use recommended defaults for any unanswered questions.';
@@ -704,6 +786,66 @@ export function recordApproval(repo, { gate, taskId = null, decision, response =
   writeSession(repo, session);
   appendEvent(repo, { type: 'approval_gate_decided', gate, gateId, decision: approved ? 'APPROVED' : 'CHANGES_REQUESTED', approvedBy, at: now });
   return session;
+}
+
+export function offerUpgradeIfAvailable(repo, options = {}) {
+  const session = readSession(repo);
+  const check = checkForUpgrade(repo, options);
+  if (!check.upgradeAvailable) {
+    return { upgradeAvailable: false, check, session };
+  }
+  if (session?.declinedUpgradeCommit && check.remoteCommit && session.declinedUpgradeCommit === check.remoteCommit && !options.forceCheck) {
+    return { upgradeAvailable: false, check, session, declined: true };
+  }
+
+  if (
+    session &&
+    (!session.pendingUserInput || session.pendingUserInput.response != null || session.pendingUserInput.gate === 'upgrade')
+  ) {
+    const resumeStage = session.currentStage === 'upgrade' ? 'intake' : (session.currentStage || 'intake');
+    const resumeTaskId = session.pendingUserInput?.gate === 'upgrade'
+      ? (session.pendingUserInput.resumeTaskId ?? session.currentTaskId ?? null)
+      : (session.currentTaskId ?? null);
+
+    session.pendingUpgrade = {
+      ...check,
+      options: (options.aiteamRoot || options.remote || options.branch)
+        ? { aiteamRoot: options.aiteamRoot, remote: options.remote, branch: options.branch }
+        : undefined
+    };
+
+    const changelogLines = Array.isArray(check.changelog)
+      ? check.changelog.map((c) => `Commit: ${c}`)
+      : [];
+
+    openGateOnSession(session, {
+      gate: 'upgrade',
+      kind: 'upgrade',
+      stage: resumeStage,
+      taskId: null,
+      doc: null,
+      screenshots: [],
+      motionClips: [],
+      questions: [
+        check.summary,
+        ...changelogLines,
+        'Approve to pull the latest AITeam from GitHub and upgrade this project now, or Request Changes / reply "skip" to continue without upgrading.'
+      ]
+    });
+    session.currentTaskId = resumeTaskId;
+    session.pendingUserInput.resumeStage = resumeStage;
+    session.pendingUserInput.resumeTaskId = resumeTaskId;
+    syncActiveRunForSession(session);
+    writeSession(repo, session);
+    appendEvent(repo, {
+      type: 'upgrade_offered',
+      fromVersion: check.installedProjectVersion || check.localVersion,
+      toVersion: check.remoteVersion,
+      remoteCommit: check.remoteCommit
+    });
+  }
+
+  return { upgradeAvailable: true, check, session };
 }
 
 export function stateDir(repo) {
@@ -931,7 +1073,10 @@ export function initSession(repo, request) {
     activeRun: null,
     integration: null,
     environmentProfile: null,
+    intakeRound: 0,
+    intakeDiscovery: [],
     lockedCriticalFindings: [],
+    criticalReviewFailure: null,
     completedTasks: [],
     approvals: {},
     pendingUserInput: null
@@ -1153,8 +1298,12 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     result
   };
 
-  if (outcome !== 'AWAITING_USER' && !session.completedStages.includes(stage)) {
-    session.completedStages.push(stage);
+  if (outcome === 'PASS' || outcome === 'PASS_WITH_MANUAL_VALIDATION') {
+    if (!session.completedStages.includes(stage)) {
+      session.completedStages.push(stage);
+    }
+  } else if (outcome === 'FAIL') {
+    session.completedStages = (session.completedStages || []).filter((s) => s !== stage);
   }
 
   // Check if all tasks in ledger are QA-passed AND integrated
@@ -1175,6 +1324,11 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     const cleanQuestions = (result.questions || [])
       .map((q) => (typeof q === 'string' ? q.trim() : typeof q?.question === 'string' ? q.question.trim() : ''))
       .filter(Boolean);
+    session.intakeClarified = false;
+    session.intakeRound = (session.intakeRound || 0) + 1;
+    if (Array.isArray(result.evidence) && result.evidence.length > 0) {
+      session.intakeDiscovery = result.evidence;
+    }
     session.intakeQuestions = cleanQuestions;
     openGateOnSession(session, {
       gate: 'intake',
@@ -1194,7 +1348,24 @@ export function completeStage(repo, stage, taskId = null, result = {}) {
     session.currentStage = 'qa-planning';
   } else if (stage === 'qa-planning' && outcome === 'PASS') {
     session.currentStage = 'critical-review';
+  } else if (stage === 'critical-review' && outcome === 'FAIL') {
+    const severe = (result.findings || []).filter((f) => f && (f.severity === 'BLOCKER' || f.severity === 'MAJOR'));
+    const repairStage = result.repairStage || severe[0]?.repairStage || 'planning';
+    session.lockedCriticalFindings = severe;
+    session.criticalReviewFailure = {
+      at: now,
+      summary: result.summary || 'Critical review identified design gaps',
+      repairStage,
+      findings: severe
+    };
+    const setupOrder = ['architecture', 'ui-design', 'planning', 'qa-planning', 'critical-review'];
+    const repairIdx = setupOrder.indexOf(repairStage);
+    const stagesToReset = repairIdx !== -1 ? new Set(setupOrder.slice(repairIdx)) : new Set(['critical-review']);
+    session.completedStages = (session.completedStages || []).filter((s) => !stagesToReset.has(s));
+    session.currentStage = repairStage;
   } else if (stage === 'critical-review' && outcome === 'PASS') {
+    session.lockedCriticalFindings = [];
+    session.criticalReviewFailure = null;
     openGateOnSession(session, { gate: 'trd', kind: 'trd', taskId: null, doc: '.aiteam/docs/trd.html' });
   } else if (stage === 'environment-readiness' && outcome === 'PASS') {
     session.currentStage = 'implementation';
@@ -1268,7 +1439,7 @@ export function parseTaskLedgerMarkdown(content, repoContext = {}) {
       id,
       title,
       status: 'planned',
-      description: block.slice(0, 400).trim(),
+      description: block.trim(),
       acceptanceCriteria: bulletMatches.length ? bulletMatches : ['Pass all assigned unit and integration tests.']
     };
     taskObj.acceptanceObligations = determineAcceptanceObligations(taskObj, repoContext);

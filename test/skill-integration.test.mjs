@@ -12,9 +12,12 @@ import {
   startStage,
   completeStage,
   updateTaskLedger,
+  parseTaskLedgerMarkdown,
+  hasQaTestFiles,
   writeActiveLog,
   recordApproval
 } from '../skill/lib/state-bridge.mjs';
+import { buildCliInvocation, resolveSandboxMode } from '../skill/lib/runner-adapter.mjs';
 import { computeFingerprint, verifyFingerprint } from '../skill/lib/fingerprint.mjs';
 
 test('AITeam Skill: State Bridge lifecycle and task ledger state transitions', async (t) => {
@@ -472,6 +475,144 @@ test('AITeam Skill: Headless tasks bypass human QA approval when automated tests
     current = readSession(tmpRepo);
     assert.equal(current.status, 'COMPLETE');
   } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
+test('AITeam Skill: Task-scoped QA test check blocks T2 when only T1 tests exist', () => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-task-scoped-qa-'));
+
+  try {
+    initSession(tmpRepo, 'Multi-task QA test enforcement');
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'ok' });
+    recordApproval(tmpRepo, { gate: 'trd', decision: 'approved', response: 'ok' });
+    updateTaskLedger(tmpRepo, [
+      { id: 'T1', title: 'Task 1', status: 'planned', acceptanceCriteria: ['AC-1: first'] },
+      { id: 'T2', title: 'Task 2', status: 'planned', acceptanceCriteria: ['AC-1: second'] },
+      { id: 'T10', title: 'Task 10', status: 'planned', acceptanceCriteria: ['AC-1: tenth'] }
+    ]);
+
+    // T1 creates tests/qa/T1.test.mjs
+    fs.mkdirSync(path.join(tmpRepo, 'tests', 'qa'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRepo, 'tests', 'qa', 'T1.test.mjs'), 'export default true;\n');
+    assert.equal(hasQaTestFiles(tmpRepo, 'T1'), true);
+    assert.equal(hasQaTestFiles(tmpRepo, 'T2'), false);
+    assert.equal(hasQaTestFiles(tmpRepo, 'T10'), false);
+
+    // T1 passes implementation -> review -> qa
+    startStage(tmpRepo, 'implementation', 'T1');
+    fs.writeFileSync(path.join(tmpRepo, 'f1.js'), 'export const a = 1;\n');
+    completeStage(tmpRepo, 'implementation', 'T1', { outcome: 'PASS', filesChanged: ['f1.js'] });
+    startStage(tmpRepo, 'code-review', 'T1');
+    completeStage(tmpRepo, 'code-review', 'T1', { outcome: 'PASS' });
+    startStage(tmpRepo, 'qa', 'T1');
+    completeStage(tmpRepo, 'qa', 'T1', { outcome: 'PASS', checks: [{ name: 'AC-1', passed: true }], manualChecks: [] });
+
+    // T2 attempts QA without its own test file -> must throw AITEAM_QA_TEST_MISSING even though T1.test.mjs exists
+    startStage(tmpRepo, 'implementation', 'T2');
+    fs.writeFileSync(path.join(tmpRepo, 'f2.js'), 'export const b = 2;\n');
+    completeStage(tmpRepo, 'implementation', 'T2', { outcome: 'PASS', filesChanged: ['f2.js'] });
+    startStage(tmpRepo, 'code-review', 'T2');
+    completeStage(tmpRepo, 'code-review', 'T2', { outcome: 'PASS' });
+    startStage(tmpRepo, 'qa', 'T2');
+
+    assert.throws(
+      () =>
+        completeStage(tmpRepo, 'qa', 'T2', {
+          outcome: 'PASS',
+          checks: [{ name: 'AC-1', passed: true }],
+          manualChecks: []
+        }),
+      /AITEAM_QA_TEST_MISSING/
+    );
+
+    // Adding T2 test file satisfies T2
+    fs.writeFileSync(path.join(tmpRepo, 'tests', 'qa', 'T2.test.mjs'), 'export default true;\n');
+    assert.equal(hasQaTestFiles(tmpRepo, 'T2'), true);
+
+    // Ensure T10.test.mjs doesn't falsely match T1 if checked alone
+    fs.unlinkSync(path.join(tmpRepo, 'tests', 'qa', 'T1.test.mjs'));
+    fs.writeFileSync(path.join(tmpRepo, 'tests', 'qa', 'T10.test.mjs'), 'export default true;\n');
+    assert.equal(hasQaTestFiles(tmpRepo, 'T1'), false);
+    assert.equal(hasQaTestFiles(tmpRepo, 'T10'), true);
+  } finally {
+    fs.rmSync(tmpRepo, { recursive: true, force: true });
+  }
+});
+
+test('AITeam Skill: Full task descriptions, TRD checks on ui-design/qa-planning, FAIL completedStages, and runner sandbox modes', () => {
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'aiteam-state-fixes-'));
+  const origPath = process.env.PATH;
+
+  try {
+    // 1. Long task descriptions (> 400 chars) are preserved without truncation
+    const longDetail = 'Detailed engineering specification: ' + 'X'.repeat(650) + ' END_MARKER';
+    const ledgerMd = `# Task Ledger\n\n### T1: Long specification task\n${longDetail}\n- [ ] AC-1: Works end-to-end\n`;
+    const parsed = parseTaskLedgerMarkdown(ledgerMd);
+    assert.equal(parsed.length, 1);
+    assert.ok(parsed[0].description.length > 650);
+    assert.ok(parsed[0].description.includes('END_MARKER'));
+
+    // 2. ui-design and qa-planning require non-empty .aiteam/docs/trd.html
+    initSession(tmpRepo, 'State fixes test');
+    completeStage(tmpRepo, 'intake', null, { outcome: 'AWAITING_USER', questions: ['1. Target platform? (Recommended default: Web)'] });
+    recordApproval(tmpRepo, { gate: 'intake', decision: 'approved', response: 'Web' });
+    fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'docs', 'prd.html'), '<h1>PRD</h1>');
+    completeStage(tmpRepo, 'intake', null, { outcome: 'PASS' });
+    recordApproval(tmpRepo, { gate: 'prd', decision: 'approved', response: 'ok' });
+
+    fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'docs', 'trd.html'), '<h1>TRD</h1>');
+    completeStage(tmpRepo, 'architecture', null, { outcome: 'PASS' });
+
+    // Remove trd.html -> ui-design must fail with AITEAM_ARTIFACT_MISSING
+    fs.unlinkSync(path.join(tmpRepo, '.aiteam', 'docs', 'trd.html'));
+    assert.throws(() => completeStage(tmpRepo, 'ui-design', null, { outcome: 'PASS' }), /AITEAM_ARTIFACT_MISSING/);
+
+    // Restore trd.html -> ui-design passes; FAIL on any stage must NOT mark it in completedStages
+    fs.writeFileSync(path.join(tmpRepo, '.aiteam', 'docs', 'trd.html'), '<h1>TRD + UI</h1>');
+    completeStage(tmpRepo, 'ui-design', null, { outcome: 'PASS' });
+    completeStage(tmpRepo, 'planning', null, { outcome: 'FAIL', summary: 'Not ready' });
+    assert.ok(!readSession(tmpRepo).completedStages.includes('planning'));
+
+    // 3. Runner adapter sandbox resolution & CLI invocation
+    assert.equal(resolveSandboxMode('programmer'), 'danger-full-access');
+    assert.equal(resolveSandboxMode('maintainer'), 'danger-full-access');
+    assert.equal(resolveSandboxMode('qa'), 'danger-full-access');
+    assert.equal(resolveSandboxMode('code-reviewer'), 'read-only');
+    assert.equal(resolveSandboxMode('critical-reviewer'), 'read-only');
+
+    const fakeBinDir = path.join(tmpRepo, 'fake-bin');
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    const fakeCodex = path.join(fakeBinDir, 'codex');
+    fs.writeFileSync(fakeCodex, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const contractFile = path.join(tmpRepo, 'contract.md');
+    fs.writeFileSync(contractFile, '# Contract\n');
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${origPath}`;
+
+    const progInv = buildCliInvocation({
+      repo: tmpRepo,
+      role: 'programmer',
+      contractPath: contractFile,
+      taskPrompt: 'Implement T1'
+    });
+    const critInv = buildCliInvocation({
+      repo: tmpRepo,
+      role: 'critical-reviewer',
+      contractPath: contractFile,
+      taskPrompt: 'Audit TRD'
+    });
+    const revInv = buildCliInvocation({
+      repo: tmpRepo,
+      role: 'code-reviewer',
+      contractPath: contractFile,
+      taskPrompt: 'Review T1'
+    });
+
+    assert.equal(progInv.args[progInv.args.indexOf('--sandbox') + 1], 'danger-full-access');
+    assert.equal(critInv.args[critInv.args.indexOf('--sandbox') + 1], 'read-only');
+    assert.equal(revInv.args[revInv.args.indexOf('--sandbox') + 1], 'read-only');
+  } finally {
+    process.env.PATH = origPath;
     fs.rmSync(tmpRepo, { recursive: true, force: true });
   }
 });

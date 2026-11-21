@@ -49,14 +49,15 @@ AITeam has **three human-approval gate types**, plus the intake interview and st
 
 When asked to build or maintain a project using AITeam:
 
-1. **Verify or Initialize State (FIRST ACTION - DO NOT SKIP)**:
+1. **Verify or Initialize State & Check GitHub Upgrades (FIRST ACTION - DO NOT SKIP)**:
+   - `aiteam_start` and `aiteam_status` automatically check GitHub (`origin/main`) for newer AITeam releases and check whether the target project's `AGENTS.md` / `.aiteam/install.json` is out of date. If the `upgrade` gate opens, offer the upgrade to the user (`aiteam_record_approval(gate="upgrade", decision="approved")` / `aiteam_upgrade`, or `decision="changes_requested"` to skip, or `aiteam_wait_for_approval(gate="upgrade")`).
    - **New run / New milestone / Brownfield feature**:
      Execute `state-bridge init` and `stage-start --stage intake` (or `aiteam_start` MCP tool) in your very first turn BEFORE asking questions, researching, or writing the PRD:
      ```bash
      node /home/brad/aiteam/skill/lib/state-bridge.mjs init --repo "$PWD" --request "<user-request>"
      node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-start --repo "$PWD" --stage intake
      ```
-   - **Resumed run**: Inspect `.aiteam/session.json` (or call `aiteam_status`) to identify current stage and active gate.
+   - **Resumed run**: Inspect `.aiteam/session.json` (or call `aiteam_status`) to identify current stage, upgrade availability, and active gate.
 
 2. **Verify Watcher & Communicate Its Actual URL (Mandatory)**:
    Prefer the current MCP start/status result and report its exact repository-specific Watcher URL. Never assume port 4317 or that a prior process survived. Before reusing a preview, inspect its actual bind address, process, repository and served content; a localhost URL does not establish loopback binding.
@@ -68,16 +69,18 @@ When asked to build or maintain a project using AITeam:
 
 ### Stage 1: Analyst Intake Interview & PRD (`skill/contracts/analyst.md`)
 - **Brownfield Safety**: If `.aiteam/docs/prd.html` already exists from a prior milestone, `stage-start --stage intake` automatically archives it into `.aiteam/docs/archive/prd-<timestamp>.html`.
-- **Step 1 — Mandatory Clarifying Interview (`outcome: "AWAITING_USER"`)**:
-  - Inspect the repository first, then formulate 3–5 concrete clarifying questions (each with a `(Recommended default: ...)`).
+- **Step 1 — Pre-Interview Discovery & Multi-Dimensional Clarifying Interview (`outcome: "AWAITING_USER"`)**:
+  - Inspect the repository (`package.json`, source files, existing tests, and `.aiteam/docs/archive/`) first, and include discovery notes in `evidence`.
+  - Formulate **4–8 high-impact, dimension-tagged clarifying questions** probing: (1) `[User Flow & State Transitions]`, (2) `[Edge Cases & Failure Modes]`, (3) `[Domain Rules & Visual/Quantitative Precision]`, (4) `[Brownfield Integration & Data Lifecycle]`, and (5) `[Scope Boundaries & Falsifiable Verification]`. Include `(Recommended default: ...)` or `(Decision required: ...)` on each.
   - The state engine **blocks** `intake` `PASS` (`AITEAM_INTAKE_INTERVIEW_REQUIRED`) until clarifying questions have been asked and answered.
   - Submit the questions and wait for the user's answers in the Watcher Portal (or chat):
     ```bash
-    node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"AWAITING_USER","summary":"Clarifying questions","questions":["1. ... (Recommended default: ...)","2. ... (Recommended default: ...)"]}'
+    node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"AWAITING_USER","summary":"Repository discovery and multi-dimensional clarifying questions","evidence":["Inspected repository structure and package.json"],"questions":["1. [User Flow & State Transitions] ... (Recommended default: ...)","2. [Edge Cases & Failure Modes] ... (Decision required: ...)"]}'
     node /home/brad/aiteam/skill/lib/state-bridge.mjs wait-approval --repo "$PWD" --gate intake
     ```
+  - **Optional Multi-Round Follow-Up**: If the user's answers introduce new material ambiguities or leave critical edge cases unresolved, execute a follow-up `AWAITING_USER` round before drafting `.aiteam/docs/prd.html`.
 - **Step 2 — Draft `.aiteam/docs/prd.html` (`outcome: "PASS"`)**:
-  - Incorporate the user's answers into `.aiteam/docs/prd.html` (including a *Clarifications & Product Decisions* section) following `/home/brad/aiteam/skill/contracts/analyst.md`.
+  - Incorporate all user answers across rounds into `.aiteam/docs/prd.html` (including *Clarifications & Product Decisions*, granular `PRD-R1..N` / `PRD-A1..N`, *Edge Cases, Failure Modes & Negative Requirements*, *Non-Functional Requirements*, and *Scope Boundaries*) following `/home/brad/aiteam/skill/contracts/analyst.md`.
   - Record completion (throws `AITEAM_ARTIFACT_MISSING` if `.aiteam/docs/prd.html` is missing):
     ```bash
     node /home/brad/aiteam/skill/lib/state-bridge.mjs stage-complete --repo "$PWD" --stage intake --result '{"outcome":"PASS","summary":"PRD drafted incorporating user clarifications"}'
@@ -100,11 +103,13 @@ When asked to build or maintain a project using AITeam:
 - After UI Design, write `TASK_LEDGER.md` with `### T1: Title` and `- [ ] AC-1: ...` entries, append the implementation plan to the TRD, and complete `planning` with its ledger path.
 
 ### Stage 5: QA Test Planning (`skill/contracts/qa-planner.md`)
-- Author the pre-implementation black-box plan and regression strategy in the TRD, including the review-page plan when manual QA is required. Complete `qa-planning` before Critical Review.
+- Author the pre-implementation black-box plan, regression strategy, and Requirements-to-Task-to-QA Traceability Matrix in `.aiteam/docs/trd.html`, including the review-page plan when manual QA is required. Complete `qa-planning` before Critical Review.
 
-### Stage 6: Critical Review and Human TRD Approval
-- Audit the complete architecture, UI, tasks and QA plan using `skill/contracts/critical-reviewer.md`; complete `critical-review`.
-- Present the finalized TRD and immediately invoke the active `aiteam_wait_for_approval(gate="trd")` listener. Process the actual recorded decision and continue the server directive; do not merely post links and end the workflow.
+### Stage 6: Critical Review (Isolated Read-Only Subagent) and Human TRD Approval
+- **Action**: Spawn an **isolated** `critical-reviewer` subagent in **read-only mode** (do NOT self-review inline in the same context that authored the TRD and Task Ledger).
+- Audit Architecture, UI Design, `TASK_LEDGER.md`, and QA Plan across all 6 falsification dimensions in `skill/contracts/critical-reviewer.md`: `prd-traceability`, `repo-grounding`, `state-and-failure-modes`, `math-and-layout-sanity`, `task-and-assembly-integrity`, and `qa-falsifiability`.
+- Reject (`outcome: "FAIL"` with `repairStage: "architecture"|"ui-design"|"planning"|"qa-planning"` and `findings: [...]`) when ANY `BLOCKER` or `MAJOR` defect exists (`AITEAM_REVIEW_CONFLICT` blocks passing with `BLOCKER`/`MAJOR` findings). The state engine rolls back upstream stages to `repairStage` and locks findings in `session.lockedCriticalFindings` until re-verified.
+- Only after `critical-review` completes with `outcome: "PASS"`, present the finalized TRD and immediately invoke the active `aiteam_wait_for_approval(gate="trd")` listener. Process the actual recorded decision and continue the server directive; do not merely post links and end the workflow.
 
 ### Stage 7: Environment Readiness (`skill/contracts/environment-readiness.md`)
 - Only after actual TRD approval, verify the required build/runtime/browser capabilities and complete `environment-readiness` before task implementation.
@@ -172,6 +177,6 @@ For each task in `TASK_LEDGER.md`, execute these 4 gates in strict sequential or
 To preserve context isolation (especially for `code-review` and `qa`):
 
 1. **Native Subagents (Antigravity / Gemini CLI)**:
-   Invoke specialists via `invoke_subagent` (`research` for read-only `reviewer`, `self` for `programmer` / `qa`) with the prompt contracts in `/home/brad/aiteam/skill/contracts/`.
+   Invoke specialists via `invoke_subagent` (`research` for read-only `reviewer` / `critical-reviewer`, `self` for `programmer` / `qa`) with the prompt contracts in `/home/brad/aiteam/skill/contracts/`.
 2. **CLI Agents (Codex, Qwen Code, Agy)**:
    Use `/home/brad/aiteam/skill/lib/runner-adapter.mjs` to execute specialists in isolated CLI subprocesses.

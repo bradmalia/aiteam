@@ -6,13 +6,14 @@ Under the hood, delegates to the node state-bridge and mcp-server logic.
 """
 import sys
 import json
+import pathlib
 import subprocess
 from typing import List, Optional, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("aiteam")
 
-NODE_MCP = "/home/brad/aiteam/src/mcp-server.mjs"
+NODE_MCP = str(pathlib.Path(__file__).resolve().parent / "mcp-server.mjs")
 
 def call_node(tool_name: str, args: dict) -> str:
     script = f"""
@@ -54,9 +55,12 @@ def aiteam_advance(
     filesChanged: Optional[List[str]] = None,
     evidence: Optional[List[str]] = None,
     findings: Optional[List[Dict[str, Any]]] = None,
+    repairStage: str = "",
+    auditMatrix: Optional[List[Dict[str, Any]]] = None,
     checks: Optional[List[Dict[str, Any]]] = None,
     manualChecks: Optional[List[str]] = None,
     screenshots: Optional[List[Dict[str, Any]]] = None,
+    motionEvidence: Optional[Any] = None,
     requiresManualValidation: Optional[bool] = None,
     commitMessage: str = "",
     repository: str = ""
@@ -73,9 +77,12 @@ def aiteam_advance(
         "filesChanged": filesChanged or [],
         "evidence": evidence or [],
         "findings": findings or [],
+        "repairStage": repairStage or None,
+        "auditMatrix": auditMatrix or [],
         "checks": checks or [],
         "manualChecks": manualChecks or [],
         "screenshots": screenshots or [],
+        "motionEvidence": motionEvidence,
         "requiresManualValidation": requiresManualValidation,
         "commitMessage": commitMessage,
         "repository": repository
@@ -101,6 +108,11 @@ def aiteam_record_approval(gate: str, decision: str, taskId: str = "", response:
         "response": response,
         "repository": repository
     })
+
+@mcp.tool()
+def aiteam_upgrade(repository: str = "") -> str:
+    """Pull the latest AITeam release from GitHub (origin/main) and sync project skill links, AGENTS.md, and metadata."""
+    return call_node("aiteam_upgrade", {"repository": repository})
 
 @mcp.tool()
 def aiteam_log(message: str, agentId: str = "specialist", repository: str = "") -> str:
